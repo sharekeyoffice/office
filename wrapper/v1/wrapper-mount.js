@@ -169,13 +169,55 @@
               element.isContentEditable;
       }
 
-      // Checks if the element is the OnlyOffice document input (special-cased).
-      function isOnlyOfficeDocumentInput(element) {
-          return !!(element && element.id === 'area_id');
+      function handleBlockedContentCopy(e) {
+          if (canEdit)
+              return;
+
+          e.preventDefault();
+          e.stopPropagation();
+
+          if (typeof e.stopImmediatePropagation === 'function')
+              e.stopImmediatePropagation();
+
+          if (e.clipboardData && typeof e.clipboardData.setData === 'function')
+              e.clipboardData.setData('text/plain', '');
       }
 
-      function isCellEditorInput(element) {
-          return !!(element && element.id === 'ce-cell-content');
+      function handleBlockedContentCopyEvent(e) {
+          if (canEdit)
+              return;
+
+          const shouldBlockContentCopy = e.type !== 'pointerdown' &&
+              e.type !== 'mousedown' &&
+              e.type !== 'mouseup' ||
+              e.button === 2;
+
+          if (shouldBlockContentCopy)
+              handleBlockedContentCopy(e);
+      }
+
+      function handleBlockedContentCopyKeyDown(e) {
+          if (canEdit)
+              return;
+
+          const key = e.key ? e.key.toLowerCase() : '';
+          const isCopyShortcut = (e.metaKey || e.ctrlKey) && (key === 'c' || key === 'x');
+          const isContextMenuShortcut = e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10');
+
+          if (isCopyShortcut || isContextMenuShortcut)
+              handleBlockedContentCopy(e);
+      }
+
+      function bindBlockedContentCopyListeners(targetDocument) {
+          if (!targetDocument || targetDocument.__blockedContentCopyListenersBound)
+              return;
+
+          targetDocument.__blockedContentCopyListenersBound = true;
+
+          ['copy', 'cut', 'contextmenu', 'dragstart', 'pointerdown', 'mousedown', 'mouseup', 'auxclick'].forEach(function (eventName) {
+              targetDocument.addEventListener(eventName, handleBlockedContentCopyEvent, true);
+          });
+          targetDocument.addEventListener('keydown', handleBlockedContentCopyKeyDown, true);
       }
 
       function showNeedEditModeModalFromCellEditor() {
@@ -204,10 +246,10 @@
           iframe.contentDocument.__cellEditorEditAttemptListenerBound = true;
 
           iframe.contentDocument.addEventListener('beforeinput', function (e) {
-              if (!isCellEditorInput(getEditAttemptTarget(e)))
-                  return;
+              const target = getEditAttemptTarget(e);
+              const isCellEditorInput = !!(target && target.id === 'ce-cell-content');
 
-              if (!showNeedEditModeModalFromCellEditor())
+              if (!isCellEditorInput || !showNeedEditModeModalFromCellEditor())
                   return;
 
               e.preventDefault();
@@ -498,8 +540,9 @@
             return false;
 
         var target = getEditAttemptTarget(e);
+        var isOnlyOfficeDocumentInput = !!(target && target.id === 'area_id');
 
-        if (isNativeEditableElement(target) && !isOnlyOfficeDocumentInput(target))
+        if (isNativeEditableElement(target) && !isOnlyOfficeDocumentInput)
             return false;
 
         if (e.type === 'paste' || e.type === 'cut' || e.type === 'drop')
@@ -589,6 +632,7 @@
       if (iframe.contentDocument.__blockedEditAttemptListenersBound) return true;
 
       iframe.contentDocument.__blockedEditAttemptListenersBound = true;
+      bindBlockedContentCopyListeners(iframe.contentDocument);
 
       ['keydown', 'paste', 'cut', 'drop'].forEach(function (eventName) {
         iframe.contentDocument.addEventListener(eventName, handleBlockedEditAttempt, true);
@@ -1981,6 +2025,7 @@
         bindViewerModeModal();
         bindOnlyOfficeWelcomeScreen();
         bindSaveShortcutListeners();
+        bindBlockedContentCopyListeners(document);
 
         // Cache the iframe's internal api so we can hot-toggle restriction
         // without destroy/reconstruct. The Viewport controller may not be
