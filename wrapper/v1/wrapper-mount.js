@@ -1059,7 +1059,7 @@
       /* Sharekey header logo (customization.logo): Header.setBranding writes an
          inline `max-height:20px` on the <img>, so !important is required to bump
          it to the logo's native 24px. */
-      '#header-logo{cursor: pointer;}',
+      '#header-logo{cursor: pointer; padding-right: 17px !important;}',
       '#header-logo img{max-height:24px !important;}',
       /* Remove the "From Text/CSV" group from the xlsx Data tab. The button slot
          (#slot-btn-data-from-text) has no data-layout-name, so the layout config
