@@ -235,7 +235,40 @@
           return true;
       }
 
+      function isTurnOnEditModeModalVisible() {
+          var modal = document.getElementById('turn-on-edit-mode');
 
+          return !!(modal && modal.style.display === 'flex');
+      }
+
+      function focusTurnOnEditModeModal() {
+          var modal = document.getElementById('turn-on-edit-mode');
+
+          if (!modal)
+              return;
+
+          modal.setAttribute('tabindex', '-1');
+          modal.focus();
+      }
+
+      function handleTurnOnEditModeModalKeyDown(e) {
+          if (!isTurnOnEditModeModalVisible())
+              return;
+
+          if (!e || e.key !== 'Enter')
+              return;
+
+          e.preventDefault();
+          e.stopPropagation();
+
+          if (typeof e.stopImmediatePropagation === 'function')
+              e.stopImmediatePropagation();
+
+          var editButton = document.getElementById('toem-edit-btn');
+
+          if (editButton)
+              editButton.click();
+      }
 
       function wrapPresentationFocusObjectMethod(object) {
           if (!object || typeof object.onFocusObject !== 'function')
@@ -528,6 +561,7 @@
       log('blocked edit attempt listeners bound');
 
       iframe.contentDocument.addEventListener('keydown', handleSaveShortcut, true);
+      iframe.contentDocument.addEventListener('keydown', handleTurnOnEditModeModalKeyDown, true);
 
       log('save shortcut listener bound on editor iframe document');
 
@@ -549,6 +583,8 @@
       }
 
       modal.style.display = 'flex';
+
+      focusTurnOnEditModeModal();
 
       log('showNeedEditModeModal');
     }
@@ -597,6 +633,8 @@
       if (modal.__turnOnEditModeBound) return;
 
       modal.__turnOnEditModeBound = true;
+
+      document.addEventListener('keydown', handleTurnOnEditModeModalKeyDown, true);
 
       editButton.onclick = function () {
         modal.style.display = 'none';
