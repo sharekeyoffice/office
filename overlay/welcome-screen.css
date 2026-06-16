@@ -16,7 +16,7 @@
 
 #welcome-screen img {
     width: 95%;
-    transform: translateX(29px) translateY(26px);
+    transform: translateX(29px);
 }
 
 #welcome-screen .ws-dialog {
@@ -37,11 +37,11 @@
 #welcome-screen .ws-title {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 13px;
     font-family: system-ui, sans-serif;
     font-size: 30px;
     line-height: 100%;
-    margin: 0 0 17px 60px;
+    margin: 0 0 22px 60px;
 }
 
 #welcome-screen .ws-body {
@@ -51,14 +51,8 @@
     margin-left: 36px;
 }
 
-@media (max-width: 990px) {
-    #welcome-screen .ws-body {
-        align-items: center;
-    }
-}
-
 #welcome-screen .ws-info-container {
-    margin-top: 47px;
+    margin-top: 20px;
 }
 
 #welcome-screen .ws-info-files {
@@ -141,6 +135,43 @@
     font-family: system-ui, sans-serif;
 }
 
+#welcome-screen .ws-footnote-rights {
+    margin-top: 3px;
+    font-family: system-ui, sans-serif;
+    line-height: 16px;
+    font-size: 13px;
+    color: rgba(53, 80, 105, 0.7);
+}
+
+#welcome-screen .ws-footnote-rights > a {
+    color: #0F8CC9;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+#welcome-screen .ws-footnote {
+    display: flex;
+    justify-content: flex-start;
+    gap: 50px;
+    align-items: center;
+    margin-top: 14px;
+    padding-left: 59px;
+}
+
+#welcome-screen .ws-footnote-coming-soon {
+    font-size: 16px;
+    line-height: 24px;
+    font-family: system-ui, sans-serif;
+}
+
+#welcome-screen .ws-footnote-rights-small-screen-divider {
+    display: none;
+}
+
+#welcome-screen .ws-footnote-coming-soon > strong {
+    font-family: system-ui, sans-serif;
+}
+
 #ws-close-btn {
     position: absolute;
     right: 14px;
@@ -150,6 +181,27 @@
 
 #ws-close-btn:hover rect {
     fill-opacity: 0.25;
+}
+
+@media (max-width: 990px) {
+    #welcome-screen .ws-body {
+        align-items: center;
+    }
+
+    #welcome-screen .ws-footnote {
+        gap: unset;
+        justify-content: space-between;
+        align-items: flex-start;
+        padding-right: 59px;
+    }
+
+    #welcome-screen .ws-footnote-rights-small-screen-divider {
+        display: block !important;
+    }
+
+    #welcome-screen .ws-footnote-rights {
+        text-align: end;
+    }
 }
 
 @media (max-height: 640px) {
@@ -165,7 +217,7 @@
     }
 
     #welcome-screen .ws-info-container {
-        margin-top: 6vh;
+        margin-top: 2vh;
     }
 
     #welcome-screen .ws-info-badge,
