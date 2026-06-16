@@ -175,7 +175,7 @@
       }
 
 
-      function getDebugController(name, editorWindow) {
+      function getPresentationController(name, editorWindow) {
           try {
               if (!editorWindow || !editorWindow.PE || typeof editorWindow.PE.getController !== 'function')
                   return null;
@@ -299,9 +299,9 @@
 
           var iframe = document.querySelector('iframe[name="frameEditor"]');
           var editorWindow = iframe && iframe.contentWindow;
-          var documentHolder = getDebugController('DocumentHolder', editorWindow);
-          var toolbar = getDebugController('Toolbar', editorWindow);
-          var main = getDebugController('Main', editorWindow);
+          var documentHolder = getPresentationController('DocumentHolder', editorWindow);
+          var toolbar = getPresentationController('Toolbar', editorWindow);
+          var main = getPresentationController('Main', editorWindow);
           var wrappedCount = 0;
 
           [
