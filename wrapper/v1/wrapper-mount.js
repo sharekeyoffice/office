@@ -174,6 +174,46 @@
           return !!(element && element.id === 'area_id');
       }
 
+      function isCellEditorInput(element) {
+          return !!(element && element.id === 'ce-cell-content');
+      }
+
+      function showNeedEditModeModalFromCellEditor() {
+          if (currentMode === 'edit' || !canEdit)
+              return false;
+
+          showNeedEditModeModal();
+
+          log('blocked cell editor edit attempt: user is not in edit mode');
+
+          return true;
+      }
+
+      function bindCellEditorEditAttemptListener() {
+          if (type !== 'cell')
+              return;
+
+          var iframe = document.querySelector('iframe[name="frameEditor"]');
+
+          if (!iframe || !iframe.contentDocument)
+              return;
+
+          if (iframe.contentDocument.__cellEditorEditAttemptListenerBound)
+              return;
+
+          iframe.contentDocument.__cellEditorEditAttemptListenerBound = true;
+
+          iframe.contentDocument.addEventListener('beforeinput', function (e) {
+              if (!isCellEditorInput(getEditAttemptTarget(e)))
+                  return;
+
+              if (!showNeedEditModeModalFromCellEditor())
+                  return;
+
+              e.preventDefault();
+              e.stopPropagation();
+          }, true);
+      }
 
       function getPresentationController(name, editorWindow) {
           try {
@@ -553,6 +593,7 @@
       ['keydown', 'paste', 'cut', 'drop'].forEach(function (eventName) {
         iframe.contentDocument.addEventListener(eventName, handleBlockedEditAttempt, true);
       });
+      bindCellEditorEditAttemptListener();
       iframe.contentDocument.addEventListener('pointerdown', markPresentationPointerDown, true);
       iframe.contentDocument.addEventListener('mousedown', markPresentationPointerDown, true);
       iframe.contentDocument.addEventListener('click', handlePresentationCanvasClick, true);
