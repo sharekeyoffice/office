@@ -1,0 +1,364 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <title>Loading document…</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <link rel="stylesheet" href="/fonts.css" />
+        <link rel="stylesheet" href="/edit.css" />
+        <link rel="stylesheet" href="/connection-lost.css" />
+        <link rel="stylesheet" href="/turn-on-edit-mode.css" />
+        <link rel="stylesheet" href="/viewer-mode.css" />
+        <link rel="stylesheet" href="/welcome-screen.css" />
+
+        <!-- Tab favicon from ?type= so users can recognise document tabs at a
+       glance. Title gets replaced with the filename later, once the host
+       sends `load` over postMessage (see wrapper-postmessage.js onLoad). -->
+        <script>
+            (function () {
+                var match = /[?&]type=([^&]*)/.exec(window.location.search);
+                var type = match ? decodeURIComponent(match[1]) : "word";
+                var icon =
+                    { word: "word", cell: "cell", slide: "slide" }[type] ||
+                    "word";
+                var link = document.createElement("link");
+                link.rel = "icon";
+                link.type = "image/svg+xml";
+                link.href = "/icons/" + icon + ".svg";
+                document.head.appendChild(link);
+            })();
+        </script>
+    </head>
+    <body>
+        <!-- Pre-mount: validate opener. If the editor was opened directly
+       (no opener), refuse to mount and show error.
+       The allowed main app origin is BAKED INTO this file at build
+       time — see build/04-assemble-dist.sh which substitutes the
+       __ALLOWED_HOST_ORIGIN__ placeholder. -->
+        <script>
+            (function () {
+                "use strict";
+
+                // Substituted by build pipeline. If you see the literal placeholder
+                // string at runtime, the build's substitution step didn't run —
+                // re-run `bash build/build.sh`.
+                var ALLOWED_HOST_ORIGIN = "__ALLOWED_HOST_ORIGIN__";
+
+                // Sanity: refuse to run if substitution didn't happen.
+                if (ALLOWED_HOST_ORIGIN.indexOf("__") === 0) {
+                    document.body.innerHTML =
+                        '<div class="startup-error">' +
+                        "<h1>Configuration error</h1>" +
+                        "<p>This deployment is missing its allowed-host-origin configuration. " +
+                        "Contact the operator.</p>" +
+                        "</div>";
+                    return;
+                }
+
+                // No opener → direct visit → refuse to mount.
+                var hasOpener = !!(window.opener && window.opener !== window);
+                if (!hasOpener) {
+                    document.body.innerHTML =
+                        '<div class="startup-error">' +
+                        "<h1>Open a document from your main app</h1>" +
+                        "<p>This page is the document editor. To open a file, " +
+                        "click on it from within your main app.</p>" +
+                        '<p style="font-size:.85em;color:#999">' +
+                        "If you arrived here directly, please go back to the main app " +
+                        "and open a document.</p>" +
+                        "</div>";
+                    return;
+                }
+
+                // The baked allowed-origin RULE. May be:
+                //   • an exact origin:      https://app.example.com   (prod)
+                //   • a wildcard subdomain: https://*.dev.example.com
+                //   • a comma-separated list of either
+                // window.matchHostOrigin(origin) is the single source of truth
+                // for "is this inbound origin allowed?" — used by both
+                // wrapper-postmessage.js and wrapper-heartbeat.js. Exact origins
+                // stay exact (prod is unchanged); only a `*.` rule is permissive.
+                window.HOST_ORIGIN = ALLOWED_HOST_ORIGIN; // the rule (may be a pattern)
+                window.matchHostOrigin = (function (rule) {
+                    var rules = String(rule)
+                        .split(",")
+                        .map(function (s) { return s.trim(); })
+                        .filter(Boolean);
+                    return function (origin) {
+                        if (!origin) return false;
+                        var u;
+                        try { u = new URL(origin); } catch (e) { return false; }
+                        var host = u.hostname.toLowerCase();
+                        var scheme = u.protocol; // e.g. "https:"
+                        for (var i = 0; i < rules.length; i++) {
+                            var r = rules[i];
+                            var star = r.indexOf("://*.");
+                            if (star === -1) {
+                                if (origin === r) return true; // exact match
+                            } else {
+                                // "https://*.dev.example.com" → scheme "https:",
+                                // base "dev.example.com". Match the base itself
+                                // or any subdomain of it. Parsed via URL() so a
+                                // lookalike host like x.dev.example.com.evil.com
+                                // (hostname ends in .evil.com) can't sneak through.
+                                var rscheme = r.slice(0, r.indexOf("://") + 1);
+                                var base = r.slice(star + 5).toLowerCase();
+                                if (
+                                    scheme === rscheme &&
+                                    (host === base || host.endsWith("." + base))
+                                ) {
+                                    return true;
+                                }
+                            }
+                        }
+                        return false;
+                    };
+                })(ALLOWED_HOST_ORIGIN);
+                if (window.console) {
+                    console.log("[edit] allowed host-origin rule =", ALLOWED_HOST_ORIGIN);
+                }
+
+                // Load the editor (only after validation passes).
+                // CRITICAL: script.async = false on each. Without it,
+                // dynamically-created scripts execute in arbitrary order and
+                // wrapper-mount.js may run before WrapperPostMessage exists.
+                [
+                    "/web-apps/apps/api/documents/api.js",
+                    "/x2t-bridge.js",
+                    "/wrapper-customization.js",
+                    "/wrapper-postmessage.js",
+                    "/wrapper-mount.js",
+                ].forEach(function (src) {
+                    var s = document.createElement("script");
+                    s.src = src;
+                    s.async = false;
+                    document.body.appendChild(s);
+                });
+            })();
+        </script>
+
+        <!-- DocsAPI replaces this <div> with an <iframe> on construction. -->
+        <div id="placeholder"></div>
+
+        <!-- Mode-switch ("Edit" button) AND the "<who> is editing the document…"
+       label are now our own controls injected INTO the editor header (inside
+       the iframe) by wrapper-mount.js mountHeaderControls() (approach B) —
+       they replace the old outer-page #mode-button and #lock-held-banner
+       overlays. -->
+
+        <!-- Save-state indicator. Updated by wrapper-postmessage.js's setSaveState().
+       Bottom-right corner so it doesn't overlap with the editor's toolbar.
+       Empty text in idle state (data-state="idle"). -->
+        <div id="save-state" data-state="idle"></div>
+
+        <!-- Connection-lost modal (hidden by default; shown on disconnection) -->
+        <div id="connection-lost-modal">
+            <div class="cl-backdrop"></div>
+            <div
+                class="cl-dialog"
+                role="alertdialog"
+                aria-labelledby="cl-title"
+                aria-describedby="cl-desc"
+            >
+                <div id="cl-title">Sharekey Main App Closed</div>
+                <div class="cl-dialog-description">The Sharekey Main App needs to be always open to access Office Documents.</div>
+                <div class="cl-dialog-description">Please reopen the Main App and this document.</div>
+                <div class="cl-dialog-warning">The latest changes made in this document could NOT be saved.</div>
+                <button id="cl-close-btn" type="button">Close Document</button>
+            </div>
+        </div>
+
+        <div id="turn-on-edit-mode">
+            <div class="toem-backdrop"></div>
+            <div
+                class="toem-dialog"
+                role="alertdialog"
+                aria-labelledby="cl-title"
+                aria-describedby="cl-desc"
+            >
+                <svg id="toem-close-btn" width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="20" height="20" rx="10" fill="#355069" fill-opacity="0.15"/>
+                    <path d="M12.8769 6.20356C13.1307 5.94972 13.543 5.94972 13.7968 6.20356C14.0505 6.45733 14.0504 6.86869 13.7968 7.12251L10.9189 10.0004L13.7958 12.8774C14.0493 13.1312 14.0495 13.5426 13.7958 13.7963C13.542 14.0502 13.1298 14.0502 12.8759 13.7963L9.99897 10.9194L7.123 13.7963C6.8692 14.0501 6.4579 14.0501 6.20405 13.7963C5.95021 13.5425 5.95021 13.1312 6.20405 12.8774L9.08003 10.0004L6.20308 7.12251C5.94924 6.86867 5.94924 6.4574 6.20308 6.20356C6.45692 5.94982 6.86821 5.94976 7.12202 6.20356L9.99897 9.08052L12.8769 6.20356Z" fill="#355069" fill-opacity="0.8"/>
+                </svg>
+                <div id="toem-title">TURN ON EDITING</div>
+                <svg class="toem-dialog-icon" width="250" height="150" viewBox="0 0 250 150" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="250" height="150" fill="white"/>
+                    <path d="M138.284 13.7021C139.638 13.7022 140.941 14.2071 141.939 15.1123L142.136 15.2988L174.908 48.1064C175.928 49.127 176.5 50.5107 176.5 51.9531V65.5811L176.486 65.5908C176.13 65.8055 175.781 66.0539 175.45 66.3428L175.298 66.4824L175.188 66.5869C175.157 66.6162 175.126 66.6457 175.096 66.6758L143.347 98.4248C142.268 99.5033 141.554 100.894 141.309 102.402C141.296 102.479 141.285 102.557 141.276 102.635L141.252 102.84C141.244 102.911 141.239 102.983 141.233 103.055L140.5 113.343C140.349 115.461 141.131 117.535 142.634 119.026C144.042 120.424 145.959 121.185 147.938 121.137L148.335 121.116L158.604 120.303L158.925 120.27C160.527 120.071 162.026 119.343 163.176 118.193L176.5 104.869V114.107C176.5 126.171 166.873 135.987 154.882 136.291C154.692 136.296 154.501 136.298 154.31 136.298H95.6914L95.1182 136.291C94.1665 136.267 93.2298 136.182 92.3115 136.042C91.9442 135.986 91.5799 135.921 91.2188 135.847C88.8714 135.366 86.6591 134.515 84.6455 133.357C84.0258 133.001 83.4249 132.616 82.8447 132.203C82.4744 131.94 82.1137 131.664 81.7607 131.379C81.2845 130.994 80.8234 130.592 80.3809 130.17C79.4816 129.313 78.6537 128.381 77.9082 127.384C77.7502 127.173 77.5978 126.957 77.4473 126.74C76.4817 125.349 75.6693 123.842 75.0391 122.244C74.774 121.572 74.5412 120.884 74.3418 120.182C74.292 120.006 74.2438 119.83 74.1982 119.653C74.149 119.462 74.1028 119.269 74.0586 119.076C73.6931 117.479 73.5001 115.816 73.5 114.107V35.8936C73.5 34.3614 73.6555 32.8656 73.9512 31.4209C74.099 30.6985 74.2819 29.9889 74.498 29.2939C74.7141 28.5993 74.9635 27.9194 75.2441 27.2559C75.8056 25.9284 76.4925 24.6669 77.29 23.4863C78.3868 21.8629 79.6925 20.3922 81.1689 19.1133C81.4373 18.8808 81.7108 18.6541 81.9902 18.4346C82.4094 18.1051 82.8414 17.7913 83.2842 17.4922C84.1695 16.8941 85.1003 16.3581 86.0703 15.8906C86.3939 15.7347 86.7216 15.5858 87.0537 15.4453C87.3855 15.305 87.7217 15.1732 88.0615 15.0488C88.4015 14.9243 88.7452 14.8073 89.0928 14.6992C89.4401 14.5912 89.7911 14.4916 90.1455 14.4004C91.0319 14.1723 91.9397 13.9975 92.8652 13.8799C93.4206 13.8093 93.9824 13.7592 94.5498 13.7305C94.7386 13.7209 94.9281 13.7138 95.1182 13.709C95.3086 13.7042 95.4998 13.7021 95.6914 13.7021H138.284ZM138.206 35.2197C138.206 44.4691 145.705 51.9678 154.954 51.9678H169.298L138.206 20.8438V35.2197Z" fill="#D5ECEF"/>
+                    <g filter="url(#filter0_d_16164_11753)">
+                        <path d="M159.641 114.658C159.257 115.041 158.749 115.275 158.208 115.318L147.94 116.132C147.279 116.184 146.627 115.944 146.156 115.477C145.685 115.009 145.44 114.36 145.487 113.698L146.22 103.41L146.244 103.205C146.32 102.736 146.543 102.3 146.882 101.96L172.185 76.6579L184.913 89.3858L159.641 114.658ZM190.09 71.3863C192.517 73.813 192.938 76.6275 192.755 78.7343C192.665 79.7707 192.432 80.6516 192.221 81.2734C192.115 81.5867 192.012 81.8415 191.932 82.0268C191.892 82.1196 191.856 82.1965 191.829 82.254C191.816 82.2823 191.804 82.3065 191.795 82.3258C191.79 82.3354 191.785 82.344 191.782 82.3513C191.78 82.3549 191.778 82.3587 191.777 82.3617L191.773 82.3679L189.745 81.33L191.773 82.37C191.664 82.5806 191.524 82.7743 191.357 82.9417L188.448 85.8503L175.72 73.1223L178.631 70.2117L178.742 70.1068C178.856 70.0069 178.98 69.9191 179.112 69.8437L180.242 71.8228C179.143 69.8962 179.115 69.8442 179.115 69.8423L179.117 69.8416L179.132 69.8326C179.139 69.8285 179.148 69.8241 179.158 69.8188C179.177 69.8082 179.201 69.7943 179.229 69.7795C179.286 69.7495 179.362 69.7116 179.453 69.6676C179.635 69.5797 179.886 69.467 180.194 69.35C180.807 69.1177 181.677 68.8558 182.71 68.743C184.828 68.5117 187.628 68.9243 190.09 71.3863Z" fill="url(#paint0_linear_16164_11753)"/>
+                    </g>
+                    <defs>
+                        <filter id="filter0_d_16164_11753" x="133.482" y="59.687" width="71.3112" height="71.4517" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+                            <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+                            <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+                            <feOffset dy="3"/>
+                            <feGaussianBlur stdDeviation="6"/>
+                            <feColorMatrix type="matrix" values="0 0 0 0 0.552941 0 0 0 0 0.607843 0 0 0 0 0.658824 0 0 0 0.12 0"/>
+                            <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_16164_11753"/>
+                            <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_16164_11753" result="shape"/>
+                        </filter>
+                        <linearGradient id="paint0_linear_16164_11753" x1="135.604" y1="140.502" x2="119.399" y2="93.1956" gradientUnits="userSpaceOnUse">
+                            <stop stop-color="#125E99"/>
+                            <stop offset="1" stop-color="#64E1D8"/>
+                        </linearGradient>
+                    </defs>
+                </svg>
+                <div class="toem-dialog-description">You are in <strong>Viewer Mode.</strong></div>
+                <div class="toem-dialog-description">Click the <strong>Edit</strong> button to start editing this document.</div>
+                <button id="toem-edit-btn" type="button">Edit</button>
+            </div>
+        </div>
+
+        <div id="viewer-mode">
+            <div class="vm-backdrop"></div>
+            <div
+                    class="vm-dialog"
+                    role="alertdialog"
+                    aria-labelledby="cl-title"
+                    aria-describedby="cl-desc"
+            >
+                <svg id="vm-close-btn" width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="20" height="20" rx="10" fill="#355069" fill-opacity="0.15"/>
+                    <path d="M12.8769 6.20356C13.1307 5.94972 13.543 5.94972 13.7968 6.20356C14.0505 6.45733 14.0504 6.86869 13.7968 7.12251L10.9189 10.0004L13.7958 12.8774C14.0493 13.1312 14.0495 13.5426 13.7958 13.7963C13.542 14.0502 13.1298 14.0502 12.8759 13.7963L9.99897 10.9194L7.123 13.7963C6.8692 14.0501 6.4579 14.0501 6.20405 13.7963C5.95021 13.5425 5.95021 13.1312 6.20405 12.8774L9.08003 10.0004L6.20308 7.12251C5.94924 6.86867 5.94924 6.4574 6.20308 6.20356C6.45692 5.94982 6.86821 5.94976 7.12202 6.20356L9.99897 9.08052L12.8769 6.20356Z" fill="#355069" fill-opacity="0.8"/>
+                </svg>
+                <div id="vm-title">EDITING LOCKED</div>
+                <svg class="vm-dialog-icon" width="250" height="160" viewBox="0 0 250 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="250" height="150" fill="white"/>
+                    <path d="M138.284 13.7021C139.638 13.7022 140.941 14.2071 141.939 15.1123L142.136 15.2988L174.908 48.1064C175.928 49.127 176.5 50.5107 176.5 51.9531V65.5811L176.486 65.5908C176.13 65.8055 175.781 66.0539 175.45 66.3428L175.298 66.4824L175.188 66.5869C175.157 66.6162 175.126 66.6457 175.096 66.6758L143.347 98.4248C142.268 99.5033 141.554 100.894 141.309 102.402C141.296 102.479 141.285 102.557 141.276 102.635L141.252 102.84C141.244 102.911 141.239 102.983 141.233 103.055L140.5 113.343C140.349 115.461 141.131 117.535 142.634 119.026C144.042 120.424 145.959 121.185 147.938 121.137L148.335 121.116L158.604 120.303L158.925 120.27C160.527 120.071 162.026 119.343 163.176 118.193L176.5 104.869V114.107C176.5 126.171 166.873 135.987 154.882 136.291C154.692 136.296 154.501 136.298 154.31 136.298H95.6914L95.1182 136.291C94.1665 136.267 93.2298 136.182 92.3115 136.042C91.9442 135.986 91.5799 135.921 91.2188 135.847C88.8714 135.366 86.6591 134.515 84.6455 133.357C84.0258 133.001 83.4249 132.616 82.8447 132.203C82.4744 131.94 82.1137 131.664 81.7607 131.379C81.2845 130.994 80.8234 130.592 80.3809 130.17C79.4816 129.313 78.6537 128.381 77.9082 127.384C77.7502 127.173 77.5978 126.957 77.4473 126.74C76.4817 125.349 75.6693 123.842 75.0391 122.244C74.774 121.572 74.5412 120.884 74.3418 120.182C74.292 120.006 74.2438 119.83 74.1982 119.653C74.149 119.462 74.1028 119.269 74.0586 119.076C73.6931 117.479 73.5001 115.816 73.5 114.107V35.8936C73.5 34.3614 73.6555 32.8656 73.9512 31.4209C74.099 30.6985 74.2819 29.9889 74.498 29.2939C74.7141 28.5993 74.9635 27.9194 75.2441 27.2559C75.8056 25.9284 76.4925 24.6669 77.29 23.4863C78.3868 21.8629 79.6925 20.3922 81.1689 19.1133C81.4373 18.8808 81.7108 18.6541 81.9902 18.4346C82.4094 18.1051 82.8414 17.7913 83.2842 17.4922C84.1695 16.8941 85.1003 16.3581 86.0703 15.8906C86.3939 15.7347 86.7216 15.5858 87.0537 15.4453C87.3855 15.305 87.7217 15.1732 88.0615 15.0488C88.4015 14.9243 88.7452 14.8073 89.0928 14.6992C89.4401 14.5912 89.7911 14.4916 90.1455 14.4004C91.0319 14.1723 91.9397 13.9975 92.8652 13.8799C93.4206 13.8093 93.9824 13.7592 94.5498 13.7305C94.7386 13.7209 94.9281 13.7138 95.1182 13.709C95.3086 13.7042 95.4998 13.7021 95.6914 13.7021H138.284ZM138.206 35.2197C138.206 44.4691 145.705 51.9678 154.954 51.9678H169.298L138.206 20.8438V35.2197Z" fill="#D5ECEF"/>
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M76.0049 149.3C91.1927 149.3 103.505 136.988 103.505 121.8C103.505 106.612 91.1927 94.2998 76.0049 94.2998C60.8171 94.2998 48.5049 106.612 48.5049 121.8C48.5049 136.988 60.8171 149.3 76.0049 149.3Z" fill="white"/>
+                    <g filter="url(#filter0_d_16205_13206)">
+                        <path d="M76.0049 99.2998C88.4313 99.2998 98.5049 109.373 98.5049 121.8C98.5049 134.226 88.4313 144.3 76.0049 144.3C63.5785 144.3 53.5049 134.226 53.5049 121.8C53.5049 109.373 63.5785 99.2998 76.0049 99.2998ZM76.0049 129.781C74.348 129.781 73.0049 131.124 73.0049 132.781C73.0049 134.438 74.348 135.781 76.0049 135.781C77.6617 135.781 79.0049 134.438 79.0049 132.781C79.0049 131.124 77.6617 129.781 76.0049 129.781ZM76.0049 108.042C74.6242 108.042 73.5049 109.161 73.5049 110.542V123.282C73.505 124.663 74.6242 125.782 76.0049 125.782C77.3855 125.782 78.5048 124.663 78.5049 123.282V110.542C78.5049 109.161 77.3856 108.042 76.0049 108.042Z" fill="url(#paint0_linear_16205_13206)"/>
+                    </g>
+                    <g filter="url(#filter1_d_16205_13206)">
+                        <path d="M159.641 114.658C159.257 115.041 158.749 115.275 158.208 115.318L147.94 116.132C147.279 116.184 146.627 115.944 146.156 115.477C145.685 115.009 145.44 114.36 145.487 113.698L146.22 103.41L146.244 103.205C146.32 102.736 146.543 102.3 146.882 101.96L172.185 76.6579L184.913 89.3858L159.641 114.658ZM190.09 71.3863C192.517 73.813 192.938 76.6275 192.755 78.7343C192.665 79.7707 192.432 80.6516 192.221 81.2734C192.115 81.5867 192.012 81.8415 191.932 82.0268C191.892 82.1196 191.856 82.1965 191.829 82.254C191.816 82.2823 191.804 82.3065 191.795 82.3258C191.79 82.3354 191.785 82.344 191.782 82.3513C191.78 82.3549 191.778 82.3587 191.777 82.3617L191.773 82.3679L189.745 81.33L191.773 82.37C191.664 82.5806 191.524 82.7743 191.357 82.9417L188.448 85.8503L175.72 73.1223L178.631 70.2117L178.742 70.1068C178.856 70.0069 178.98 69.9191 179.112 69.8437L180.242 71.8228C179.143 69.8962 179.115 69.8442 179.115 69.8423L179.117 69.8416L179.132 69.8326C179.139 69.8285 179.148 69.8241 179.158 69.8188C179.177 69.8082 179.201 69.7943 179.229 69.7795C179.286 69.7495 179.362 69.7116 179.453 69.6676C179.635 69.5797 179.886 69.467 180.194 69.35C180.807 69.1177 181.677 68.8558 182.71 68.743C184.828 68.5117 187.628 68.9243 190.09 71.3863Z" fill="url(#paint1_linear_16205_13206)"/>
+                    </g>
+                    <defs>
+                        <filter id="filter0_d_16205_13206" x="41.5049" y="90.2998" width="69" height="69" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+                            <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+                            <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+                            <feOffset dy="3"/>
+                            <feGaussianBlur stdDeviation="6"/>
+                            <feColorMatrix type="matrix" values="0 0 0 0 0.552941 0 0 0 0 0.607843 0 0 0 0 0.658824 0 0 0 0.12 0"/>
+                            <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_16205_13206"/>
+                            <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_16205_13206" result="shape"/>
+                        </filter>
+                        <filter id="filter1_d_16205_13206" x="133.482" y="59.687" width="71.311" height="71.4517" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+                            <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+                            <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+                            <feOffset dy="3"/>
+                            <feGaussianBlur stdDeviation="6"/>
+                            <feColorMatrix type="matrix" values="0 0 0 0 0.552941 0 0 0 0 0.607843 0 0 0 0 0.658824 0 0 0 0.12 0"/>
+                            <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_16205_13206"/>
+                            <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_16205_13206" result="shape"/>
+                        </filter>
+                        <linearGradient id="paint0_linear_16205_13206" x1="55.8008" y1="109.284" x2="96.3024" y2="144.569" gradientUnits="userSpaceOnUse">
+                            <stop stop-color="#FFEB3C"/>
+                            <stop offset="1" stop-color="#FFC400"/>
+                        </linearGradient>
+                        <linearGradient id="paint1_linear_16205_13206" x1="135.604" y1="140.502" x2="119.399" y2="93.1956" gradientUnits="userSpaceOnUse">
+                            <stop stop-color="#125E99"/>
+                            <stop offset="1" stop-color="#64E1D8"/>
+                        </linearGradient>
+                    </defs>
+                </svg>
+                <div class="vm-dialog-description">You are in <strong>Viewer Mode.</strong></div>
+                <div class="vm-dialog-description"><strong id="vm-username"></strong> is currently editing this document.</div>
+                <div class="vm-dialog-description">You can edit it when no one else is editing.</div>
+                <div class="vm-dialog-footnote">Co-Editing is coming soon.</div>
+                <button id="vm-сonfirm-btn" type="button">Got it</button>
+            </div>
+        </div>
+
+        <div id="welcome-screen">
+            <div class="ws-backdrop"></div>
+            <div
+                    class="ws-dialog"
+                    role="alertdialog"
+                    aria-labelledby="ws-title"
+                    aria-describedby="ws-desc"
+            >
+                <svg id="ws-close-btn" width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="20" height="20" rx="10" fill="#355069" fill-opacity="0.15"/>
+                    <path d="M12.8769 6.20356C13.1307 5.94972 13.543 5.94972 13.7968 6.20356C14.0505 6.45733 14.0504 6.86869 13.7968 7.12251L10.9189 10.0004L13.7958 12.8774C14.0493 13.1312 14.0495 13.5426 13.7958 13.7963C13.542 14.0502 13.1298 14.0502 12.8759 13.7963L9.99897 10.9194L7.123 13.7963C6.8692 14.0501 6.4579 14.0501 6.20405 13.7963C5.95021 13.5425 5.95021 13.1312 6.20405 12.8774L9.08003 10.0004L6.20308 7.12251C5.94924 6.86867 5.94924 6.4574 6.20308 6.20356C6.45692 5.94982 6.86821 5.94976 7.12202 6.20356L9.99897 9.08052L12.8769 6.20356Z" fill="#355069" fill-opacity="0.8"/>
+                </svg>
+                <div class="ws-title">
+                    Welcome to SHAREKEY
+                    <svg width="42" height="42" viewBox="0 0 42 42" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path fill-rule="evenodd" clip-rule="evenodd" d="M18.6186 38.2541C15.7716 36.1987 15.13 32.2244 17.1854 29.3774C17.19 29.3711 17.1946 29.3648 17.1992 29.3584C17.5885 28.8234 17.8847 28.4162 18.0877 28.1367C18.5542 27.4947 20.2775 25.161 23.2577 21.1358C25.3285 18.3388 29.2665 17.7332 32.082 19.7788C34.892 21.8203 35.5204 25.7505 33.4871 28.5665L27.5307 36.8155C25.4669 39.6737 21.4769 40.3178 18.6186 38.2541Z" fill="url(#paint0_linear_16300_23980)"/>
+                            <path opacity="0.490149" fill-rule="evenodd" clip-rule="evenodd" d="M28.4092 35.6039C28.7505 33.7929 28.8387 32.5173 28.6737 31.7771C28.0759 29.0957 26.1993 27.4347 24.4828 26.9141C22.0553 26.1779 19.8051 26.7556 17.732 28.6471C20.0952 25.4206 21.4692 23.5426 21.8539 23.0131C22.2386 22.4836 24.0849 20.0493 27.3927 15.7104L37.5637 23.1L28.4092 35.6039Z" fill="black" fill-opacity="0.166412"/>
+                            <path fill-rule="evenodd" clip-rule="evenodd" d="M13.3088 22.1763L12.8484 21.8419C10.1649 19.8922 9.57001 16.1362 11.5197 13.4527C11.8474 13.0016 12.1751 12.5506 12.5028 12.0995C12.9641 11.4646 14.6024 9.14971 17.4175 5.15484L17.4175 5.15484C19.4163 2.31855 23.3358 1.63956 26.1721 3.63829C26.2034 3.66036 26.2345 3.68271 26.2654 3.70535C29.1197 5.79588 29.7438 9.80194 27.6607 12.6616L21.6937 20.8535C19.7424 23.5324 15.99 24.1244 13.3088 22.1763Z" fill="url(#paint1_linear_16300_23980)"/>
+                            <path fill-rule="evenodd" clip-rule="evenodd" d="M16.3591 6.71419C14.1266 12.052 18.9889 19.1509 26.2749 15.7498C26.5928 15.6014 26.9169 15.4836 27.2276 15.3482C28.9108 14.6143 30.6018 14.346 32.3005 14.5432C35.7462 14.9433 38.2151 18.0608 37.8151 21.5065C37.6897 22.5867 37.2859 23.6158 36.6434 24.4931L30.3546 33.0803L28.4108 35.4829C31.0051 29.804 26.0825 23.0045 18.8126 25.9553C17.3911 26.5323 15.7121 27.1122 14.4619 27.3288C13.561 27.4848 12.6186 27.4234 11.6347 27.1444C8.29738 26.1984 6.35891 22.726 7.30498 19.3887C7.51961 18.6316 7.87462 17.9216 8.35153 17.2955C13.1004 11.062 15.7696 7.53484 16.3591 6.71419Z" fill="url(#paint2_linear_16300_23980)"/>
+                            <defs>
+                            <linearGradient id="paint0_linear_16300_23980" x1="20.884" y1="39.3273" x2="28.0468" y2="22.9984" gradientUnits="userSpaceOnUse">
+                            <stop stop-color="#0C5495"/>
+                            <stop offset="1" stop-color="#0F5A9D"/>
+                            </linearGradient>
+                            <linearGradient id="paint1_linear_16300_23980" x1="25.2331" y1="3.3658" x2="0.504738" y2="-0.840082" gradientUnits="userSpaceOnUse">
+                            <stop stop-color="#73F7DD"/>
+                            <stop offset="1" stop-color="#5FBFC3"/>
+                            </linearGradient>
+                            <linearGradient id="paint2_linear_16300_23980" x1="11.2762" y1="13.1099" x2="35.5625" y2="26.993" gradientUnits="userSpaceOnUse">
+                            <stop stop-color="#73F7DD"/>
+                            <stop offset="1" stop-color="#084E92"/>
+                            </linearGradient>
+                            </defs>
+                        </svg>
+                    OFFICE
+                </div>
+                <div class="ws-body">
+                    <div class="ws-info-container">
+
+                        <div class="ws-info-files">
+                            <div class="ws-info-files-title">Create, Open, Share & Co-Edit</div>
+                            <div class="ws-info-files-types">
+                                <div class="ws-info-files-type" style="color: #0F8CC9;">
+                                    <svg width="27" height="27" viewBox="0 0 27 27" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M20.9243 18.1113C21.4088 18.1115 21.8022 18.5047 21.8022 18.9893V21.6211H24.4351C24.9194 21.6214 25.312 22.0146 25.312 22.499C25.3118 22.9832 24.9193 23.3756 24.4351 23.376H21.8022V26.0088C21.8021 26.4932 21.4087 26.8856 20.9243 26.8857C20.4399 26.8857 20.0475 26.4932 20.0474 26.0088V23.376H17.4146C16.9303 23.3757 16.5378 22.9833 16.5376 22.499C16.5376 22.0145 16.9301 21.6213 17.4146 21.6211H20.0474V18.9893C20.0474 18.5047 20.4398 18.1114 20.9243 18.1113ZM16.1685 4.11816C16.3716 4.11826 16.5682 4.18897 16.7241 4.31641L16.7886 4.375L22.0444 9.63086C22.2087 9.79523 22.302 10.0186 22.3022 10.251V16.75C21.9011 16.5026 21.4301 16.3575 20.9243 16.3574C19.4685 16.3577 18.2926 17.5388 18.2925 18.9902V19.8672H17.4136C15.959 19.868 14.7828 21.0481 14.7827 22.5V22.501C14.783 23.0083 14.9295 23.4802 15.1782 23.8818H9.27393C9.15065 23.8818 9.02876 23.8765 8.90869 23.8643C8.83904 23.8572 8.77007 23.847 8.70166 23.8359C8.17946 23.7518 7.6946 23.5557 7.27393 23.2715C7.13145 23.1753 6.99649 23.0683 6.86963 22.9531C6.61552 22.7222 6.39461 22.4551 6.21533 22.1602C5.9281 21.6878 5.74878 21.1433 5.70752 20.5605C5.70157 20.4763 5.69679 20.3905 5.69678 20.3047V7.69531C5.69682 7.5247 5.70977 7.35662 5.73291 7.19238C5.97785 5.4554 7.46957 4.1186 9.27393 4.11816H16.1685ZM10.5386 18.1172H12.2837L13.5435 13.7812H13.5522L14.8394 18.1172H16.522L18.4175 11.543H16.7866L15.6499 16.125H15.6323L14.3101 11.543H12.7681L11.4731 16.1162H11.4644L10.2739 11.543H8.58252L10.5386 18.1172ZM16.1606 7.55859C16.1608 9.04946 17.369 10.2585 18.8599 10.2588H21.145L16.1606 5.27441V7.55859Z" fill="#0F8CC9"/>
+                                    </svg>
+                                    Doc
+                                </div>
+                                <div class="ws-info-files-type" style="color: #2FA0AF;">
+                                    <svg width="27" height="27" viewBox="0 0 27 27" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M20.9243 18.1123C21.4088 18.1125 21.8022 18.5057 21.8022 18.9902V21.6221H24.4351C24.9194 21.6224 25.312 22.0156 25.312 22.5C25.3116 22.9841 24.9191 23.3766 24.4351 23.377H21.8022V26.0098C21.8019 26.494 21.4086 26.8866 20.9243 26.8867C20.44 26.8866 20.0477 26.494 20.0474 26.0098V23.377H17.4146C16.9304 23.3767 16.538 22.9841 16.5376 22.5C16.5376 22.0155 16.9301 21.6223 17.4146 21.6221H20.0474V18.9902C20.0474 18.5057 20.4398 18.1124 20.9243 18.1123ZM16.1685 4.11816C16.3715 4.11826 16.5682 4.18905 16.7241 4.31641L16.7886 4.375L22.0444 9.63086C22.2088 9.79517 22.302 10.0186 22.3022 10.251V16.751C21.9011 16.5037 21.4301 16.3585 20.9243 16.3584C19.4685 16.3586 18.2925 17.5396 18.2925 18.9912V19.8682H17.4136C15.9589 19.8689 14.7827 21.049 14.7827 22.501V22.502C14.783 23.0087 14.9289 23.4804 15.1772 23.8818H9.27393C9.15064 23.8818 9.02877 23.8765 8.90869 23.8643C8.83904 23.8572 8.77007 23.847 8.70166 23.8359C8.17942 23.7518 7.69462 23.5557 7.27393 23.2715C7.13145 23.1752 6.99649 23.0683 6.86963 22.9531C6.61552 22.7222 6.3946 22.4551 6.21533 22.1602C5.92813 21.6878 5.74873 21.1433 5.70752 20.5605C5.70158 20.4763 5.69678 20.3905 5.69678 20.3047V7.69531C5.69683 7.5247 5.70976 7.35662 5.73291 7.19238C5.97799 5.45555 7.46967 4.1186 9.27393 4.11816H16.1685ZM12.9243 14.8301L10.8364 18.1172H12.7397L13.9556 16.0107L15.2515 18.1172H17.1724L15.0571 14.8213L17.1372 11.543H15.2339L14.0347 13.6396L12.7573 11.543H10.8276L12.9243 14.8301ZM16.1606 7.55859C16.1606 9.04961 17.3689 10.2585 18.8599 10.2588H21.145L16.1606 5.27441V7.55859Z" fill="#2FA0AF"/>
+                                    </svg>
+                                    Sheet
+                                </div>
+                                <div class="ws-info-files-type" style="color: #FF274B;">
+                                    <svg width="27" height="27" viewBox="0 0 27 27" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M20.9243 18.1123C21.4088 18.1125 21.8022 18.5057 21.8022 18.9902V21.6221H24.4351C24.9194 21.6224 25.312 22.0156 25.312 22.5C25.3116 22.9841 24.9191 23.3766 24.4351 23.377H21.8022V26.0098C21.8019 26.494 21.4086 26.8866 20.9243 26.8867C20.44 26.8866 20.0477 26.494 20.0474 26.0098V23.377H17.4146C16.9304 23.3767 16.538 22.9841 16.5376 22.5C16.5376 22.0155 16.9301 21.6223 17.4146 21.6221H20.0474V18.9902C20.0474 18.5057 20.4398 18.1124 20.9243 18.1123ZM16.1685 4.11816C16.3715 4.11826 16.5682 4.18905 16.7241 4.31641L16.7886 4.375L22.0444 9.63086C22.2088 9.79517 22.302 10.0186 22.3022 10.251V16.751C21.9011 16.5037 21.4301 16.3585 20.9243 16.3584C19.4685 16.3586 18.2925 17.5396 18.2925 18.9912V19.8682H17.4136C15.9589 19.8689 14.7827 21.049 14.7827 22.501V22.502C14.783 23.0087 14.9289 23.4804 15.1772 23.8818H9.27393C9.15064 23.8818 9.02877 23.8765 8.90869 23.8643C8.83904 23.8572 8.77007 23.847 8.70166 23.8359C8.17942 23.7518 7.69462 23.5557 7.27393 23.2715C7.13145 23.1752 6.99649 23.0683 6.86963 22.9531C6.61552 22.7222 6.3946 22.4551 6.21533 22.1602C5.92813 21.6878 5.74873 21.1433 5.70752 20.5605C5.70158 20.4763 5.69678 20.3905 5.69678 20.3047V7.69531C5.69683 7.5247 5.70976 7.35662 5.73291 7.19238C5.97799 5.45555 7.46967 4.1186 9.27393 4.11816H16.1685ZM10.979 18.1182H12.6528V16.3994H13.147C15.0325 16.3992 16.019 15.2446 16.019 13.9141C16.0189 12.469 14.9527 11.5439 13.0405 11.5439H10.979V18.1182ZM13.2173 13.0508C13.8605 13.0509 14.3364 13.3686 14.3364 13.9766C14.3361 14.5842 13.8603 14.9189 13.2261 14.9189H12.6528V13.0508H13.2173ZM16.1606 7.55859C16.1606 9.04961 17.3689 10.2585 18.8599 10.2588H21.145L16.1606 5.27441V7.55859Z" fill="#FF274B"/>
+                                    </svg>
+                                    Slide
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="ws-info-badge">
+                            <div class="ws-info-badge-title">In-App Editor</div>
+                            <div>App-to-App Encrypted</div>
+                            <div>Stay Secure & Private</div>
+                            <svg class="ws-info-badge-icon" width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <circle cx="16" cy="16" r="15" fill="#F6FBFD" stroke="#0F8CC9" stroke-width="2"/>
+                                <circle cx="16" cy="16" r="12" fill="#DDEFF7"/>
+                                <path d="M16 10.1982C17.6995 10.1982 19.0779 11.5759 19.0781 13.2754V14.2871L19.1523 14.291C20.2627 14.4036 21.1289 15.3414 21.1289 16.4814V19.6006L21.1182 19.8252C21.0129 20.8616 20.1888 21.686 19.1523 21.791L18.9277 21.8018H13.0732L12.8477 21.791C11.8114 21.6858 10.9881 20.8614 10.8828 19.8252L10.8711 19.6006V16.4814C10.8711 15.3415 11.7375 14.4038 12.8477 14.291L12.9229 14.2871V13.2754C12.923 11.576 14.3006 10.1984 16 10.1982ZM13.0732 16.2793C12.9618 16.2793 12.8711 16.37 12.8711 16.4814V19.6006C12.8714 19.7118 12.962 19.8018 13.0732 19.8018H18.9277C19.0389 19.8017 19.1286 19.7117 19.1289 19.6006V16.4814C19.1289 16.3701 19.0391 16.2794 18.9277 16.2793H13.0732ZM16 12.1982C15.4052 12.1984 14.923 12.6806 14.9229 13.2754V14.2793H17.0781V13.2754C17.0779 12.6805 16.595 12.1982 16 12.1982Z" fill="#0F8CC9"/>
+                            </svg>
+                        </div>
+
+                        <div class="ws-info-footer">
+                            <div><strong>Currently in</strong> <span class="ws-info-footer-beta">Beta</span></div>
+                            <div><strong>Web App</strong> available now.</div>
+                            <div><strong>Desktop & Mobile Apps</strong> <span style="color: #2FA0AF;">coming soon.</span></div>
+                        </div>
+                    </div>
+                    <img src="./images/welcome-screen.webp">
+                </div>
+            </div>
+        </div>
+
+        <!-- Connection-lost watchdog. Loaded as its OWN <script> (NOT in the
+       editor-load list above) so a failure loading the editor/protocol code
+       cannot take disconnect detection down with it. Reads window.HOST_ORIGIN
+       (set by the guard above) + the #connection-lost-modal markup above. See
+       wrapper/v1/wrapper-heartbeat.js. -->
+        <script src="/wrapper-heartbeat.js"></script>
+    </body>
+</html>

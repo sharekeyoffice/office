@@ -1,0 +1,14 @@
+# Regenerated editor bundles — reproducible from upstream sdkjs via
+# build/bundle.js (see REGENERATE.md). Do NOT commit; they're large and
+# carry ONLYOFFICE-copyrighted code that is regenerated at build time.
+v1/bundle/*.editor.bundle.js
+v1/bundle/*.editor.bundle.js.gz
+v1/bundle/*.editor.bundle.js.br
+v1/bundle/*.bundle.js
+v1/bundle/*.bundle.js.gz
+v1/bundle/*.bundle.js.br
+v1/bundle/SIZES.txt
+
+# node deps if a build is run in-place
+build/node_modules/
+node_modules/

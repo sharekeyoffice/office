@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Editor test host</title>
+  <style>
+    body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; max-width:760px; margin:2em auto; padding:0 1em; line-height:1.5; color:#1a1a1a; }
+    h1 { font-size:1.4em; }
+    button { padding:.55em 1.1em; font-size:.95em; cursor:pointer; border:1px solid #ccc; background:#fff; border-radius:6px; }
+    button:hover { background:#f5f5f5; }
+    button:disabled { opacity:.4; cursor:not-allowed; }
+    input[type=file] { padding:.4em 0; }
+    .row { display:flex; gap:.6em; align-items:center; flex-wrap:wrap; margin:1em 0; }
+    .note { background:#f3f3f3; padding:.8em 1em; border-radius:6px; font-size:.9em; margin:1em 0; }
+    code { background:#eee; padding:.1em .3em; border-radius:3px; font-size:.85em; font-family:ui-monospace,Menlo,monospace; }
+    .log { background:#111; color:#9f9; padding:.8em 1em; font-family:ui-monospace,Menlo,monospace; font-size:.78em; max-height:340px; overflow:auto; border-radius:6px; white-space:pre-wrap; word-break:break-all; }
+    .chip { display:inline-block; padding:.2em .6em; border-radius:999px; background:#e8e8e8; font-size:.8em; margin-right:.4em; }
+    .chip.ok { background:#cfead0; }
+    .chip.err { background:#fbd2cd; color:#7a1410; }
+    .chip.warn { background:#ffeec2; }
+    .chip.dirty { background:#ffd9d2; color:#7a1410; }
+  </style>
+  <!-- ChunkDiff middleware — for the "round-trip via diff" test below. -->
+  <script src="/chunk-diff.js"></script>
+</head>
+<body>
+  <h1>Editor test host</h1>
+
+  <p>Pick a <code>.docx</code> / <code>.xlsx</code> / <code>.pptx</code>, click an "Open" button.
+  This page (acting as your main app) opens the editor at the configured editor origin
+  in a new tab and exchanges file bytes via cross-origin <code>postMessage</code>.</p>
+
+  <div class="note" id="config-note">Editor origin: <code id="editor-origin">…</code> · Test host origin: <code id="self-origin">…</code></div>
+
+  <div class="row">
+    <input type="file" id="filepick" accept=".docx,.xlsx,.pptx,.bin" />
+    <button id="open-word">Open in word</button>
+    <button id="open-cell">…cell</button>
+    <button id="open-slide">…slide</button>
+  </div>
+
+  <div class="row">
+    <button id="save-request" disabled>Save → download OOXML</button>
+    <button id="close-editor"  disabled>Close editor</button>
+    <span class="chip" id="file-status">no file</span>
+    <span class="chip" id="link-status">no editor tab</span>
+    <span class="chip" id="dirty-status">clean</span>
+  </div>
+
+  <div class="row">
+    <button id="test-roundtrip" disabled>
+      Test diff round-trip → download reconstructed
+    </button>
+    <span class="chip" id="diff-status" style="font-family:ui-monospace,Menlo,monospace;"></span>
+  </div>
+
+  <div class="row">
+    <label style="font-size:.88em; color:#444;">
+      <input type="checkbox" id="simulate-save-fail" /> Simulate save failure
+      (next <code>saved</code> from editor gets <code>save-ack ok:false</code>)
+    </label>
+  </div>
+
+  <!-- v0 collab: manually exercise set-mode without a real main app. -->
+  <div class="row">
+    <button id="set-mode-edit"     disabled>Send set-mode: edit</button>
+    <button id="set-mode-view"     disabled>Send set-mode: view (lockHolder=Alice)</button>
+  </div>
+
+  <div class="log" id="log"></div>
+
+  <script>
+    'use strict';
+
+    // ─── Configuration ─────────────────────────────────────────────
+    // The editor's origin. Edit this if you serve the editor from a
+    // different host/port than http://localhost:8080.
+    var EDITOR_ORIGIN = (new URLSearchParams(location.search)).get('editor')
+                      || 'http://localhost:8080';
+    var POST_VERSION  = 'edit-1';
+
+    document.getElementById('editor-origin').textContent = EDITOR_ORIGIN;
+    document.getElementById('self-origin').textContent   = location.origin;
+
+    // ─── State ─────────────────────────────────────────────────────
+    var pickedBytes  = null;     // ArrayBuffer
+    var pickedName   = null;
+    var editorTab    = null;
+    var editorReady  = false;
+    var editorType   = null;     // 'word' | 'cell' | 'slide'
+    var dirty        = false;
+    var nextRequestId= 1;
+    var lastSavedBytes = null;   // Uint8Array — most recent `saved` payload from editor
+    var heartbeatTimer = null;
+    var pongDeadline = 0;
+    var pongWatcher  = null;
+
+    var $log         = document.getElementById('log');
+    var $fileStatus  = document.getElementById('file-status');
+    var $linkStatus  = document.getElementById('link-status');
+    var $dirtyStatus = document.getElementById('dirty-status');
+    var $btnSave     = document.getElementById('save-request');
+    var $btnClose    = document.getElementById('close-editor');
+    var $btnRoundtrip = document.getElementById('test-roundtrip');
+    var $diffStatus   = document.getElementById('diff-status');
+    var $btnModeEdit = document.getElementById('set-mode-edit');
+    var $btnModeView = document.getElementById('set-mode-view');
+
+    function log() {
+      var msg = Array.prototype.map.call(arguments, function (a) {
+        return typeof a === 'string' ? a : JSON.stringify(a);
+      }).join(' ');
+      $log.textContent += '\n' + new Date().toISOString().slice(11, 19) + '  ' + msg;
+      $log.scrollTop = $log.scrollHeight;
+      console.log('[host]', msg);
+    }
+    function setChip(el, text, kind) {
+      el.textContent = text;
+      el.className = 'chip ' + (kind || '');
+    }
+
+    // ─── File picker ───────────────────────────────────────────────
+    document.getElementById('filepick').addEventListener('change', function (e) {
+      var file = e.target.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        pickedBytes = reader.result;
+        pickedName  = file.name;
+        setChip($fileStatus, file.name + ' (' + reader.result.byteLength + ' bytes)', 'ok');
+        log('picked', file.name, reader.result.byteLength + ' bytes');
+        if (editorReady && editorTab) sendLoad();
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    // ─── Open editor ───────────────────────────────────────────────
+    function openEditor(type) {
+      editorType = type;
+      if (editorTab && !editorTab.closed) {
+        editorTab.focus();
+        return;
+      }
+      // No host parameter — the editor's edit.html has the allowed
+      // origin baked in at build time. Make sure that baked-in value
+      // matches THIS page's origin (location.origin), otherwise the
+      // editor will silently drop our messages.
+      var url = EDITOR_ORIGIN + '/edit.html?type=' + type;
+      log('opening', url);
+      editorTab   = window.open(url, 'editor-test');
+      editorReady = false;
+      dirty       = false;
+      setChip($linkStatus, 'opening…');
+      setChip($dirtyStatus, 'clean');
+      $btnSave.disabled  = true;
+      $btnClose.disabled = false;
+      if (!editorTab) {
+        log('window.open returned null — pop-up blocked?');
+        setChip($linkStatus, 'pop-up blocked', 'err');
+      }
+    }
+    document.getElementById('open-word').onclick  = function () { openEditor('word'); };
+    document.getElementById('open-cell').onclick  = function () { openEditor('cell'); };
+    document.getElementById('open-slide').onclick = function () { openEditor('slide'); };
+
+    // ─── Send load ─────────────────────────────────────────────────
+    function sendLoad() {
+      if (!pickedBytes) { log('no file picked'); return; }
+      if (!editorTab || editorTab.closed) { log('editor tab closed'); return; }
+      var requestId = 'req-' + (nextRequestId++);
+      log('→ load', pickedName, pickedBytes.byteLength + ' bytes, requestId=' + requestId);
+      try {
+        // NB: no transferable list — we deliberately keep `pickedBytes`
+        // alive on the harness side so the SAME bytes can be re-sent on
+        // a subsequent `ready` (e.g. after the editor reconstructs on a
+        // mode switch). The cost is one extra structured-clone copy per
+        // load, which is fine for the harness.
+        // The chunk-diff round-trip button also depends on pickedBytes
+        // staying alive.
+        editorTab.postMessage({
+          v: POST_VERSION,
+          type: 'load',
+          bytes: pickedBytes,
+          fileName: pickedName,
+          requestId: requestId
+        }, EDITOR_ORIGIN);
+        setChip($fileStatus, 'sent — waiting…', 'warn');
+      } catch (e) {
+        log('postMessage failed:', e.message);
+      }
+    }
+
+    // Track explicit save-requests so we know whether a `saved` should
+    // trigger a download (explicit) or just a quiet save-ack (autosave).
+    var pendingExplicitSaveIds = {};
+
+    // ─── Save / close buttons ──────────────────────────────────────
+    $btnSave.onclick = function () {
+      if (!editorTab || editorTab.closed) { log('no editor tab'); return; }
+      var requestId = 'save-' + (nextRequestId++);
+      pendingExplicitSaveIds[requestId] = true;
+      log('→ save-request', requestId);
+      editorTab.postMessage({
+        v: POST_VERSION, type: 'save-request', requestId: requestId
+      }, EDITOR_ORIGIN);
+      setChip($fileStatus, 'saving…', 'warn');
+    };
+
+    // v0 collab: simulate the main app's set-mode postMessage. The editor
+    // hot-toggles its restriction in-place via asc_setRestriction — no
+    // destroy, no reconstruct, no re-load needed. Scroll/cursor/undo are
+    // preserved across the toggle.
+    $btnModeEdit.onclick = function () {
+      if (!editorTab || editorTab.closed) { log('no editor tab'); return; }
+      log('→ set-mode: edit');
+      editorTab.postMessage({
+        v: POST_VERSION, type: 'set-mode', mode: 'edit'
+      }, EDITOR_ORIGIN);
+    };
+    $btnModeView.onclick = function () {
+      if (!editorTab || editorTab.closed) { log('no editor tab'); return; }
+      log('→ set-mode: view (lockHolder=Alice)');
+      editorTab.postMessage({
+        v: POST_VERSION, type: 'set-mode', mode: 'view',
+        lockHolder: { userName: 'Alice' }
+      }, EDITOR_ORIGIN);
+    };
+
+    $btnClose.onclick = function () {
+      if (!editorTab || editorTab.closed) { log('no editor tab'); $btnClose.disabled = true; return; }
+      if (dirty && !confirm('Unsaved edits — close anyway?')) return;
+      log('→ close');
+      editorTab.postMessage({ v: POST_VERSION, type: 'close' }, EDITOR_ORIGIN);
+      setTimeout(function () {
+        try { editorTab.close(); } catch (e) {}
+      }, 100);
+    };
+
+    // ─── Round-trip via diff → download reconstructed ─────────────
+    //
+    // What this proves: given the file the user picked (oldBytes) and the
+    // most recent `saved` from the editor (newBytes), the main app-side
+    // pipeline can:
+    //   1. Compute a small delta (computeDelta)
+    //   2. Apply the delta back to oldBytes (applyDelta)
+    //   3. Produce bytes that are *content-equivalent* to newBytes (i.e.
+    //      same {filename → bytes} inside the .docx ZIP — even if the
+    //      DEFLATE re-encoding differs at the byte level).
+    //
+    // Downloads the reconstructed bytes so the user can open them in Word
+    // / Pages / LibreOffice / OnlyOffice and visually confirm the
+    // round-trip preserved their edits.
+    $btnRoundtrip.onclick = async function () {
+      if (!pickedBytes) { log('no original file picked'); return; }
+      if (!lastSavedBytes) { log('no `saved` from editor yet — edit + autosave first'); return; }
+      if (!window.ChunkDiff) { log('ChunkDiff not loaded (check /chunk-diff.js)'); return; }
+
+      try {
+        $btnRoundtrip.disabled = true;
+        setChip($diffStatus, 'computing…', 'warn');
+
+        var oldBytes = new Uint8Array(pickedBytes);
+        var newBytes = lastSavedBytes;
+
+        var t0 = performance.now();
+        var delta = await window.ChunkDiff.computeDelta(oldBytes, newBytes);
+        var t1 = performance.now();
+        var algo = 'v' + delta[0];
+        var ratio = (100 * delta.length / newBytes.length).toFixed(2) + '%';
+        log('  delta:', delta.length, 'B (vs', newBytes.length, 'B full, ratio', ratio + ')',
+            'algo=' + algo, '[' + (t1 - t0).toFixed(1) + 'ms]');
+
+        var t2 = performance.now();
+        var reconstructed = await window.ChunkDiff.applyDelta(oldBytes, delta);
+        var t3 = performance.now();
+        log('  reconstructed:', reconstructed.length, 'B [' + (t3 - t2).toFixed(1) + 'ms]');
+
+        // Equivalence check via the library
+        var rt = await window.ChunkDiff.roundTrip(oldBytes, newBytes);
+        log('  byte-identical:', rt.byteIdentical, '| content-equivalent:', rt.contentEquivalent);
+
+        // Download the reconstructed bytes with a distinguishing prefix so
+        // the user can compare against the editor's raw saved download.
+        var outName = 'reconstructed-' + (pickedName || 'document.docx');
+        var blob = new Blob([reconstructed], { type: 'application/octet-stream' });
+        var url  = URL.createObjectURL(blob);
+        var a    = document.createElement('a');
+        a.href = url; a.download = outName;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+        log('  downloaded:', outName);
+
+        var chip = rt.ok ? (algo + ' ' + ratio + ' ✓') : (algo + ' ' + ratio + ' FAIL');
+        setChip($diffStatus, chip, rt.ok ? 'ok' : 'err');
+      } catch (e) {
+        log('  round-trip FAILED:', e.message);
+        setChip($diffStatus, 'error', 'err');
+      } finally {
+        $btnRoundtrip.disabled = false;
+      }
+    };
+
+    // ─── Heartbeat ─────────────────────────────────────────────────
+    function startHeartbeat() {
+      if (heartbeatTimer) return;
+      heartbeatTimer = setInterval(function () {
+        if (!editorTab || editorTab.closed) {
+          stopHeartbeat();
+          setChip($linkStatus, 'editor tab closed', 'err');
+          $btnSave.disabled = true; $btnClose.disabled = true;
+          $btnModeEdit.disabled = true; $btnModeView.disabled = true;
+          return;
+        }
+        editorTab.postMessage({ v: POST_VERSION, type: 'ping' }, EDITOR_ORIGIN);
+        if (!pongDeadline) pongDeadline = Date.now() + 30000;
+      }, 10000);
+
+      pongWatcher = setInterval(function () {
+        if (pongDeadline && Date.now() > pongDeadline) {
+          log('heartbeat: editor not responding for 30s');
+          setChip($linkStatus, 'editor not responding', 'err');
+        }
+      }, 5000);
+    }
+    function stopHeartbeat() {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      if (pongWatcher)    clearInterval(pongWatcher);
+      heartbeatTimer = pongWatcher = null;
+      pongDeadline = 0;
+    }
+
+    // ─── Inbound messages ──────────────────────────────────────────
+    window.addEventListener('message', function (ev) {
+      // Strict origin check.
+      if (ev.origin !== EDITOR_ORIGIN) {
+        // log('dropping message from unexpected origin:', ev.origin);
+        return;
+      }
+      var d = ev.data;
+      if (!d || typeof d !== 'object' || d.v !== POST_VERSION) return;
+
+      log('←', d.type, summarize(d));
+
+      switch (d.type) {
+        case 'pong':
+          pongDeadline = 0;
+          break;
+
+        case 'ready':
+          editorReady = true;
+          setChip($linkStatus, 'ready (' + d.editorType + ')', 'ok');
+          $btnModeEdit.disabled = false;
+          $btnModeView.disabled = false;
+          startHeartbeat();
+          if (pickedBytes) sendLoad();
+          break;
+
+        case 'request-edit-mode':
+          // Editor's Edit button was clicked. In a real main app this
+          // triggers a server-side lock attempt. Here we just immediately
+          // simulate "lock acquired" by replying with set-mode: edit.
+          log('  → simulating lock acquire → set-mode: edit');
+          editorTab.postMessage({
+            v: POST_VERSION, type: 'set-mode', mode: 'edit'
+          }, EDITOR_ORIGIN);
+          break;
+
+        case 'mode-changed':
+          // User toggled the editor's native "Editing/Viewing" dropdown.
+          // Mirror the user's choice back as set-mode so the editor's local
+          // state matches the main app's authoritative view. A real
+          // main app would also acquire/release the Redis lock here.
+          log('  ← mode-changed: user toggled dropdown →', d.mode);
+          editorTab.postMessage({
+            v: POST_VERSION, type: 'set-mode', mode: d.mode
+          }, EDITOR_ORIGIN);
+          break;
+
+        case 'progress':
+          setChip($fileStatus, d.stage + '…', 'warn');
+          break;
+
+        case 'opened':
+          setChip($fileStatus, 'opened', 'ok');
+          $btnSave.disabled = false;
+          break;
+
+        case 'dirty':
+          dirty = !!d.dirty;
+          setChip($dirtyStatus, dirty ? 'unsaved edits' : 'clean', dirty ? 'dirty' : 'ok');
+          break;
+
+        case 'saved':
+          (function () {
+            var saveId    = d.saveId || d.requestId;     // prefer new field; fall back to legacy
+            var isAuto    = !pendingExplicitSaveIds[saveId];
+            var failNext  = !!document.getElementById('simulate-save-fail').checked;
+
+            // Snapshot the bytes so the round-trip test button can use them
+            // (d.bytes is an ArrayBuffer from postMessage transferable; copy out).
+            lastSavedBytes = new Uint8Array(d.bytes.byteLength || d.bytes.length);
+            lastSavedBytes.set(new Uint8Array(d.bytes));
+            $btnRoundtrip.disabled = !window.ChunkDiff || !pickedBytes;
+
+            log('← saved', d.fileName, (d.bytes.byteLength || d.bytes.length) + ' bytes',
+                isAuto ? '(autosave)' : '(explicit)', 'saveId=' + saveId);
+
+            // Simulate the main app's upload + ack. In real life the main app
+            // would encrypt + upload to S3 here.
+            if (failNext) {
+              log('→ save-ack ok=false (simulating failure)');
+              editorTab.postMessage({
+                v: POST_VERSION, type: 'save-ack',
+                saveId: saveId, ok: false, reason: 'simulated failure'
+              }, EDITOR_ORIGIN);
+              setChip($fileStatus, 'save failed (simulated)', 'err');
+              // Don't flip dirty state on failure
+              return;
+            }
+
+            // Success path: ack, update dirty UI, optionally download.
+            log('→ save-ack ok=true');
+            editorTab.postMessage({
+              v: POST_VERSION, type: 'save-ack',
+              saveId: saveId, ok: true
+            }, EDITOR_ORIGIN);
+
+            setChip($fileStatus, 'saved → ' + d.fileName, 'ok');
+            dirty = false;
+            setChip($dirtyStatus, 'clean', 'ok');
+
+            if (!isAuto) {
+              // Explicit save → trigger browser download as before.
+              delete pendingExplicitSaveIds[saveId];
+              try {
+                var blob = new Blob([d.bytes], { type: 'application/octet-stream' });
+                var url  = URL.createObjectURL(blob);
+                var a    = document.createElement('a');
+                a.href = url;
+                a.download = d.fileName || 'document.bin';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+                log('downloaded', d.fileName);
+              } catch (e) {
+                log('download failed:', e.message);
+              }
+            }
+          })();
+          break;
+
+        case 'close-request':
+          if (!dirty || confirm('Editor wants to close. Unsaved edits will be lost. OK?')) {
+            log('→ close (acknowledged)');
+            editorTab.postMessage({ v: POST_VERSION, type: 'close' }, EDITOR_ORIGIN);
+          } else {
+            log('close-request denied (dirty)');
+          }
+          break;
+
+        case 'error':
+          log('!!error!', d.code, d.message);
+          setChip($fileStatus, 'error: ' + d.code, 'err');
+          break;
+      }
+    });
+
+    function summarize(d) {
+      // Don't dump huge byte arrays in the log.
+      var copy = {};
+      for (var k in d) {
+        if (k === 'bytes') copy[k] = '<' + (d.bytes.byteLength || d.bytes.length) + ' bytes>';
+        else if (k === 'v') continue;
+        else copy[k] = d[k];
+      }
+      return copy;
+    }
+
+    // ─── Detect editor tab close ───────────────────────────────────
+    setInterval(function () {
+      if (editorTab && editorTab.closed) {
+        log('editor tab was closed');
+        editorTab = null;
+        editorReady = false;
+        stopHeartbeat();
+        setChip($linkStatus, 'no editor tab');
+        setChip($dirtyStatus, 'clean');
+        $btnSave.disabled = true; $btnClose.disabled = true;
+        $btnModeEdit.disabled = true; $btnModeView.disabled = true;
+      }
+    }, 2000);
+
+    log('test host ready. EDITOR_ORIGIN =', EDITOR_ORIGIN);
+    log('Pick a file, then click an Open button.');
+  </script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+# Build artifacts
+/vendor/
+/dist/
+/etalon-public/
+/test/chunk-diff.js
+
+# PROTOTYPE: fetched Microsoft Core Fonts — PROPRIETARY, never commit.
+# build/fetch-mscorefonts.sh downloads these at build time (Microsoft's
+# installer); the extracted .ttf must stay out of git. See
+#
+/mscorefonts/
+
+# Editor scratch
+.DS_Store
+*.swp
+*~
+
+# Local env
+.env
+.env.local
+
+# Per-environment config (copy from config.example.json)
+config.json
+
+# Node
+/node_modules/
+npm-debug.log*
+/public/
+/public_old/
+public copy/

@@ -1,0 +1,4 @@
+# Base open fonts (Liberation / DejaVu / Caladea / Carlito / OpenSymbol) ARE
+# committed — they're OFL/DejaVu-licensed and required for every build.
+# Proprietary MS Core Fonts are NOT here (fetched at build into /mscorefonts/).
+*.tar.gz

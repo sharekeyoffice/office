@@ -1,0 +1,73 @@
+/* connection-lost.css — modal shown when window.opener disappears
+   or the heartbeat times out. */
+
+#connection-lost-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+#connection-lost-modal .cl-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 20, 30, .55);
+  backdrop-filter: blur(2px);
+}
+
+#connection-lost-modal .cl-dialog {
+  position: relative;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px 0 #35506933;
+  padding: 17px 16px 16px 16px;
+  max-width: 450px;
+  width: calc(100vw - 40px);
+  color: #242B2E;
+  box-sizing: border-box;
+  line-height: 18px;
+  font-size: 13px;
+}
+
+#cl-title {
+  margin-bottom: 17px;
+  text-align: center;
+  font-family: system-ui, sans-serif;
+}
+
+#connection-lost-modal .cl-dialog-description, .cl-dialog-warning {
+  margin-bottom: 8px;
+  margin-right: 1px;
+  font-family: system-ui, sans-serif;
+}
+
+#connection-lost-modal .cl-dialog-warning {
+  color: #FF274B;
+  font-family: system-ui, sans-serif;
+}
+
+#connection-lost-modal .cl-dialog button {
+  display: block;
+  height: 30px;
+  padding: 0 11px;
+  margin-top: 16px;
+  border-radius: 6px;
+  border: none;
+  color: rgba(53, 80, 105, 0.8);
+  background: rgba(53, 80, 105, 0.1);
+  float: right;
+  font-size: 12px;
+  line-height: 16px;
+  font-family: system-ui, sans-serif;
+  cursor: pointer;
+}
+
+#connection-lost-modal .cl-dialog button:hover {
+  background: rgba(53, 80, 105, 0.2);
+}
+
+#connection-lost-modal .cl-dialog button:active {
+  background: rgba(53, 80, 105, 0.2);
+}

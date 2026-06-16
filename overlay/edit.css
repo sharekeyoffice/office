@@ -1,0 +1,61 @@
+/* edit.css — the outer editor-shell page (overlay/edit.html).
+ *
+ * Static styling for the shell chrome: the document placeholder, the startup
+ * error screen, and the save-state indicator. The connection-lost / conflict
+ * MODALS are styled separately in connection-lost.css / conflict-modal.css.
+ *
+ * The mode-switch control ("Edit" button) AND the "<who> is editing the
+ * document…" label now live INSIDE the editor iframe header (our injected
+ * controls — see wrapper-mount.js mountHeaderControls; styled by the injected
+ * #sk-header-controls stylesheet, not this sheet). The old outer-page
+ * #mode-button and #lock-held-banner overlays were removed.
+ */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+body {
+  overflow: hidden;
+}
+
+#placeholder {
+  /* DocsAPI replaces this div with the editor <iframe> on construction. */
+  width: 100%;
+  height: 100vh;
+}
+
+.startup-error {
+  padding: 2em;
+  max-width: 600px;
+  margin: 4em auto;
+  color: #444;
+  line-height: 1.5;
+}
+
+.startup-error h1 {
+  font-size: 1.4em;
+  margin-bottom: 0.5em;
+}
+
+/* ── Overlay controls (fixed, above the editor iframe) ─────────────────── */
+
+/* Save-state indicator (bottom-right). Text + data-state set by
+   wrapper-postmessage.js setSaveState(); empty in the idle state. */
+#save-state {
+  position: fixed;
+  bottom: 8px;
+  right: 12px;
+  font-size: 0.85em;
+  color: #444;
+  pointer-events: none;
+  z-index: 1000;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 0.2em 0.6em;
+  border-radius: 4px;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}

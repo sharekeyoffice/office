@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Edit-mode host demo</title>
+  <style>
+    body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; max-width:760px; margin:2em auto; padding:0 1em; line-height:1.5; }
+    h1 { font-size:1.4em; }
+    button { padding:.6em 1.2em; font-size:1em; cursor:pointer; }
+    input[type=file] { padding:.4em 0; }
+    .row { display:flex; gap:.6em; align-items:center; flex-wrap:wrap; margin:1em 0; }
+    .note { background:#f3f3f3; padding:.8em 1em; border-radius:6px; font-size:.9em; margin:1em 0; }
+    code { background:#eee; padding:.1em .3em; border-radius:3px; font-size:.85em; }
+    .log { background:#111; color:#9f9; padding:.8em 1em; font-family:ui-monospace,Menlo,monospace; font-size:.8em; max-height:280px; overflow:auto; border-radius:6px; white-space:pre-wrap; }
+    .chip { display:inline-block; padding:.2em .6em; border-radius:999px; background:#e8e8e8; font-size:.8em; margin-right:.4em; }
+    .chip.ok { background:#cfead0; }
+    .chip.err { background:#fbd2cd; }
+  </style>
+</head>
+<body>
+  <h1>Edit-mode wrapper smoke test</h1>
+
+  <p>Pick a <code>.docx</code> / <code>.xlsx</code> / <code>.pptx</code> file. Clicking
+  "Open in editor" opens a new tab running the wrapper, then streams the
+  file's bytes to it over <code>postMessage</code>.</p>
+
+  <div class="row">
+    <input type="file" id="filepick" accept=".docx,.xlsx,.pptx,.bin" />
+    <button id="open-word">Open in word editor</button>
+    <button id="open-cell">…cell</button>
+    <button id="open-slide">…slide</button>
+  </div>
+
+  <div class="row">
+    <button id="save-request">Save → download OOXML</button>
+    <button id="close-editor">Close editor</button>
+    <span class="chip" id="status">no file</span>
+    <span class="chip" id="link-status">no editor tab</span>
+    <span class="chip" id="dirty-status">clean</span>
+  </div>
+
+  <div class="note">
+    <strong>Expected (post step 2):</strong> editor tab opens, document
+    renders with full OnlyOffice toolbar visible. Tabs you should see:
+    <em>Home, Insert, Layout, References, Header/Footer, Collaboration, View</em>.
+    Tabs that should NOT appear: <em>Plugins, Protect, Draw, Forms</em>;
+    no <em>Comments</em> button in left menu; no <em>Mail Merge</em> on the
+    Collaboration tab.
+  </div>
+
+  <div class="log" id="log"></div>
+
+  <script>
+    var POST_VERSION = 'edit-1';
+    var pickedBytes = null;
+    var pickedName  = null;
+    var editorTab   = null;
+    var editorReady = false;
+    var pendingLoad = null;
+    var nextRequestId = 1;
+
+    var $log = document.getElementById('log');
+    var $status = document.getElementById('status');
+    var $linkStatus = document.getElementById('link-status');
+    var $dirtyStatus = document.getElementById('dirty-status');
+    var dirty = false;
+    function log() {
+      var msg = Array.prototype.map.call(arguments, function (a) {
+        return typeof a === 'string' ? a : JSON.stringify(a);
+      }).join(' ');
+      $log.textContent += '\n' + new Date().toISOString().slice(11, 19) + '  ' + msg;
+      $log.scrollTop = $log.scrollHeight;
+      console.log('[host]', msg);
+    }
+    function setStatus(el, text, kind) {
+      el.textContent = text;
+      el.className = 'chip ' + (kind || '');
+    }
+
+    document.getElementById('filepick').addEventListener('change', function (e) {
+      var file = e.target.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        pickedBytes = reader.result;
+        pickedName  = file.name;
+        setStatus($status, file.name + ' (' + reader.result.byteLength + ' bytes)', 'ok');
+        log('picked', file.name, reader.result.byteLength + ' bytes');
+        if (editorReady && editorTab) sendLoad();
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    function openEditor(type) {
+      if (editorTab && !editorTab.closed) {
+        editorTab.focus();
+      } else {
+        editorTab = window.open('/edit.html?type=' + type, 'wrapper-editor');
+        editorReady = false;
+        setStatus($linkStatus, 'opening…');
+        log('opened editor tab type=' + type);
+      }
+    }
+    document.getElementById('open-word').addEventListener('click',  function () { openEditor('word'); });
+    document.getElementById('open-cell').addEventListener('click',  function () { openEditor('cell'); });
+    document.getElementById('open-slide').addEventListener('click', function () { openEditor('slide'); });
+
+    document.getElementById('save-request').addEventListener('click', function () {
+      if (!editorTab || editorTab.closed) { log('no editor tab to save from'); return; }
+      var requestId = 'req-' + (nextRequestId++);
+      log('sending save-request requestId=' + requestId);
+      editorTab.postMessage({
+        v: POST_VERSION,
+        type: 'save-request',
+        requestId: requestId
+      }, '*');
+      setStatus($status, 'saving…');
+    });
+
+    function sendLoad() {
+      if (!pickedBytes) { log('cannot send load: no file picked'); return; }
+      if (!editorTab || editorTab.closed) { log('cannot send load: editor tab closed'); return; }
+      var requestId = 'req-' + (nextRequestId++);
+      log('sending load requestId=' + requestId, 'fileName=' + pickedName, 'bytes=' + pickedBytes.byteLength);
+      // Transferable: zero-copy hand-off of the ArrayBuffer to the editor tab.
+      // After this, pickedBytes is detached — re-pick to send again.
+      try {
+        editorTab.postMessage({
+          v: POST_VERSION,
+          type: 'load',
+          bytes: pickedBytes,
+          fileName: pickedName,
+          requestId: requestId
+        }, '*', [pickedBytes]);
+        pickedBytes = null;  // detached
+        setStatus($status, 'sent — waiting…');
+      } catch (e) {
+        log('postMessage failed:', e.message);
+      }
+    }
+
+    window.addEventListener('message', function (ev) {
+      var d = ev.data;
+      if (!d || typeof d !== 'object' || d.v !== POST_VERSION) return;
+      log('← ' + d.type, d);
+      if (d.type === 'ready') {
+        editorReady = true;
+        setStatus($linkStatus, 'ready (' + d.editorType + ')', 'ok');
+        if (pickedBytes) sendLoad();
+      } else if (d.type === 'opened') {
+        setStatus($status, 'opened', 'ok');
+      } else if (d.type === 'saved') {
+        // Trigger a browser download of the returned OOXML bytes so the
+        // smoke test produces a verifiable artifact on disk.
+        try {
+          var blob = new Blob([d.bytes], { type: 'application/octet-stream' });
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = d.fileName || 'document.bin';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+          setStatus($status, 'saved → ' + d.fileName, 'ok');
+          log('downloaded ' + d.fileName + ' (' + (d.bytes.byteLength || d.bytes.length) + ' bytes)');
+        } catch (e) {
+          log('save download failed:', e.message);
+          setStatus($status, 'save download failed', 'err');
+        }
+      } else if (d.type === 'error') {
+        setStatus($status, 'error: ' + d.code, 'err');
+      } else if (d.type === 'progress') {
+        setStatus($status, d.stage + '…');
+      } else if (d.type === 'dirty') {
+        dirty = !!d.dirty;
+        setStatus($dirtyStatus, dirty ? 'unsaved edits' : 'clean', dirty ? 'err' : 'ok');
+      } else if (d.type === 'close-request') {
+        // Editor's File → Close (or wrapper UI close button) — host
+        // decides whether to acknowledge. Real main app would open its
+        // own confirmation modal; demo uses native confirm so the smoke
+        // test stays self-contained.
+        if (dirty) {
+          var ok = confirm('Editor has unsaved edits. Close anyway?');
+          if (!ok) {
+            log('close-request denied (dirty)');
+            return;
+          }
+        }
+        log('close-request accepted');
+        if (editorTab && !editorTab.closed) editorTab.close();
+      }
+    });
+
+    document.getElementById('close-editor').addEventListener('click', function () {
+      if (!editorTab || editorTab.closed) { log('no editor tab to close'); return; }
+      if (dirty) {
+        var ok = confirm('Editor has unsaved edits. Close anyway?');
+        if (!ok) return;
+      }
+      // Host-initiated close: tell the editor first so it can flush, then
+      // shut the tab. The editor's beforeunload guard is bypassed because
+      // we cleared the dirty flag via the user's confirmation.
+      editorTab.postMessage({ v: POST_VERSION, type: 'close' }, '*');
+      setTimeout(function () { try { editorTab.close(); } catch (e) {} }, 100);
+    });
+
+    log('host ready, pick a file then click an "Open in" button');
+  </script>
+</body>
+</html>

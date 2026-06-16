@@ -1,0 +1,61 @@
+sharekey-office — NOTICE
+==========================
+
+This product is a MODIFIED redeployment of ONLYOFFICE Docs.
+
+  Based on the original ONLYOFFICE® by Ascensio System SIA.
+  ONLYOFFICE is a trademark of Ascensio System SIA.
+
+The bundled OnlyOffice components (sdkjs, web-apps) are:
+  Copyright (c) Ascensio System SIA
+  Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0)
+  plus the additional terms attached by Ascensio System SIA (ONLYOFFICE
+  Docs 9.4 and later — AGPL section 7 attribution/trademark terms).
+
+This deployment is NOT the original ONLYOFFICE software and is NOT an
+official ONLYOFFICE product or service. It is operated by Sharekey and
+has been modified as described below. The ONLYOFFICE name and logo are
+used only nominatively, to identify the upstream origin of the code.
+
+
+Statement of modifications (AGPL §5(a) / ONLYOFFICE §7)
+-------------------------------------------------------
+Modified by: Sharekey
+First modified: 2026 (see git history of this repository for dates)
+
+Summary of modifications applied on top of upstream ONLYOFFICE:
+
+  1. DocumentServer removed. The editor is repackaged as a static site
+     that boots without an OnlyOffice DocumentServer. The missing
+     server-side boot steps are synthesized at runtime by
+     `wrapper/v1/editor-stubs.js` (~12 "cascade" patches).
+  2. SDK reslimmed. The shipped `sdk-all-min.js` is rebuilt from upstream
+     sdkjs sources by `wrapper/build/bundle.js` (slim editor-mode bundle).
+  3. sdkjs source patch: `__plainFonts` XOR-skip in
+     common/Drawings/Externals.js — see
+     `wrapper/sdkjs-patches/0001-externals-plainfonts.patch`.
+  4. Font set reduced + substituted (Liberation/Carlito/Caladea/DejaVu/
+     OpenSymbol) via a hand-written `AllFonts.js` manifest.
+  5. Cross-origin postMessage host integration + custom edit.html boot,
+     view/edit lock UX, and connection/conflict overlays (Sharekey glue).
+  6. web-apps deploy trimmed (help/mobile/embed/locales) for size.
+
+The exact, buildable corresponding source for the AGPL-covered parts is
+this repository plus the pinned upstream refs in `upstream-pins/`; the
+procedure to reproduce it is in `wrapper/REGENERATE.md`.
+
+
+Trademark
+---------
+"ONLYOFFICE is a trademark of Ascensio System SIA."
+This project does not use the ONLYOFFICE name, logo, or trade dress as
+its own branding. Per the ONLYOFFICE Trademark Policy, ONLYOFFICE marks
+appear here only for accurate, nominative attribution of the upstream
+software's origin. See:
+  https://www.onlyoffice.com/blog/2026/05/onlyoffice-license-and-trademark-policy
+
+
+Other third-party components
+----------------------------
+x2t (WASM), fonts, and icon sets each carry their own licenses and
+attributions — see THIRD-PARTY.md.

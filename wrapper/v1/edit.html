@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Editor (v1 wrapper)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html, body { margin:0; padding:0; height:100%; font-family:-apple-system,BlinkMacSystemFont,sans-serif; }
+    body { overflow:hidden; }
+    #placeholder { width:100%; height:100vh; }
+  </style>
+</head>
+<body>
+  <!-- DocsAPI replaces this <div> with an <iframe> on construction. -->
+  <div id="placeholder"></div>
+
+  <!-- DocsAPI itself (from the deployed web-apps). Sets window.DocsAPI. -->
+  <script src="/web-apps/apps/api/documents/api.js"></script>
+
+  <!-- x2t WASM bridge: OOXML <-> Editor.bin conversion. Same module as v0. -->
+  <script src="/x2t-bridge.js"></script>
+
+  <!-- editorConfig builder (customization tree). -->
+  <script src="/wrapper-customization.js"></script>
+
+  <!-- Cross-tab postMessage protocol with the host main app. -->
+  <script src="/wrapper-postmessage.js"></script>
+
+  <!-- Construct the editor + wire up postMessage. -->
+  <script src="/wrapper-mount.js"></script>
+</body>
+</html>

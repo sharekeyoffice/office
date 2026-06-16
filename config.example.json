@@ -1,0 +1,7 @@
+{
+  "_comment": "Copy to config.json (gitignored) and edit. The build pipeline reads this to bake the allowed main app origin into edit.html.",
+
+  "allowedHostOrigin": "https://app.example.com",
+
+  "_alternative": "You can also override at build time via env var: ALLOWED_HOST_ORIGIN=... bash build/build.sh"
+}

@@ -1,0 +1,23 @@
+{
+  "name": "sharekey-office",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Static-site deployment of the OnlyOffice v1 editor wrapper for office.hostname.com",
+  "scripts": {
+    "initialize": "bash build/initialize.sh",
+    "assemble": "node build/dev-assemble.js --watch",
+    "sync": "node build/dev-assemble.js",
+    "build": "bash build/build.sh",
+    "start": "node server/index.js",
+    "dev": "PORT=8080 node server/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:host": "node test/server.js",
+    "docker:build": "docker build -t sharekey-office:local -f docker/Dockerfile .",
+    "docker:run": "docker run --rm -p 8080:80 sharekey-office:local"
+  },
+  "devDependencies": {
+    "esbuild": "0.24.2",
+    "vitest": "^4.1.8"
+  }
+}

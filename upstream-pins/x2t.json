@@ -1,0 +1,6 @@
+{
+  "version": "9.3.0+0",
+  "url": "https://github.com/cryptpad/onlyoffice-x2t-wasm/releases/download/v9.3.0%2B0/x2t.zip",
+  "sha512_url": "https://github.com/cryptpad/onlyoffice-x2t-wasm/releases/download/v9.3.0%2B0/x2t.zip.sha512",
+  "comment": "CryptPad's prebuilt x2t WASM. AGPL-3.0. Bump major.minor to match sdkjs version (or take any patch release of the same major)."
+}

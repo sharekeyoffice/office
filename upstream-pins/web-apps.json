@@ -1,0 +1,5 @@
+{
+  "remote": "https://github.com/ONLYOFFICE/web-apps.git",
+  "ref": "1c8ca9987876bada73c0bde21367da09c0e1ed83",
+  "comment": "Upstream ONLYOFFICE/web-apps @ v9.3.1.1 (matches the sdkjs pin's major.minor). The editor UI shell; built by grunt in 03-deploy-web-apps.sh. grunt output is NOT byte-deterministic (build number + minifier)."
+}

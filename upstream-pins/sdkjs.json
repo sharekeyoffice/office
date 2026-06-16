@@ -1,0 +1,5 @@
+{
+  "remote": "https://github.com/ONLYOFFICE/sdkjs.git",
+  "ref": "b2f0aa1d5ca8c82e827ff3af6577d8edf913a2e7",
+  "comment": "Upstream ONLYOFFICE/sdkjs. The wrapper (glue, manifests, bundle tooling, fonts, x2t, the Externals patch) lives in sharekey-office/wrapper/ — NOT in a fork. ref = exact commit (v9.3.1.11+12) the wrapper was verified against. Bump per wrapper/REGENERATE.md (see upstream-pins/README.md). NOTE: review OnlyOffice 9.4 AGPL §7 / trademark terms before bumping to 9.4+."
+}

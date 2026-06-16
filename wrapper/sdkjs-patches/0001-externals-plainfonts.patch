@@ -1,0 +1,33 @@
+diff --git a/common/Drawings/Externals.js b/common/Drawings/Externals.js
+index 8e92ded452..af9c65be0e 100644
+--- a/common/Drawings/Externals.js
++++ b/common/Drawings/Externals.js
+@@ -128,13 +128,21 @@
+             }
+ 
+             // decode
+-            let guidOdttf = [0xA0, 0x66, 0xD6, 0x20, 0x14, 0x96, 0x47, 0xfa, 0x95, 0x69, 0xB8, 0x50, 0xB0, 0x41, 0x49, 0x48];
+-            let stream = g_fonts_streams[g_fonts_streams.length - 1];
+-            let data = stream.data;
+-
+-            let count_decode = Math.min(32, stream.size);
+-            for (let i = 0; i < count_decode; ++i)
+-                data[i] ^= guidOdttf[i % 16];
++            // OnlyOffice ships pre-XOR'd font files in production and the first 32
++            // bytes of every fetched font are XOR'd back here to recover the real
++            // TTF/OTF header. For our offline viewer we host PLAIN TTFs (so the
++            // same files can also be used by x2t.wasm's virtual FS). Setting
++            // window.__plainFonts = true skips this XOR step.
++            // See analysis/mitigation/font-xor-skip.md for the full rationale.
++            if (!window["__plainFonts"]) {
++                let guidOdttf = [0xA0, 0x66, 0xD6, 0x20, 0x14, 0x96, 0x47, 0xfa, 0x95, 0x69, 0xB8, 0x50, 0xB0, 0x41, 0x49, 0x48];
++                let stream = g_fonts_streams[g_fonts_streams.length - 1];
++                let data = stream.data;
++
++                let count_decode = Math.min(32, stream.size);
++                for (let i = 0; i < count_decode; ++i)
++                    data[i] ^= guidOdttf[i % 16];
++            }
+ 
+             if (null != this.fontFile.callback)
+                 this.fontFile.callback();
