@@ -18,6 +18,7 @@
 # Local env
 .env
 .env.local
+.idea
 
 # Per-environment config (copy from config.example.json)
 config.json

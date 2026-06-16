@@ -48,7 +48,14 @@ done
 echo "→ cosmetic stubs"
 mkdir -p "$DIST/sdkjs/common/Charts" "$DIST/sdkjs/common/Images/cursors"
 echo "// stub" > "$DIST/sdkjs/common/Charts/ChartStyles.js"
-echo "{}"     > "$DIST/sdkjs/common/Images/cursors/svg.json"
+# Real cursor SVGs (column/row resize = move-border-*, grab, fill, etc.) live in
+# the raw upstream sdkjs clone; the grunt deploy doesn't emit svg.json, so copy
+# the real file. Stubbing it with {} drops the spreadsheet column-resize cursor.
+if [[ -f "$REPO/vendor/sdkjs/common/Images/cursors/svg.json" ]]; then
+  cp "$REPO/vendor/sdkjs/common/Images/cursors/svg.json" "$DIST/sdkjs/common/Images/cursors/svg.json"
+else
+  echo "{}" > "$DIST/sdkjs/common/Images/cursors/svg.json"   # fallback: no custom cursors
+fi
 
 echo "→ applying overlay/* over $DIST"
 cp -R "$REPO/overlay"/. "$DIST/"
