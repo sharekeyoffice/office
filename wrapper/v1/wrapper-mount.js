@@ -108,6 +108,9 @@
                                    // dev + backward-compat). UX/defense-in-depth only — the
                                    // server (acquireEditLock + appendDiffChunk EDIT_CONTENT
                                    // checks) is the real gate against a tampering client.
+    var lastPresentationPointerDownAt = 0;
+    var lastPresentationEditModalAt = 0;
+    var lastBlockedEditAttemptFocus = null;
 
     // ── Restriction-API state (hot view↔edit toggle, no destroy) ────────
     var editorApi      = null;     // iframe-internal api, cached after onAppReady
@@ -142,28 +145,309 @@
       renderEditingLabel();
     }
 
+      // Determines the relevant DOM element for an edit attempt event.
+      function getEditAttemptTarget(e) {
+          if (!e || !e.target)
+              return null;
+
+          if (e.target.nodeType === 1)
+              return e.target;
+
+          return e.target.parentElement || null;
+      }
+
+      // Checks if an element is a native editable element (input, textarea, select, or contentEditable).
+      function isNativeEditableElement(element) {
+          if (!element)
+              return false;
+
+          var tagName = element.tagName ? element.tagName.toLowerCase() : '';
+
+          return tagName === 'input' ||
+              tagName === 'textarea' ||
+              tagName === 'select' ||
+              element.isContentEditable;
+      }
+
+      // Checks if the element is the OnlyOffice document input (special-cased).
+      function isOnlyOfficeDocumentInput(element) {
+          return !!(element && element.id === 'area_id');
+      }
+
+
+      function getDebugController(name, editorWindow) {
+          try {
+              if (!editorWindow || !editorWindow.PE || typeof editorWindow.PE.getController !== 'function')
+                  return null;
+
+              return editorWindow.PE.getController(name);
+          } catch (e) {
+              return null;
+          }
+      }
+
+      function handlePresentationCanvasClick(e) {
+          if (type !== 'slide' || !isPresentationCanvasElement(getEditAttemptTarget(e)))
+              return;
+
+          if (hasRecentPresentationPointerDown() && isPresentationEmptySlidePlaceholderFocused())
+              showBlockedPresentationEditAttemptOnce('Canvas.emptySlidePlaceholder');
+      }
+
+      function showBlockedPresentationEditAttempt(methodName) {
+          if (currentMode === 'edit' || !canEdit)
+              return false;
+
+          if (lockHolder && !lockHolder.isSelf) {
+              showViewerModeModal(false);
+
+              log('blocked presentation edit attempt: ' + methodName + ', lock held by ' + (lockHolder.userName || 'Someone'));
+          } else {
+              showNeedEditModeModal();
+
+              log('blocked presentation edit attempt: ' + methodName + ', user is not in edit mode');
+          }
+
+          return true;
+      }
+
+      function wrapPresentationEditAttemptMethod(object, methodName, label) {
+          if (!object || typeof object[methodName] !== 'function') {
+              return false;
+          }
+
+          if (object[methodName].__sharekeyBlockedEditAttemptWrapped) {
+              return true;
+          }
+
+          var originalMethod = object[methodName];
+
+          object[methodName] = function () {
+              if (showBlockedPresentationEditAttempt(label + '.' + methodName)) {
+                  return;
+              }
+
+              return originalMethod.apply(this, arguments);
+          };
+
+          object[methodName].__sharekeyBlockedEditAttemptWrapped = true;
+
+          return true;
+      }
+
+
+
+      function wrapPresentationFocusObjectMethod(object) {
+          if (!object || typeof object.onFocusObject !== 'function')
+              return false;
+
+          if (object.onFocusObject.__sharekeyFocusObjectEditAttemptWrapped)
+              return true;
+
+          var originalMethod = object.onFocusObject;
+
+          object.onFocusObject = function () {
+              var result = originalMethod.apply(this, arguments);
+
+              if (hasRecentPresentationPointerDown() && isPresentationObjectOrPlaceholderFocused())
+                  showBlockedPresentationEditAttemptOnce('Main.onFocusObject');
+
+              return result;
+          };
+
+          object.onFocusObject.__sharekeyFocusObjectEditAttemptWrapped = true;
+
+          return true;
+      }
+
+      function bindPresentationEditAttemptMethods() {
+          if (type !== 'slide')
+              return;
+
+          var iframe = document.querySelector('iframe[name="frameEditor"]');
+          var editorWindow = iframe && iframe.contentWindow;
+          var documentHolder = getDebugController('DocumentHolder', editorWindow);
+          var toolbar = getDebugController('Toolbar', editorWindow);
+          var main = getDebugController('Main', editorWindow);
+          var wrappedCount = 0;
+
+          [
+              'onClickPlaceholder',
+              'onClickPlaceholderChart',
+              'onClickPlaceholderSmartArt',
+              'onClickPlaceholderTable',
+              'onEditObject',
+              'onNewSlide',
+              'onDuplicateSlide',
+              'onDeleteSlide'
+          ].forEach(function (methodName) {
+              if (wrapPresentationEditAttemptMethod(documentHolder, methodName, 'DocumentHolder'))
+                  wrappedCount += 1;
+          });
+
+          [
+              'onAddSlide',
+              'onDuplicateSlide',
+              'onBtnInsertTextClick',
+              'onMenuInsertTextClick',
+              'onInsertImageClick',
+              'onInsertShape',
+              'onInsertTableClick',
+              'onSelectChart',
+              'onInsertEquationClick',
+              'onInsertSymbolClick'
+          ].forEach(function (methodName) {
+              if (wrapPresentationEditAttemptMethod(toolbar, methodName, 'Toolbar'))
+                  wrappedCount += 1;
+          });
+
+          if (wrapPresentationFocusObjectMethod(main))
+              wrappedCount += 1;
+      }
+
+      function rememberBlockedEditAttemptFocus() {
+          var iframe = document.querySelector('iframe[name="frameEditor"]');
+          var iframeDocument = iframe && iframe.contentDocument;
+
+          lastBlockedEditAttemptFocus = {
+              wrapperElement: document.activeElement || null,
+              iframe: iframe || null,
+              iframeElement: iframeDocument ? iframeDocument.activeElement : null
+          };
+      }
+
+      function restoreBlockedEditAttemptFocus() {
+          var focusState = lastBlockedEditAttemptFocus;
+
+          if (!focusState)
+              return;
+
+          setTimeout(function () {
+              var iframe = focusState.iframe;
+              var iframeElement = focusState.iframeElement;
+
+              try {
+                  if (iframe && iframe.contentWindow) {
+                      iframe.contentWindow.focus();
+                  }
+              } catch (e) {}
+
+              try {
+                  if (iframeElement && typeof iframeElement.focus === 'function') {
+                      iframeElement.focus();
+                  }
+              } catch (e) {}
+
+              try {
+                  if (editorApi && typeof editorApi.asc_enableKeyEvents === 'function') {
+                      editorApi.asc_enableKeyEvents(true, true);
+                  }
+              } catch (e) {}
+
+              if (!iframe && focusState.wrapperElement && typeof focusState.wrapperElement.focus === 'function') {
+                  try {
+                      focusState.wrapperElement.focus();
+                  } catch (e) {}
+              }
+          }, 0);
+      }
+
+      function isPresentationCanvasElement(element) {
+          return type === 'slide' &&
+              element &&
+              element.tagName &&
+              element.tagName.toLowerCase() === 'canvas' &&
+              element.id === 'id_viewer_overlay';
+      }
+
+      function markPresentationPointerDown(e) {
+          const isNotPresentationCanvasClick = type !== 'slide'
+              || !e
+              || e.button !== 0
+              || e.metaKey
+              || e.ctrlKey
+              || e.altKey
+              || !isPresentationCanvasElement(getEditAttemptTarget(e));
+
+          if (isNotPresentationCanvasClick)
+              return;
+
+          lastPresentationPointerDownAt = Date.now();
+      }
+
+      function hasRecentPresentationPointerDown() {
+          return Date.now() - lastPresentationPointerDownAt < 1000;
+      }
+
+      function hasRecentPresentationEditModal() {
+          return Date.now() - lastPresentationEditModalAt < 800;
+      }
+
+      function getPresentationSelectedElementsCount() {
+          if (!editorApi || typeof editorApi.getSelectedElements !== 'function')
+              return 0;
+
+          try {
+              var selectedElements = editorApi.getSelectedElements();
+
+              if (!selectedElements || typeof selectedElements.length !== 'number')
+                  return 0;
+
+              return selectedElements.length;
+          } catch (e) {
+              return 0;
+          }
+      }
+
+      function isPresentationObjectOrPlaceholderFocused() {
+          return getPresentationSelectedElementsCount() > 1;
+      }
+
+      function isPresentationEmptySlidePlaceholderFocused() {
+          return getPresentationSelectedElementsCount() === 0;
+      }
+
+      function showBlockedPresentationEditAttemptOnce(methodName) {
+          if (hasRecentPresentationEditModal() || !showBlockedPresentationEditAttempt(methodName))
+              return false;
+
+          lastPresentationEditModalAt = Date.now();
+
+          return true;
+      }
+
     // Returns true when the user action looks like an attempt to change document
     // content while the wrapper is still in view mode. We intentionally ignore
     // common navigation / system shortcuts so simple scrolling, copying, finding
     // or selecting text doesn't show a modal.
     function isEditAttemptEvent(e) {
-      if (!e) return false;
+        if (!e)
+            return false;
 
-      if (e.type === 'paste' || e.type === 'cut' || e.type === 'drop') {
-        return true;
-      }
+        var target = getEditAttemptTarget(e);
 
-      if (e.type !== 'keydown') {
-        return false;
-      }
+        if (isNativeEditableElement(target) && !isOnlyOfficeDocumentInput(target))
+            return false;
 
-      if (e.metaKey || e.ctrlKey || e.altKey) {
-        return false;
-      }
+        if (e.type === 'paste' || e.type === 'cut' || e.type === 'drop')
+            return true;
 
-      var key = e.key;
+        if (e.type !== 'keydown')
+            return false;
 
-      if (!key) return false;
+        var key = e.key;
+
+        if (!key)
+            return false;
+
+        if (e.metaKey || e.ctrlKey) {
+            return key.toLowerCase() === 'b' ||
+                key.toLowerCase() === 'i' ||
+                key.toLowerCase() === 'u';
+        }
+
+        if (e.altKey)
+            return false;
 
       return key.length === 1 ||
           key === 'Backspace' ||
@@ -236,12 +520,16 @@
       ['keydown', 'paste', 'cut', 'drop'].forEach(function (eventName) {
         iframe.contentDocument.addEventListener(eventName, handleBlockedEditAttempt, true);
       });
+      iframe.contentDocument.addEventListener('pointerdown', markPresentationPointerDown, true);
+      iframe.contentDocument.addEventListener('mousedown', markPresentationPointerDown, true);
+      iframe.contentDocument.addEventListener('click', handlePresentationCanvasClick, true);
+      bindPresentationEditAttemptMethods();
 
       log('blocked edit attempt listeners bound');
 
-        iframe.contentDocument.addEventListener('keydown', handleSaveShortcut, true);
+      iframe.contentDocument.addEventListener('keydown', handleSaveShortcut, true);
 
-        log('save shortcut listener bound on editor iframe document');
+      log('save shortcut listener bound on editor iframe document');
 
       return true;
     }
@@ -252,6 +540,8 @@
     // the wrapper page, not iframe.contentDocument.
     function showNeedEditModeModal() {
       var modal = document.getElementById('turn-on-edit-mode');
+
+      rememberBlockedEditAttemptFocus();
 
       if (!modal) {
         log('showNeedEditModeModal: modal element not found');
@@ -311,6 +601,8 @@
       editButton.onclick = function () {
         modal.style.display = 'none';
 
+        restoreBlockedEditAttemptFocus();
+
         log('user clicked Edit in turn-on-edit-mode modal');
 
         onEditButtonClick();
@@ -318,6 +610,8 @@
 
       closeButton.onclick = function () {
         modal.style.display = 'none';
+
+        restoreBlockedEditAttemptFocus();
 
         log('user closed turn-on-edit-mode modal');
       };
