@@ -94,13 +94,15 @@
                                    // injected into the tab row right of the Edit button
     var currentSaveState = 'idle'; // 'idle'|'dirty'|'saving'|'saved'|'error' — drives
                                    // the diskette icon; updated via window.skSetSaveState
-    var conflictState = null; // null | { updatedBy?: string }
+    var conflictState = null; // null | { updatedBy?: string, userId?: string|null }
+    var editorNameRequestedFor = null;
     // Last "X is editing…" name we were told about. The conflict label derives
     // its name from the lock holder, but a save-and-exit releases the lock at the
     // SAME moment its save lands — so the set-mode:view (which clears lockHolder)
     // can be processed just before the conflict arrives, losing the name. We
     // remember it here so handleConflict still knows who edited.
     var lastLockHolderName = null;
+    var lastLockHolderId = null;
     var canEdit        = true;     // role-gated edit capability, set by the main app's
                                    // `permissions` message (EDIT_CONTENT right). false ⇒ the
                                    // Edit button + "editing" label are never shown and
@@ -944,7 +946,8 @@
       // in a disabled visual state, the spinner icon rotates, and the text shows
       // animated dots.
       function renderRefreshingButton() {
-          if (!headerEditBtn) return;
+          if (!headerEditBtn)
+              return;
 
           var icon = headerEditBtn.querySelector('.sk-edit-btn__icon');
           var label = headerEditBtn.querySelector('.sk-edit-btn__label');
@@ -1411,7 +1414,8 @@
       // host drives the actual mode flip back via set-mode → handleSetMode, which
       // re-renders the button.
       function onEditButtonClick() {
-          if (!pm || !headerEditBtn || headerEditBtn.disabled) return;
+          if (!pm || !headerEditBtn || headerEditBtn.disabled)
+              return;
 
           // Refresh is not an edit-right action: it only asks the host to reload the
           // fresh document bytes. Allow it even when canEdit=false, but only once the
@@ -1954,8 +1958,19 @@
       // arrives right after the lock is released (cleared above) can still name
       // who edited. Not cleared on release — it's always overwritten by the next
       // real holder before another conflict can occur.
-      if (newLockHolder && newLockHolder.userName && !newLockHolder.isSelf)
-        lastLockHolderName = newLockHolder.userName;
+      if (newLockHolder && newLockHolder.userName)
+        lastLockHolderName = newLockHolder.isSelf ? 'You' : newLockHolder.userName;
+      // Remember the OTHER user's id too (not our own — isSelf never needs a
+      // lookup). Survives the lock release the same way lastLockHolderName does,
+      // so a post-release conflict can still ask the host to name who edited by
+      // id — even after the host's editLock (and its reactive watcher) forgot them.
+      if (newLockHolder && newLockHolder.userId)
+        lastLockHolderId = newLockHolder.userId;
+      // Live "Someone is editing…" (lock held, name unresolved) — ask the host to
+      // resolve it by id too, same path as the conflict banner below.
+      if (newLockHolder && (!newLockHolder.userName || newLockHolder.userName === 'Someone'))
+        maybeRequestEditorName('Someone', newLockHolder.userId);
+
       currentMode = newMode;
       updateOverlayUI();
       applyRestriction(newMode);
@@ -1973,14 +1988,59 @@
     // name we remembered (lastLockHolderName) before finally landing on "Someone".
     function handleConflict() {
       conflictState = {
-        updatedBy: (lockHolder && lockHolder.userName) || lastLockHolderName || 'Someone'
+        updatedBy: (lockHolder && lockHolder.userName) || lastLockHolderName || 'Someone',
+        userId:    (lockHolder && lockHolder.userId)   || lastLockHolderId   || null
       };
 
       updateOverlayUI();
 
       log('handleConflict: document updated by ' + conflictState.updatedBy);
+
+      maybeRequestEditorName(conflictState.updatedBy, conflictState.userId);
     }
     window.handleConflict = handleConflict;
+
+    function maybeRequestEditorName(displayName, userId) {
+      if (displayName !== 'Someone' || !pm)
+          return;
+
+      if (editorNameRequestedFor === userId)
+          return;
+
+      editorNameRequestedFor = userId;
+      log('holder name unresolved → request-editor-name for ' + userId);
+      pm.toHost({ type: 'request-editor-name', userId: userId });
+    }
+
+    function handleEditorName(userId, userName) {
+      log('Handle editor name: ');
+      log(userId);
+      log(userName);
+
+      if (!userId || !userName || userName === 'Someone')
+          return;
+
+      let changed = false;
+
+      if (lastLockHolderId === userId)
+          lastLockHolderName = userName;
+
+      if (conflictState && conflictState.userId === userId && conflictState.updatedBy === 'Someone') {
+        conflictState.updatedBy = userName;
+        changed = true;
+      }
+
+      if (lockHolder && lockHolder.userId === userId && lockHolder.userName === 'Someone') {
+        lockHolder.userName = userName;
+        changed = true;
+      }
+
+      if (changed) {
+        updateOverlayUI();
+        log('handleEditorName: resolved ' + userId + ' → ' + userName);
+      }
+    }
+    window.handleEditorName = handleEditorName;
 
     // ── Conflict-clear handler — dispatched from wrapper-postmessage.js ─────
     // Reserved for the future flow where the host decides the conflict is no
@@ -1989,6 +2049,7 @@
     // label goes back to the usual editing-status label or hides completely.
     function handleConflictCleared() {
       conflictState = null;
+      editorNameRequestedFor = null;   // allow a fresh lookup on the next conflict
 
       updateOverlayUI();
 
