@@ -13,6 +13,7 @@
 //   { type: 'set-mode', mode: 'view'|'edit', lockHolder?: {userId?, userName, isSelf?} }  // v0 collab (isSelf ⇒ held by current user, e.g. another tab)
 //   { type: 'permissions', canEdit: bool }            // role-gated: canEdit=false hides the Edit button + editing label (sent before `load`)
 //   { type: 'conflict' }                              // v0 collab: another user saved
+//   { type: 'editor-name', userId, userName }         // reply to request-editor-name: resolved holder display name
 //   { type: 'conflict-cleared' }                       // reserved; modal hides on its own after `reload`
 //   { type: 'reload' }                                  // v0 collab: main app asks us to location.reload()
 //
@@ -26,6 +27,7 @@
 //   { type: 'close-request' }                                  // user File→Close
 //   { type: 'request-edit-mode' }                              // v0 collab: user clicked Edit
 //   { type: 'request-edit-state' }                             // v0 collab: ask host for current lock/mode (sent on boot; fixes stale Edit button after a reload)
+//   { type: 'request-editor-name', userId }                    // v0 collab: ask host to resolve a lock holder's display name by id (when the label is stuck at "Someone")
 //   { type: 'mode-changed', mode: 'view'|'edit' }              // v0 collab: user toggled native dropdown
 //   { type: 'reload-request' }                         // v0 collab: user clicked Reload in conflict modal
 //   { type: 'error',     code: string, message: string, requestId? }
@@ -193,6 +195,13 @@
           // re-trip from window.open).
           window.handleConflict();
 
+          return;
+        case 'editor-name':
+          if (typeof window.handleEditorName === 'function') {
+            window.handleEditorName(d.userId, d.userName);
+          } else {
+            log('editor-name received before wrapper-mount.js bound it — ignoring');
+          }
           return;
         case 'conflict-cleared':
           // Reserved: the main app could send this if it ever wants to
