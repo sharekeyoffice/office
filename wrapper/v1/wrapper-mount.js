@@ -259,6 +259,58 @@
           }, true);
       }
 
+      // Sheet-tab double-click (spreadsheet only).
+      function showBlockedSheetTabEditAttempt() {
+          if (currentMode === 'edit' || !canEdit)
+              return false;
+
+          if (lockHolder && !lockHolder.isSelf) {
+              showViewerModeModal(false);
+
+              log('blocked sheet-tab rename: lock held by ' + (lockHolder.userName || 'Someone'));
+          } else {
+              showNeedEditModeModal();
+
+              log('blocked sheet-tab rename: user is not in edit mode');
+          }
+
+          return true;
+      }
+
+      function bindSheetTabEditAttemptListener() {
+          if (type !== 'cell')
+              return;
+
+          var iframe = document.querySelector('iframe[name="frameEditor"]');
+
+          if (!iframe || !iframe.contentDocument)
+              return;
+
+          if (iframe.contentDocument.__sheetTabEditAttemptListenerBound)
+              return;
+
+          iframe.contentDocument.__sheetTabEditAttemptListenerBound = true;
+
+          // Capture phase so we run BEFORE the status-bar TabBar's own dblclick
+          // handler; stopImmediatePropagation then prevents the native rename from
+          // starting, so only our modal shows.
+          iframe.contentDocument.addEventListener('dblclick', function (e) {
+              var target = getEditAttemptTarget(e);
+
+              if (!target || !target.closest || !target.closest('.statusbar .list-item'))
+                  return;
+
+              if (!showBlockedSheetTabEditAttempt())
+                  return;
+
+              e.preventDefault();
+              e.stopPropagation();
+
+              if (typeof e.stopImmediatePropagation === 'function')
+                  e.stopImmediatePropagation();
+          }, true);
+      }
+
       function getPresentationController(name, editorWindow) {
           try {
               if (!editorWindow || !editorWindow.PE || typeof editorWindow.PE.getController !== 'function')
@@ -640,6 +692,7 @@
         iframe.contentDocument.addEventListener(eventName, handleBlockedEditAttempt, true);
       });
       bindCellEditorEditAttemptListener();
+      bindSheetTabEditAttemptListener();
       iframe.contentDocument.addEventListener('pointerdown', markPresentationPointerDown, true);
       iframe.contentDocument.addEventListener('mousedown', markPresentationPointerDown, true);
       iframe.contentDocument.addEventListener('click', handlePresentationCanvasClick, true);
