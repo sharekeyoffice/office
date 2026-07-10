@@ -259,24 +259,6 @@
           }, true);
       }
 
-      // Sheet-tab double-click (spreadsheet only).
-      function showBlockedSheetTabEditAttempt() {
-          if (currentMode === 'edit' || !canEdit)
-              return false;
-
-          if (lockHolder && !lockHolder.isSelf) {
-              showViewerModeModal(false);
-
-              log('blocked sheet-tab rename: lock held by ' + (lockHolder.userName || 'Someone'));
-          } else {
-              showNeedEditModeModal();
-
-              log('blocked sheet-tab rename: user is not in edit mode');
-          }
-
-          return true;
-      }
-
       function bindSheetTabEditAttemptListener() {
           if (type !== 'cell')
               return;
@@ -290,13 +272,14 @@
               return;
 
           iframe.contentDocument.__sheetTabEditAttemptListenerBound = true;
+
           iframe.contentDocument.addEventListener('dblclick', function (e) {
               var target = getEditAttemptTarget(e);
 
               if (!target || !target.closest || !target.closest('.statusbar .list-item'))
                   return;
 
-              if (!showBlockedSheetTabEditAttempt())
+              if (!showBlockedEditAttempt('SheetTab.rename'))
                   return;
 
               e.preventDefault();
@@ -326,18 +309,18 @@
               showBlockedPresentationEditAttemptOnce('Canvas.emptySlidePlaceholder');
       }
 
-      function showBlockedPresentationEditAttempt(methodName) {
+      function showBlockedEditAttempt(label) {
           if (currentMode === 'edit' || !canEdit)
               return false;
 
           if (lockHolder && !lockHolder.isSelf) {
               showViewerModeModal(false);
 
-              log('blocked presentation edit attempt: ' + methodName + ', lock held by ' + (lockHolder.userName || 'Someone'));
+              log('blocked edit attempt: ' + label + ', lock held by ' + (lockHolder.userName || 'Someone'));
           } else {
               showNeedEditModeModal();
 
-              log('blocked presentation edit attempt: ' + methodName + ', user is not in edit mode');
+              log('blocked edit attempt: ' + label + ', user is not in edit mode');
           }
 
           return true;
@@ -355,7 +338,7 @@
           var originalMethod = object[methodName];
 
           object[methodName] = function () {
-              if (showBlockedPresentationEditAttempt(label + '.' + methodName)) {
+              if (showBlockedEditAttempt(label + '.' + methodName)) {
                   return;
               }
 
@@ -573,7 +556,7 @@
       }
 
       function showBlockedPresentationEditAttemptOnce(methodName) {
-          if (hasRecentPresentationEditModal() || !showBlockedPresentationEditAttempt(methodName))
+          if (hasRecentPresentationEditModal() || !showBlockedEditAttempt(methodName))
               return false;
 
           lastPresentationEditModalAt = Date.now();
