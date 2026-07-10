@@ -290,10 +290,6 @@
               return;
 
           iframe.contentDocument.__sheetTabEditAttemptListenerBound = true;
-
-          // Capture phase so we run BEFORE the status-bar TabBar's own dblclick
-          // handler; stopImmediatePropagation then prevents the native rename from
-          // starting, so only our modal shows.
           iframe.contentDocument.addEventListener('dblclick', function (e) {
               var target = getEditAttemptTarget(e);
 
