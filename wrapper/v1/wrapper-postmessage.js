@@ -24,6 +24,7 @@
 //   { type: 'opened',    requestId? }                          // doc rendered
 //   { type: 'dirty',     dirty: bool }                         // 10.1.2 step 3
 //   { type: 'saved',     bytes: Uint8Array, fileName, saveId, requestId? }
+//   { type: 'page-closing', dirty: bool }                      // page is being unloaded; host should cleanup/release lock after save
 //   { type: 'close-request' }                                  // user File→Close
 //   { type: 'request-edit-mode' }                              // v0 collab: user clicked Edit
 //   { type: 'request-edit-state' }                             // v0 collab: ask host for current lock/mode (sent on boot; fixes stale Edit button after a reload)
@@ -51,6 +52,8 @@
     this.iframe       = null;              // resolved when iframe is ready
     this.hostWindow   = window.opener || window.parent;   // host tab/iframe
     this.hostOrigin   = '*';               // tightened on first inbound msg
+    this.port         = null;              // Desktop MessagePort transport
+    this.pendingHostMessages = [];
     this.requestId    = null;              // current load/save in flight
     this.fontsPath    = '/fonts/';
 
@@ -63,6 +66,7 @@
     this.saveAckTimer       = null;        // watchdog: if no save-ack lands, the host is gone → error
     this.saveAckTimeoutMs   = 15000;       // no save-ack within this → assume host unreachable, flip to 'error'
     this.everSaved          = false;       // a save has been confirmed this session → clean shows 'saved' (else 'idle')
+    this.closeAfterSaveAck  = false;
 
     // Chunk-diff self-check state. lastFullBytes is the OOXML we sent on
     // the previous `saved`; on the next save we run a round-trip check via
@@ -102,11 +106,41 @@
     this._activityListenersAttached = true;
   };
 
+  WrapperPostMessage.prototype.flushPendingHostMessages = function () {
+    if (!this.port || !this.pendingHostMessages.length) {
+      return;
+    }
+
+    while (this.pendingHostMessages.length) {
+      var item = this.pendingHostMessages.shift();
+
+      this.port.postMessage(item.msg, item.transfer);
+    }
+  };
+
   WrapperPostMessage.prototype.toHost = function (msg, transfer) {
-    if (!this.hostWindow) return;
     msg.v = POST_VERSION;
+
     try {
-      this.hostWindow.postMessage(msg, this.hostOrigin || '*', transfer || []);
+      if (this.port) {
+        this.port.postMessage(msg, transfer || []);
+
+        return;
+      }
+
+      if (window.SK_DESKTOP_TRANSPORT) {
+        this.pendingHostMessages.push({ msg: msg, transfer: transfer || [] });
+
+        return;
+      }
+
+      if (this.hostWindow) {
+        this.hostWindow.postMessage(msg, this.hostOrigin || '*', transfer || []);
+
+        return;
+      }
+
+      this.pendingHostMessages.push({ msg: msg, transfer: transfer || [] });
     } catch (e) {
       log('postToHost failed:', e.message);
     }
@@ -115,6 +149,97 @@
   WrapperPostMessage.prototype.error = function (code, message, requestId) {
     log('error', code, message);
     this.toHost({ type: 'error', code: code, message: message, requestId: requestId });
+  };
+
+  WrapperPostMessage.prototype.handleInbound = function (d) {
+    switch (d.type) {
+      case 'ping':
+        this.ensureActivityListeners();
+        this.toHost({ type: 'pong', editedSinceLastPing: this.editedSinceLastPing });
+        this.editedSinceLastPing = false;
+
+        return;
+      case 'load':
+        this.onLoad(d);
+
+        return;
+      case 'save-request':
+        this.onSaveRequest(d);
+
+        return;
+      case 'save-ack':
+        this.onSaveAck(d);
+
+        return;
+      case 'close':
+        window.close();
+
+        return;
+      case 'set-mode':
+        // Mode change is authoritative — only the trusted main app
+        // (origin-pinned above) can demand a view↔edit switch. Dispatched
+        // to wrapper-mount.js's handleSetMode, which tears down the
+        // current editor instance and reconstructs in the new mode.
+        if (typeof window.handleSetMode === 'function') {
+          window.handleSetMode(d.mode, d.lockHolder);
+        } else {
+          log('set-mode received before wrapper-mount.js bound it — ignoring');
+        }
+        return;
+      case 'permissions':
+        // Role-gated capability from the main app (canEdit ⇐ EDIT_CONTENT
+        // right). Sent before `load` so the Edit button/label gate before the
+        // toolbar renders. UX/defense-in-depth only — the server enforces edit
+        // rights on acquireEditLock + appendDiffChunk.
+        if (typeof window.handlePermissions === 'function') {
+          window.handlePermissions(d);
+        } else {
+          log('permissions received before wrapper-mount.js bound it — ignoring');
+        }
+        return;
+      case 'conflict':
+        // Another user saved changes to this document while we have it
+        // open. Show the blocking modal; user must click Reload to refresh
+        // their view of the document. The Reload click posts `reload-request`
+        // back to the main app, which sends us a `reload` message that
+        // triggers `location.reload()` in this same tab (no popup-blocker
+        // re-trip from window.open).
+        window.handleConflict();
+
+        return;
+      case 'editor-name':
+        if (typeof window.handleEditorName === 'function') {
+          window.handleEditorName(d.userId, d.userName);
+        } else {
+          log('editor-name received before wrapper-mount.js bound it — ignoring');
+        }
+
+        return;
+      case 'conflict-cleared':
+        // Reserved: the main app could send this if it ever wants to
+        // dismiss the modal without triggering a full reload (e.g. for
+        // a future in-editor-state-patch flow). Today's in-place reload
+        // doesn't use this path because the whole page reload tears the
+        // modal down naturally. Handle defensively so the modal hides
+        // if it ever arrives.
+        window.handleConflictCleared();
+
+        return;
+      case 'reload':
+        // Main app has fresh bytes for us. Reload the page in-place
+        // (same tab, same Window object — main app's session map stays
+        // valid across the reload, and the post-reload `ready` event
+        // will trigger maybeSendLoad with the new bytes). Clear the
+        // dirty flag first so the editor's beforeunload guard doesn't
+        // re-prompt — the user already acknowledged the loss in the
+        // conflict modal.
+        window.__editorDirty = false;
+        window.location.reload();
+
+        return;
+      default:
+        log('unknown inbound type:', d.type);
+    }
   };
 
   WrapperPostMessage.prototype.installListener = function () {
@@ -126,17 +251,47 @@
     this._messageHandler = function (ev) {
       // Defensive: if this instance was destroyed but the listener is still
       // somehow attached (e.g. during a race window), bail.
-      if (self._destroyed) return;
+      if (self._destroyed) {
+        return;
+      }
 
       // Only handle messages explicitly tagged as our wire format.
       var d = ev.data;
-      if (!d || typeof d !== 'object' || d.v !== POST_VERSION) return;
+
+      if (d && d.__skPort === true && ev.ports && ev.ports[0]) {
+        self.port = ev.ports[0];
+
+        self.port.onmessage = function (portEvent) {
+          var message = portEvent.data;
+
+          if (!message || typeof message !== 'object' || message.v !== POST_VERSION) {
+            return;
+          }
+
+          self.handleInbound(message);
+        };
+
+        if (typeof self.port.start === 'function') {
+          self.port.start();
+        }
+
+        log('desktop MessagePort connected');
+        self.flushPendingHostMessages();
+
+        return;
+      }
+
+      if (!d || typeof d !== 'object' || d.v !== POST_VERSION) {
+        return;
+      }
 
       // Allowed-origin gate. window.matchHostOrigin (set by edit.html's guard)
       // is the single source of truth — it handles an exact baked origin AND a
       // `*.suffix` wildcard. If it's somehow absent (older edit.html), fall back
       // to the prior behaviour of trusting the opener so nothing breaks.
-      if (window.matchHostOrigin && !window.matchHostOrigin(ev.origin)) return;
+      if (window.matchHostOrigin && !window.matchHostOrigin(ev.origin)) {
+        return;
+      }
 
       // Lock the host origin to the first ALLOWED origin we hear from. This is
       // the CONCRETE origin (a wildcard rule can't be a postMessage targetOrigin),
@@ -146,89 +301,11 @@
         log('locked host origin =', ev.origin);
       }
 
-      switch (d.type) {
-        case 'ping':
-          self.ensureActivityListeners();
-          self.toHost({ type: 'pong', editedSinceLastPing: self.editedSinceLastPing });
-          self.editedSinceLastPing = false;
-          return;
-        case 'load':
-          self.onLoad(d);
-          return;
-        case 'save-request':
-          self.onSaveRequest(d);
-          return;
-        case 'save-ack':
-          self.onSaveAck(d);
-          return;
-        case 'close':
-          window.close();
-          return;
-        case 'set-mode':
-          // Mode change is authoritative — only the trusted main app
-          // (origin-pinned above) can demand a view↔edit switch. Dispatched
-          // to wrapper-mount.js's handleSetMode, which tears down the
-          // current editor instance and reconstructs in the new mode.
-          if (typeof window.handleSetMode === 'function') {
-            window.handleSetMode(d.mode, d.lockHolder);
-          } else {
-            log('set-mode received before wrapper-mount.js bound it — ignoring');
-          }
-          return;
-        case 'permissions':
-          // Role-gated capability from the main app (canEdit ⇐ EDIT_CONTENT
-          // right). Sent before `load` so the Edit button/label gate before the
-          // toolbar renders. UX/defense-in-depth only — the server enforces edit
-          // rights on acquireEditLock + appendDiffChunk.
-          if (typeof window.handlePermissions === 'function') {
-            window.handlePermissions(d);
-          } else {
-            log('permissions received before wrapper-mount.js bound it — ignoring');
-          }
-          return;
-        case 'conflict':
-          // Another user saved changes to this document while we have it
-          // open. Show the blocking modal; user must click Reload to refresh
-          // their view of the document. The Reload click posts `reload-request`
-          // back to the main app, which sends us a `reload` message that
-          // triggers `location.reload()` in this same tab (no popup-blocker
-          // re-trip from window.open).
-          window.handleConflict();
-
-          return;
-        case 'editor-name':
-          if (typeof window.handleEditorName === 'function') {
-            window.handleEditorName(d.userId, d.userName);
-          } else {
-            log('editor-name received before wrapper-mount.js bound it — ignoring');
-          }
-          return;
-        case 'conflict-cleared':
-          // Reserved: the main app could send this if it ever wants to
-          // dismiss the modal without triggering a full reload (e.g. for
-          // a future in-editor-state-patch flow). Today's in-place reload
-          // doesn't use this path because the whole page reload tears the
-          // modal down naturally. Handle defensively so the modal hides
-          // if it ever arrives.
-          window.handleConflictCleared();
-          return;
-        case 'reload':
-          // Main app has fresh bytes for us. Reload the page in-place
-          // (same tab, same Window object — main app's session map stays
-          // valid across the reload, and the post-reload `ready` event
-          // will trigger maybeSendLoad with the new bytes). Clear the
-          // dirty flag first so the editor's beforeunload guard doesn't
-          // re-prompt — the user already acknowledged the loss in the
-          // conflict modal.
-          window.__editorDirty = false;
-          window.location.reload();
-          return;
-        default:
-          log('unknown inbound type:', d.type);
-      }
+      self.handleInbound(d);
     };
 
     window.addEventListener('message', this._messageHandler);
+    window.postMessage({ __skRequestPort: true }, '*');
   };
 
   // Tear down: remove the message listener and clear pending state. Called
@@ -612,6 +689,34 @@
     this.captureAndSend(saveId, null);
   };
 
+  WrapperPostMessage.prototype.saveAndClose = function () {
+    if (!this.dirty) {
+      window.__editorDirty = false;
+      window.close();
+
+      return;
+    }
+
+    this.closeAfterSaveAck = true;
+
+    if (this.pendingSaveId !== null) {
+      log('saveAndClose waits for pending saveId=' + this.pendingSaveId);
+
+      return;
+    }
+
+    if (this.autosaveTimer) {
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
+    }
+
+    var saveId = 'close-' + Date.now();
+
+    log('saveAndClose fires, saveId=' + saveId);
+
+    this.captureAndSend(saveId, null);
+  };
+
   // Explicit user-initiated save (diskette click). Runs the same capture →
   // x2t → `saved` path as autosave; captureAndSend flips the state to
   // 'saving' (disabling the button) and the eventual save-ack drives it to
@@ -654,12 +759,19 @@
       // the upload (→ still dirty). Falls back to the pre-edit flag if the
       // iframe hook isn't available.
       var stillModified = this.markEditorSaved(wasEdited);
+
       if (stillModified) {
         log('save-ack ok, but edited past the saved point during upload — back to dirty');
         this.setSaveState('dirty');
       } else {
         log('save-ack ok — saved point advanced, all clean');
         this.setSaveState('saved');
+      }
+
+      if (this.closeAfterSaveAck && !stillModified) {
+        this.closeAfterSaveAck = false;
+        window.__editorDirty = false;
+        window.close();
       }
     } else {
       log('save-ack failed: ' + (msg.reason || '(no reason)'));

@@ -55,9 +55,14 @@
                     return;
                 }
 
+                var params = new URLSearchParams(window.location.search);
+                var isDesktopTransport = params.get("transport") === "desktop";
+
                 // No opener → direct visit → refuse to mount.
+                // Desktop Electron windows intentionally have no opener; they communicate via MessagePort.
                 var hasOpener = !!(window.opener && window.opener !== window);
-                if (!hasOpener) {
+
+                if (!hasOpener && !isDesktopTransport) {
                     document.body.innerHTML =
                         '<div class="startup-error">' +
                         "<h1>Open a document from your main app</h1>" +
@@ -78,7 +83,8 @@
                 // for "is this inbound origin allowed?" — used by both
                 // wrapper-postmessage.js and wrapper-heartbeat.js. Exact origins
                 // stay exact (prod is unchanged); only a `*.` rule is permissive.
-                window.HOST_ORIGIN = ALLOWED_HOST_ORIGIN; // the rule (may be a pattern)
+                window.SK_DESKTOP_TRANSPORT = isDesktopTransport;
+                window.HOST_ORIGIN = isDesktopTransport ? "" : ALLOWED_HOST_ORIGIN; // the rule (may be a pattern)
                 window.matchHostOrigin = (function (rule) {
                     var rules = String(rule)
                         .split(",")

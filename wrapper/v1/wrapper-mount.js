@@ -74,7 +74,7 @@
     // its `load` postMessage.
     var hasOpener = !!(window.opener && window.opener !== window);
     var hasParent = !!(window.parent && window.parent !== window);
-    var isStandalone = !hasOpener && !hasParent;
+    var isStandalone = !hasOpener && !hasParent && !window.SK_DESKTOP_TRANSPORT;
     // Pick the fixture matching the editor type so the standalone smoke test
     // exercises the cascade for the right document family.
     var fixtureExt = type === 'cell' ? 'xlsx' : (type === 'slide' ? 'pptx' : 'docx');
@@ -2215,20 +2215,45 @@
       }
     };
 
+      function notifyHostAboutPageClosing() {
+          if (!pm || window.__skPageClosingNotified)
+              return;
+
+          window.__skPageClosingNotified = true;
+
+          if (window.__editorDirty)
+              pm.triggerAutosave();
+
+          pm.toHost({
+              type: 'page-closing',
+              dirty: !!window.__editorDirty,
+          });
+      }
+
     // Browser-level guard: if the user closes the editor tab with unsaved
     // edits, prompt before discarding. The host main app should ALSO show
     // a confirmation in its own UI on `close-request`, but this is the
     // last line of defence for direct tab-close (Cmd-W, X button) where no
     // host event ever fires.
-    window.addEventListener('beforeunload', function (e) {
-      if (window.__editorDirty) {
-        // Modern browsers ignore the custom message and show their own,
-        // but `returnValue` must be set for the prompt to appear at all.
-        e.preventDefault();
-        e.returnValue = 'You have unsaved edits. Close anyway?';
-        return e.returnValue;
-      }
-    });
+      window.addEventListener('beforeunload', function (e) {
+          if (!window.__editorDirty)
+              return;
+
+          if (window.SK_DESKTOP_TRANSPORT && pm) {
+              e.preventDefault();
+
+              log('desktop beforeunload + dirty → saveAndClose');
+
+              pm.saveAndClose();
+
+              return;
+          }
+
+          e.preventDefault();
+          e.returnValue = 'You have unsaved edits. Close anyway?';
+
+          return e.returnValue;
+      });
 
     // Autosave: also fire when the tab is backgrounded. visibilitychange
     // fires while the page is still alive (unlike beforeunload), so the
@@ -2240,6 +2265,8 @@
         pm.triggerAutosave();
       }
     });
+
+    window.addEventListener('pagehide', notifyHostAboutPageClosing);
 
     // The Edit button is injected into the iframe header after onAppReady
     // (mountHeaderControls); its click handler is wired there. Nothing to
