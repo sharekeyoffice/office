@@ -4,10 +4,10 @@
   "private": true,
   "description": "Static-site deployment of the OnlyOffice v1 editor wrapper for office.hostname.com",
   "scripts": {
-    "initialize": "bash build/initialize.sh",
+    "initialize": "node build/run-bash.js initialize.sh",
     "assemble": "node build/dev-assemble.js --watch",
     "sync": "node build/dev-assemble.js",
-    "build": "bash build/build.sh",
+    "build": "node build/run-bash.js build.sh",
     "start": "node server/index.js",
     "dev": "PORT=8080 node server/index.js",
     "test": "vitest run",
