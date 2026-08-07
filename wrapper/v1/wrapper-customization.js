@@ -22,6 +22,8 @@
 
   var DOCUMENT_TYPE = { word: 'word', cell: 'cell', slide: 'slide' };
 
+  var FALLBACK_USER = { id: 'sk-editor-user', name: 'Sharekey user' };
+
   function buildEditorConfig(type, opts) {
     if (!DOCUMENT_TYPE[type]) {
       throw new Error('wrapper-customization: unknown document type: ' + type);
@@ -59,8 +61,8 @@
         canRequestClose:      true,         // host can ask us to close
 
         user: {
-          id:    opts.userId   || 'wrap-anon',
-          name:  opts.userName || 'Editor',
+          id:    opts.userId   || FALLBACK_USER.id,
+          name:  opts.userName || FALLBACK_USER.name,
           group: ''
         },
 
