@@ -309,7 +309,7 @@
   //
   // Same-origin access is fine: edit.html and the editor iframe share an
   // origin.
-  WrapperPostMessage.prototype.primeUserIdentity = function () {
+  WrapperPostMessage.prototype.identifyHostUser = function () {
     if (!global.__skHostUser)
       return false;
 
@@ -430,7 +430,7 @@
       // Put the editing user into the iframe before the document opens, so
       // editor-stubs can set it on DocInfo. Every revision created in this
       // session copies its author from there. @adr-0001
-      self.primeUserIdentity();
+      self.identifyHostUser();
       self.toHost({ type: 'progress', stage: 'opening', requestId: requestId });
 
       // Hand off to DocsAPI: editor.openDocument(buffer) sends
