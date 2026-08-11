@@ -64,7 +64,7 @@
     this.pendingSaveId      = null;        // saveId we sent on `saved`, awaiting save-ack
     this.editedSincePending = false;       // user edited after pendingSaveId was sent
     this.saveAckTimer       = null;        // watchdog: if no save-ack lands, the host is gone → error
-    this.saveAckTimeoutMs   = 15000;       // no save-ack within this → assume host unreachable, flip to 'error'
+    this.saveAckTimeoutMs   = 25000;       // no save-ack within this → assume host unreachable, flip to 'error'
     this.everSaved          = false;       // a save has been confirmed this session → clean shows 'saved' (else 'idle')
 
     // Chunk-diff self-check state. lastFullBytes is the OOXML we sent on
