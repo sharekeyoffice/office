@@ -310,13 +310,18 @@
   // Same-origin access is fine: edit.html and the editor iframe share an
   // origin.
   WrapperPostMessage.prototype.primeUserIdentity = function () {
-    if (!global.__skHostUser) return false;
+    if (!global.__skHostUser)
+      return false;
+
     var iframe = this.findIframe();
-    if (!iframe || !iframe.contentWindow) return false;
+    if (!iframe || !iframe.contentWindow)
+      return false;
+
     iframe.contentWindow.__skUser = {
-      id:   global.__skHostUser.userId   || '',
+      id:   global.__skHostUser.userId || '',
       name: global.__skHostUser.userName || ''
     };
+
     return true;
   };
 
