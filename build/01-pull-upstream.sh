@@ -15,10 +15,13 @@ VENDOR="$REPO/vendor"
 WRAPPER="$REPO/wrapper"
 mkdir -p "$VENDOR"
 
-get_field() { node -e "console.log((JSON.parse(require('fs').readFileSync('$1','utf8'))['$2'])||'')"; }
+get_field() {
+  local rel="$1" field="$2"
+  ( cd "$REPO" && node -e "const fs=require('fs'); const j=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); console.log(j[process.argv[2]]||'')" "$rel" "$field" )
+}
 
 clone_pinned() {
-  local name="$1" pin="$2" dir="$VENDOR/$1"
+  local name="$1" pin="upstream-pins/$1.json" dir="$VENDOR/$1"
   local remote ref; remote=$(get_field "$pin" remote); ref=$(get_field "$pin" ref)
   echo "→ $name: $remote @ $ref"
   if [[ ! -d "$dir/.git" ]]; then
@@ -31,8 +34,8 @@ clone_pinned() {
   echo "  $name @ $(cd "$dir" && git rev-parse --short HEAD)"
 }
 
-clone_pinned sdkjs    "$REPO/upstream-pins/sdkjs.json"
-clone_pinned web-apps "$REPO/upstream-pins/web-apps.json"
+clone_pinned sdkjs
+clone_pinned web-apps
 
 # ── Prepare sdkjs for bundling ──────────────────────────────────
 echo "→ applying sdkjs patches"

@@ -1647,7 +1647,7 @@
     // view-only is achieved later via asc_setRestriction.
     function constructEditor() {
       log('constructing editor type=' + type);
-      var built = window.buildEditorConfig(type);
+      var built = window.buildEditorConfig(type, window.__skHostUser || {});
 
       var docsApiConfig = {
         documentType: type,           // 'word' | 'cell' | 'slide'

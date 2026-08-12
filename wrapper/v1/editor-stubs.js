@@ -832,10 +832,19 @@
       this.editorConfig = this.editorConfig || {};
       this.editorConfig.user = this.editorConfig.user || {};
       var u = this.editorConfig.user;
-      if (!u.id) u.id = 'wrap-anon';
-      if (!u.fullname) u.fullname = 'Editor';
-      if (!u.firstname) u.firstname = 'Editor';
-      if (!u.lastname) u.lastname = '';
+
+      if (window.__skUser) {
+        if (window.__skUser.id)
+          u.id = window.__skUser.id;
+        if (window.__skUser.name)
+          u.name = u.fullname = window.__skUser.name;
+      }
+
+      if (!u.id) u.id = 'sk-editor-user';
+      if (!u.fullname) u.fullname = u.name || 'Sharekey user';
+      if (!u.name) u.name = u.fullname;
+      if (!u.firstname) u.firstname = String(u.fullname).split(' ')[0];
+      if (!u.lastname) u.lastname = String(u.fullname).split(' ').slice(1).join(' ');
       if (!u.image) u.image = '';
       this.editorConfig.lang = this.editorConfig.lang || 'en';
       this.editorConfig.mode = this.editorConfig.mode || 'edit';
@@ -883,9 +892,31 @@
       // asc_LoadDocument reads `this.DocInfo.get_Encrypted()`; without
       // DocInfo the call crashes. The v0 viewer also does this (see
       // master plan README "boot fixes that work").
+      //
+      // DocInfo also carries the user, and that is where every tracked change
+      // gets its author: ReviewInfo.Update() copies DocInfo's user id and full
+      // name into each new revision. asc_CDocInfo.get_UserName() returns null
+      // when no UserInfo is attached, and the review panel then calls
+      // Common.Utils.getUserInitials(null), which throws on .split(). So the
+      // UserInfo below is not optional decoration — without it the editor
+      // breaks the document on the first edit inside a tracked change.
+      // @adr-0001
       try {
-        if (this.api && !this.api.DocInfo && window.Asc && window.Asc.asc_CDocInfo) {
-          var info = new window.Asc.asc_CDocInfo();
+        if (this.api && window.Asc && window.Asc.asc_CDocInfo) {
+          var info = this.api.DocInfo || new window.Asc.asc_CDocInfo();
+
+          if (window.Asc.asc_CUserInfo && typeof info.put_UserInfo === 'function') {
+            var userInfo = new window.Asc.asc_CUserInfo();
+            userInfo.put_Id(u.id);
+            userInfo.put_FullName(u.fullname);
+            userInfo.put_FirstName(u.firstname);
+            userInfo.put_LastName(u.lastname);
+            info.put_UserInfo(userInfo);
+            log('DocInfo user = ' + u.fullname + ' (' + u.id + ')');
+          } else {
+            log('WARNING: asc_CUserInfo or put_UserInfo missing — revisions will have no author');
+          }
+
           if (typeof this.api.asc_setDocInfo === 'function') {
             this.api.asc_setDocInfo(info);
           } else {

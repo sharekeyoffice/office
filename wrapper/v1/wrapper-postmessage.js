@@ -6,7 +6,10 @@
 //
 // Inbound from host:
 //   { type: 'ping' }
-//   { type: 'load',     bytes: ArrayBuffer|Uint8Array, fileName?, requestId? }
+//   { type: 'load',     bytes: ArrayBuffer|Uint8Array, fileName?, requestId?, userId, userName }
+//                                                     // userId/userName: who is editing; recorded
+//                                                     // as the author of every tracked change.
+//                                                     // Optional — a fallback applies. @adr-0001
 //   { type: 'save-request', requestId? }            // 10.1.2 step 3
 //   { type: 'save-ack', saveId, ok: bool, reason? } // v0 collab
 //   { type: 'close',    requestId? }
@@ -61,7 +64,7 @@
     this.pendingSaveId      = null;        // saveId we sent on `saved`, awaiting save-ack
     this.editedSincePending = false;       // user edited after pendingSaveId was sent
     this.saveAckTimer       = null;        // watchdog: if no save-ack lands, the host is gone → error
-    this.saveAckTimeoutMs   = 15000;       // no save-ack within this → assume host unreachable, flip to 'error'
+    this.saveAckTimeoutMs   = 25000;       // no save-ack within this → assume host unreachable, flip to 'error'
     this.everSaved          = false;       // a save has been confirmed this session → clean shows 'saved' (else 'idle')
 
     // Chunk-diff self-check state. lastFullBytes is the OOXML we sent on
@@ -280,6 +283,48 @@
     return false;
   };
 
+  // Store the editing user's identity from a `load` message. @adr-0001
+  // Only non-empty strings are taken, so a host that sends `userName: ''`
+  // does not overwrite a good value with a blank one. A blank name would
+  // reach Common.Utils.getUserInitials, which calls .split() with no guard.
+  WrapperPostMessage.prototype.rememberHostUser = function (msg) {
+    var id   = (msg && typeof msg.userId   === 'string') ? msg.userId.trim()   : '';
+    var name = (msg && typeof msg.userName === 'string') ? msg.userName.trim() : '';
+    if (!id && !name) return null;
+
+    var user = global.__skHostUser || (global.__skHostUser = {});
+    if (id)   user.userId   = id;
+    if (name) user.userName = name;
+    log('host user =', user.userName || '(no name)', user.userId || '(no id)');
+    return user;
+  };
+
+  // Copy the identity into the iframe so editor-stubs can put it on the
+  // editor's DocInfo before the document opens. @adr-0001
+  //
+  // The editor is constructed at boot, but the host sends who the user is
+  // with its `load` message, so the identity is not known in time for
+  // buildEditorConfig. This is the same "prime the iframe before
+  // openDocument" step the font path and the extracted media already use.
+  //
+  // Same-origin access is fine: edit.html and the editor iframe share an
+  // origin.
+  WrapperPostMessage.prototype.identifyHostUser = function () {
+    if (!global.__skHostUser)
+      return false;
+
+    var iframe = this.findIframe();
+    if (!iframe || !iframe.contentWindow)
+      return false;
+
+    iframe.contentWindow.__skUser = {
+      id:   global.__skHostUser.userId || '',
+      name: global.__skHostUser.userName || ''
+    };
+
+    return true;
+  };
+
   // x2t extracts embedded media (images, primarily) from OOXML containers
   // into its virtual FS, then x2t-bridge wraps each as a blob URL. The SDK's
   // image loader looks up these media references via
@@ -321,6 +366,12 @@
     }
     var uint8 = new Uint8Array(ab);
     var fileName = msg.fileName || 'document';
+
+    // Who is editing. @adr-0001
+    // Recorded on every tracked change this session produces. The host may
+    // omit it; buildEditorConfig then applies its fallback. Kept on the
+    // window so a later reconstruct of the editor picks up the same person.
+    self.rememberHostUser(msg);
 
     // Show the filename in the browser tab. Favicon was already set
     // from ?type= when the page loaded (see edit.html).
@@ -376,6 +427,10 @@
       // ImageLoader.LoadDocumentImages reads the URL map during the open
       // path; missing entries would render as blank shapes.
       self.registerExtractedMedia();
+      // Put the editing user into the iframe before the document opens, so
+      // editor-stubs can set it on DocInfo. Every revision created in this
+      // session copies its author from there. @adr-0001
+      self.identifyHostUser();
       self.toHost({ type: 'progress', stage: 'opening', requestId: requestId });
 
       // Hand off to DocsAPI: editor.openDocument(buffer) sends
