@@ -113,6 +113,7 @@
     var lastPresentationPointerDownAt = 0;
     var lastPresentationEditModalAt = 0;
     var lastBlockedEditAttemptFocus = null;
+    var isDesktopClosing = false;
 
     // ── Restriction-API state (hot view↔edit toggle, no destroy) ────────
     var editorApi      = null;     // iframe-internal api, cached after onAppReady
@@ -604,8 +605,24 @@
     // If another user already holds the edit lock, we do nothing here: the header
     // already explains that someone is editing, and the Edit button is disabled.
     function handleBlockedEditAttempt(e) {
-      if (currentMode === 'edit' || !canEdit || !isEditAttemptEvent(e))
+      if ((currentMode === 'edit' && !isDesktopClosing) || !canEdit || !isEditAttemptEvent(e)) {
           return;
+      }
+
+        if (isDesktopClosing) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            if (typeof e.stopImmediatePropagation === 'function') {
+                e.stopImmediatePropagation();
+            }
+
+            showDesktopClosingModal();
+
+            log('blocked edit attempt: desktop closing');
+
+            return;
+        }
 
       if (lockHolder && !lockHolder.isSelf) {
         showViewerModeModal(false);
@@ -675,6 +692,53 @@
 
       log('showNeedEditModeModal');
     }
+
+      function showDesktopClosingModal() {
+          var modal = document.getElementById('cannot-start-edit-mode');
+
+          if (!modal) {
+              log('showDesktopClosingModal: modal element not found');
+              return;
+          }
+
+          rememberBlockedEditAttemptFocus();
+
+          modal.style.display = 'flex';
+
+          log('showDesktopClosingModal');
+      }
+
+      function bindDesktopClosingModal() {
+          var modal = document.getElementById('cannot-start-edit-mode');
+          var closeButton = document.getElementById('csem-close-btn');
+          var confirmButton = document.getElementById('csem-сonfirm-btn');
+
+          if (!modal || !closeButton || !confirmButton) {
+              log('bindDesktopClosingModal: modal or close button not found');
+
+              return;
+          }
+
+          if (modal.__desktopClosingBound) {
+              return;
+          }
+
+          modal.__desktopClosingBound = true;
+
+          closeButton.onclick = function () {
+              modal.style.display = 'none';
+              restoreBlockedEditAttemptFocus();
+          };
+
+          confirmButton.onclick = function () {
+              modal.style.display = 'none';
+              restoreBlockedEditAttemptFocus();
+
+              if (pm) {
+                  pm.toHost({ type: 'focus' });
+              }
+          };
+      }
 
       // Shows the outer-page modal for the case where the user tries to edit while
       // another user already holds the edit lock. The header already shows who is
@@ -799,7 +863,9 @@
       // a newer version, the important action is reload/refresh, not edit-lock status.
       // In this state the label explains who changed the document.
       function renderEditingLabel() {
-          if (!headerEditingLabel) return;
+          if (!headerEditingLabel) {
+              return;
+          }
 
           var li = headerEditingLabel.parentNode;
           var doc = headerEditingLabel.ownerDocument;
@@ -827,7 +893,7 @@
           }
 
           // No edit right ⇒ never surface normal "who is editing" status.
-          if (!canEdit) {
+          if (!canEdit || isDesktopClosing) {
               headerEditingLabel.classList.remove('sk-editing-label--conflict', 'sk-editing-label--self', 'sk-editing-label--other');
               headerEditingLabel.textContent = '';
 
@@ -879,7 +945,9 @@
       // control: layout stays stable, and the only visual differences from Edit are
       // icon, text and background colour.
       function renderEditButton() {
-          if (!headerEditBtn) return;
+          if (!headerEditBtn) {
+              return;
+          }
 
           var li = headerEditBtn.parentNode;   // the .sk-edit-tab <li>
           var icon = headerEditBtn.querySelector('.sk-edit-btn__icon');
@@ -893,7 +961,9 @@
           // because it only reloads the document and does not request edit mode.
           // It becomes available only after the edit lock is released.
           if (conflictState) {
-              if (li) li.style.display = '';
+              if (li) {
+                  li.style.display = '';
+              }
 
               headerEditBtn.classList.add('is-refresh');
               headerEditBtn.disabled = false;
@@ -912,14 +982,33 @@
           // No edit right ⇒ hide the Edit button entirely (display:none on the <li>).
           // Visibility-based so there's never a "visible-but-dead" button.
           if (!canEdit) {
-              if (li) li.style.display = 'none';
+              if (li) {
+                  li.style.display = 'none';
+              }
 
               headerEditBtn.disabled = true;
 
               return;
           }
 
-          if (li) li.style.display = '';
+          if (isDesktopClosing) {
+              if (li) {
+                  li.style.display = '';
+              }
+
+              headerEditBtn.classList.add('is-locked');
+              headerEditBtn.disabled = false;
+
+              if (label) {
+                  label.textContent = 'Edit';
+              }
+
+              return;
+          }
+
+          if (li) {
+              li.style.display = '';
+          }
 
           if (icon) {
               icon.innerHTML = SK_EDIT_ICON_SVG;
@@ -1127,9 +1216,11 @@
         '  position:fixed;',
         '  display:none;',
         '  box-sizing:border-box;',
-        '  width:192px;',
+        '  width: max-content;',
+        '  max-width: none;',
         '  height:18px;',
         '  padding:2px 8px;',
+        '  white-space: nowrap;',
         '  border-radius:3px;',
         '  background:#728596;',
         '  color:#FFFFFF;',
@@ -1297,12 +1388,15 @@
 
       function ensureEditTooltip(doc) {
           if (headerEditTooltip && headerEditTooltip.ownerDocument === doc) {
+              headerEditTooltip.textContent = isDesktopClosing ? 'Cancel closing the Main App to start editing' : 'Only one Member can edit at a time';
+
               return headerEditTooltip;
           }
 
           headerEditTooltip = doc.createElement('div');
           headerEditTooltip.className = 'sk-edit-tooltip';
-          headerEditTooltip.textContent = 'Only one Member can edit at a time';
+
+          headerEditTooltip.textContent = isDesktopClosing ? 'Cancel closing the Main App to start editing' : 'Only one Member can edit at a time';
 
           if (doc.body) {
               doc.body.appendChild(headerEditTooltip);
@@ -1414,8 +1508,9 @@
       // host drives the actual mode flip back via set-mode → handleSetMode, which
       // re-renders the button.
       function onEditButtonClick() {
-          if (!pm || !headerEditBtn || headerEditBtn.disabled)
+          if (!pm || !headerEditBtn || headerEditBtn.disabled) {
               return;
+          }
 
           // Refresh is not an edit-right action: it only asks the host to reload the
           // fresh document bytes. Allow it even when canEdit=false, but only once the
@@ -1429,6 +1524,12 @@
 
           if (!canEdit) {
               return;   // role has no edit right — refuse (button shouldn't exist anyway)
+          }
+
+          if (isDesktopClosing) {
+              showDesktopClosingModal();
+
+              return;
           }
 
           if (currentMode === 'view') {
@@ -2062,9 +2163,15 @@
     // Role / EDIT_CONTENT right). Sent before `load`, so it lands before the
     // toolbar tab-strip exists → no Edit-button flash for viewers.
     function handlePermissions(perms) {
-      var next = !(perms && perms.canEdit === false);   // default true unless explicitly false
-      if (next === canEdit) return;
-      canEdit = next;
+    var nextCanEdit = !(perms && perms.canEdit === false);
+    var nextDesktopClosing = !!(perms && perms.isDesktopClosing);
+
+    if (nextCanEdit === canEdit && nextDesktopClosing === isDesktopClosing) {
+        return;
+    }
+
+    canEdit = nextCanEdit;
+    isDesktopClosing = nextDesktopClosing;
       log('handlePermissions: canEdit=' + canEdit);
       // Re-render the Edit button + editing label to reflect the new capability
       // (renderEditButton hides the button when !canEdit). The controls are
@@ -2083,6 +2190,7 @@
         if (isStandalone) autoLoadFixture();
         updateOverlayUI();
         bindTurnOnEditModeModal();
+        bindDesktopClosingModal();
         bindViewerModeModal();
         bindOnlyOfficeWelcomeScreen();
         bindSaveShortcutListeners();

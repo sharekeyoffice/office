@@ -7,7 +7,7 @@
 // Inbound from host:
 //   { type: 'ping' }
 //   { type: 'load',     bytes: ArrayBuffer|Uint8Array, fileName?, requestId? }
-//   { type: 'save-request', requestId? }            // 10.1.2 step 3
+//   { type: 'save-request', requestId?, format?, isDesktopAppClose? }          // 10.1.2 step 3
 //   { type: 'save-ack', saveId, ok: bool, reason? } // v0 collab
 //   { type: 'close',    requestId? }
 //   { type: 'set-mode', mode: 'view'|'edit', lockHolder?: {userId?, userName, isSelf?} }  // v0 collab (isSelf ⇒ held by current user, e.g. another tab)
@@ -67,6 +67,7 @@
     this.saveAckTimeoutMs   = 15000;       // no save-ack within this → assume host unreachable, flip to 'error'
     this.everSaved          = false;       // a save has been confirmed this session → clean shows 'saved' (else 'idle')
     this.closeAfterSaveAck  = false;
+    this.pendingSaveRequest = null;
 
     // Chunk-diff self-check state. lastFullBytes is the OOXML we sent on
     // the previous `saved`; on the next save we run a round-trip check via
@@ -505,12 +506,79 @@
   // to override the default; otherwise we infer from the editor type.
   WrapperPostMessage.prototype.onSaveRequest = function (msg) {
     var requestId = msg.requestId || ('req-' + Date.now());
-    // Explicit save supersedes any pending autosave debounce.
+
+    if (this.pendingSaveId !== null) {
+      this.pendingSaveRequest = {
+        requestId: requestId,
+        format: msg.format,
+        isDesktopAppClose: msg.isDesktopAppClose === true
+      };
+
+      log('save-request queued behind pending saveId=' + this.pendingSaveId);
+
+      return;
+    }
+
     if (this.autosaveTimer) {
       clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
     }
-    this.captureAndSend(requestId, msg.format);
+
+    this.runSaveRequest(
+        requestId,
+        msg.format,
+        msg.isDesktopAppClose === true
+    );
+  };
+
+  WrapperPostMessage.prototype.runSaveRequest = function (
+      requestId,
+      format,
+      isDesktopAppClose
+  ) {
+    if (window.SK_DESKTOP_TRANSPORT && isDesktopAppClose) {
+      var iframe = this.findIframe();
+      var iframeWindow = iframe && iframe.contentWindow;
+
+      var spreadsheetApi =
+          iframeWindow &&
+          iframeWindow.SSE &&
+          iframeWindow.SSE.controllers &&
+          iframeWindow.SSE.controllers.Main &&
+          iframeWindow.SSE.controllers.Main.api;
+
+      if (
+          spreadsheetApi &&
+          typeof spreadsheetApi.asc_closeCellEditor === 'function'
+      ) {
+        log('desktop app close → committing active spreadsheet cell');
+
+        var isCellEditorClosed = spreadsheetApi.asc_closeCellEditor();
+
+        if (isCellEditorClosed === false) {
+          return this.error(
+              'CELL_EDIT_COMMIT_FAILED',
+              'Could not commit the active spreadsheet cell',
+              requestId
+          );
+        }
+      }
+    }
+
+    this.captureAndSend(requestId, format);
+  };
+
+  WrapperPostMessage.prototype.runPendingSaveRequest = function () {
+    if (!this.pendingSaveRequest)
+      return;
+
+    var pendingSaveRequest = this.pendingSaveRequest;
+
+    this.pendingSaveRequest = null;
+
+    log('running queued save-request: ' + pendingSaveRequest.requestId);
+
+    this.onSaveRequest(pendingSaveRequest);
   };
 
   // Shared byte-capture + send path. Used by:
@@ -614,12 +682,14 @@
         self.pendingSaveId      = null;
         self.editedSincePending = false;
         self.setSaveState('error');
+        self.runPendingSaveRequest();
       }, self.saveAckTimeoutMs);
     }).catch(function (err) {
       if (self.saveAckTimer) { clearTimeout(self.saveAckTimer); self.saveAckTimer = null; }
       self.setSaveState('error');
       self.pendingSaveId = null;
       self.error('CONVERT_FROM_BIN_FAILED', err.message || String(err), saveId);
+      self.runPendingSaveRequest();
     });
   };
 
@@ -770,6 +840,7 @@
 
       if (this.closeAfterSaveAck && !stillModified) {
         this.closeAfterSaveAck = false;
+        this.pendingSaveRequest = null;
         window.__editorDirty = false;
         window.close();
       }
@@ -779,6 +850,8 @@
       // The next dirty event will restart the timer; or, if the doc is
       // still dirty, the timer might already be queued by a recent edit.
     }
+
+    this.runPendingSaveRequest();
   };
 
   // Advance the editor's history saved point to the last captured save via the
