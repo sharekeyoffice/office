@@ -260,6 +260,37 @@
           }, true);
       }
 
+      function bindSheetTabEditAttemptListener() {
+          if (type !== 'cell')
+              return;
+
+          var iframe = document.querySelector('iframe[name="frameEditor"]');
+
+          if (!iframe || !iframe.contentDocument)
+              return;
+
+          if (iframe.contentDocument.__sheetTabEditAttemptListenerBound)
+              return;
+
+          iframe.contentDocument.__sheetTabEditAttemptListenerBound = true;
+
+          iframe.contentDocument.addEventListener('dblclick', function (e) {
+              var target = getEditAttemptTarget(e);
+
+              if (!target || !target.closest || !target.closest('.statusbar .list-item'))
+                  return;
+
+              if (!showBlockedEditAttempt('SheetTab.rename'))
+                  return;
+
+              e.preventDefault();
+              e.stopPropagation();
+
+              if (typeof e.stopImmediatePropagation === 'function')
+                  e.stopImmediatePropagation();
+          }, true);
+      }
+
       function getPresentationController(name, editorWindow) {
           try {
               if (!editorWindow || !editorWindow.PE || typeof editorWindow.PE.getController !== 'function')
@@ -279,18 +310,18 @@
               showBlockedPresentationEditAttemptOnce('Canvas.emptySlidePlaceholder');
       }
 
-      function showBlockedPresentationEditAttempt(methodName) {
+      function showBlockedEditAttempt(label) {
           if (currentMode === 'edit' || !canEdit)
               return false;
 
           if (lockHolder && !lockHolder.isSelf) {
               showViewerModeModal(false);
 
-              log('blocked presentation edit attempt: ' + methodName + ', lock held by ' + (lockHolder.userName || 'Someone'));
+              log('blocked edit attempt: ' + label + ', lock held by ' + (lockHolder.userName || 'Someone'));
           } else {
               showNeedEditModeModal();
 
-              log('blocked presentation edit attempt: ' + methodName + ', user is not in edit mode');
+              log('blocked edit attempt: ' + label + ', user is not in edit mode');
           }
 
           return true;
@@ -308,7 +339,7 @@
           var originalMethod = object[methodName];
 
           object[methodName] = function () {
-              if (showBlockedPresentationEditAttempt(label + '.' + methodName)) {
+              if (showBlockedEditAttempt(label + '.' + methodName)) {
                   return;
               }
 
@@ -526,7 +557,7 @@
       }
 
       function showBlockedPresentationEditAttemptOnce(methodName) {
-          if (hasRecentPresentationEditModal() || !showBlockedPresentationEditAttempt(methodName))
+          if (hasRecentPresentationEditModal() || !showBlockedEditAttempt(methodName))
               return false;
 
           lastPresentationEditModalAt = Date.now();
@@ -657,6 +688,7 @@
         iframe.contentDocument.addEventListener(eventName, handleBlockedEditAttempt, true);
       });
       bindCellEditorEditAttemptListener();
+      bindSheetTabEditAttemptListener();
       iframe.contentDocument.addEventListener('pointerdown', markPresentationPointerDown, true);
       iframe.contentDocument.addEventListener('mousedown', markPresentationPointerDown, true);
       iframe.contentDocument.addEventListener('click', handlePresentationCanvasClick, true);
@@ -1716,7 +1748,7 @@
     // view-only is achieved later via asc_setRestriction.
     function constructEditor() {
       log('constructing editor type=' + type);
-      var built = window.buildEditorConfig(type);
+      var built = window.buildEditorConfig(type, window.__skHostUser || {});
 
       var docsApiConfig = {
         documentType: type,           // 'word' | 'cell' | 'slide'

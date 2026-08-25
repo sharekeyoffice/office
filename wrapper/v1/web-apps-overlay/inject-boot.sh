@@ -75,17 +75,8 @@ for editor in "${EDITOR_ARR[@]}"; do
     exit 1
   fi
 
-  # Use a Python helper for line-based insertion (portable across BSD/GNU sed).
-  python3 - "$html" "$ANCHOR" "$INJECTED" <<'PY'
-import sys
-path, anchor, injected = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(path, 'r', encoding='utf-8') as f:
-    src = f.read()
-# Inject just before the anchor line, preserving leading whitespace conventions.
-patched = src.replace(anchor, injected + '    ' + anchor, 1)
-with open(path, 'w', encoding='utf-8') as f:
-    f.write(patched)
-PY
+  # Node helper — avoids relying on a system Python interpreter.
+  node "$SCRIPT_DIR/inject-into-html.js" "$html" "$ANCHOR" "$INJECTED"
   echo "  injected $editor"
 done
 

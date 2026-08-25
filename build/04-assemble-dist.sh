@@ -63,7 +63,7 @@ cp -R "$REPO/overlay"/. "$DIST/"
 # ── Substitute __ALLOWED_HOST_ORIGIN__ ─────────────────────────
 ALLOWED_HOST_ORIGIN="${ALLOWED_HOST_ORIGIN:-}"
 if [[ -z "$ALLOWED_HOST_ORIGIN" && -f "$REPO/config.json" ]]; then
-  ALLOWED_HOST_ORIGIN=$(node -e "console.log((JSON.parse(require('fs').readFileSync('$REPO/config.json','utf8'))['allowedHostOrigin'])||'')")
+  ALLOWED_HOST_ORIGIN=$( cd "$REPO" && node -e "const fs=require('fs'); const j=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); console.log(j[process.argv[2]]||'')" config.json allowedHostOrigin )
 fi
 [[ -n "$ALLOWED_HOST_ORIGIN" ]] || { echo "ERROR: set ALLOWED_HOST_ORIGIN env or config.json" >&2; exit 1; }
 # Each comma-separated entry must be an exact origin (https://host[:port]) OR a
