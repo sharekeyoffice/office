@@ -27,7 +27,6 @@
 //   { type: 'opened',    requestId? }                          // doc rendered
 //   { type: 'dirty',     dirty: bool }                         // 10.1.2 step 3
 //   { type: 'saved',     bytes: Uint8Array, fileName, saveId, requestId? }
-//   { type: 'page-closing', dirty: bool }                      // page is being unloaded; host should cleanup/release lock after save
 //   { type: 'close-request' }                                  // user File→Close
 //   { type: 'request-edit-mode' }                              // v0 collab: user clicked Edit
 //   { type: 'request-edit-state' }                             // v0 collab: ask host for current lock/mode (sent on boot; fixes stale Edit button after a reload)
@@ -316,16 +315,23 @@
   // from wrapper-mount.js before destroying the editor instance during a
   // mode switch, so the old pm doesn't race the new one for inbound `load`.
   WrapperPostMessage.prototype.destroy = function () {
-    if (this._destroyed) return;
+    if (this._destroyed) {
+      return;
+    }
+
     this._destroyed = true;
+
     if (this._messageHandler) {
       window.removeEventListener('message', this._messageHandler);
       this._messageHandler = null;
     }
+
+    // Explicit save supersedes any pending autosave debounce.
     if (this.autosaveTimer) {
       clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
     }
+
     // pendingSaveId / lastFullBytes intentionally left as-is; they'll be GC'd
     // with the rest of the instance when wrapper-mount.js drops its reference.
     log('destroyed');
@@ -624,8 +630,9 @@
   };
 
   WrapperPostMessage.prototype.runPendingSaveRequest = function () {
-    if (!this.pendingSaveRequest)
+    if (!this.pendingSaveRequest) {
       return;
+    }
 
     var pendingSaveRequest = this.pendingSaveRequest;
 
