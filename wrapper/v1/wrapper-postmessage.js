@@ -70,6 +70,7 @@
     this.everSaved          = false;       // a save has been confirmed this session → clean shows 'saved' (else 'idle')
     this.closeAfterSaveAck  = false;
     this.pendingSaveRequest = null;
+    this.hasSaveFailedOnClose = false;
 
     // Chunk-diff self-check state. lastFullBytes is the OOXML we sent on
     // the previous `saved`; on the next save we run a round-trip check via
@@ -653,32 +654,50 @@
     var ext = formatOverride || formatByEditor[self.editorType] || 'docx';
 
     var iframe = self.findIframe();
+
     if (!iframe || !iframe.contentWindow) {
       self.setSaveState('error');
-      return self.error('IFRAME_NOT_READY', 'editor iframe not available', saveId);
+      self.error('IFRAME_NOT_READY', 'editor iframe not available', saveId);
+      self.handleFailedSaveOnClose();
+
+      return;
     }
+
     var capture = iframe.contentWindow.__captureSave;
+
     if (typeof capture !== 'function') {
       self.setSaveState('error');
-      return self.error('CAPTURE_NOT_INSTALLED', '__captureSave missing — editor-stubs.js may not have loaded', saveId);
+      self.error('CAPTURE_NOT_INSTALLED', '__captureSave missing — editor-stubs.js may not have loaded', saveId);
+      self.handleFailedSaveOnClose();
+
+      return;
     }
 
     self.toHost({ type: 'progress', stage: 'saving', requestId: saveId });
     self.setSaveState('saving');
 
     var binBytes;
+
     try {
       binBytes = capture();
     } catch (e) {
       self.setSaveState('error');
-      return self.error('SERIALIZE_FAILED', e.message, saveId);
+      self.error('SERIALIZE_FAILED', e.message, saveId);
+      self.handleFailedSaveOnClose();
+
+      return;
     }
 
     var x2t;
-    try { x2t = self.ensureX2T(); }
-    catch (e) {
+
+    try {
+      x2t = self.ensureX2T();
+    } catch (e) {
       self.setSaveState('error');
-      return self.error('X2T_NOT_LOADED', e.message, saveId);
+      self.error('X2T_NOT_LOADED', e.message, saveId);
+      self.handleFailedSaveOnClose();
+
+      return;
     }
 
     // Track this save so onSaveAck can correlate
@@ -739,18 +758,31 @@
       if (self.saveAckTimer) clearTimeout(self.saveAckTimer);
       self.saveAckTimer = setTimeout(function () {
         self.saveAckTimer = null;
-        if (self.pendingSaveId !== saveId) return;   // already ack'd / superseded
+
+        if (self.pendingSaveId !== saveId) {
+          return;
+        }
+
         log('save-ack timeout — no confirmation from host for saveId=' + saveId + ' → error');
-        self.pendingSaveId      = null;
+
+        self.pendingSaveId = null;
         self.editedSincePending = false;
         self.setSaveState('error');
+
+        self.handleFailedSaveOnClose();
         self.runPendingSaveRequest();
       }, self.saveAckTimeoutMs);
     }).catch(function (err) {
-      if (self.saveAckTimer) { clearTimeout(self.saveAckTimer); self.saveAckTimer = null; }
+      if (self.saveAckTimer) {
+        clearTimeout(self.saveAckTimer);
+        self.saveAckTimer = null;
+      }
+
       self.setSaveState('error');
       self.pendingSaveId = null;
       self.error('CONVERT_FROM_BIN_FAILED', err.message || String(err), saveId);
+
+      self.handleFailedSaveOnClose();
       self.runPendingSaveRequest();
     });
   };
@@ -821,7 +853,33 @@
     this.captureAndSend(saveId, null);
   };
 
+  WrapperPostMessage.prototype.handleFailedSaveOnClose = function () {
+    if (!this.closeAfterSaveAck) {
+      return;
+    }
+
+    this.closeAfterSaveAck = false;
+    this.hasSaveFailedOnClose = true;
+    this.pendingSaveRequest = null;
+
+    log('save during close failed — next close will close without saving');
+  };
+
   WrapperPostMessage.prototype.saveAndClose = function () {
+    if (window.SK_DESKTOP_TRANSPORT && this.hasSaveFailedOnClose) {
+      this.hasSaveFailedOnClose = false;
+      this.closeAfterSaveAck = false;
+      this.pendingSaveRequest = null;
+
+      window.__editorDirty = false;
+
+      this.toHost({
+        type: 'force-close-request'
+      });
+
+      return;
+    }
+
     if (!this.dirty) {
       window.__editorDirty = false;
       window.close();
@@ -911,6 +969,7 @@
       this.setSaveState('error');
       // The next dirty event will restart the timer; or, if the doc is
       // still dirty, the timer might already be queued by a recent edit.
+      this.handleFailedSaveOnClose();
     }
 
     this.runPendingSaveRequest();
