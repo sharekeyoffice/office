@@ -15,7 +15,7 @@
 //   { type: 'close',    requestId? }
 //   { type: 'set-mode', mode: 'view'|'edit', lockHolder?: {userId?, userName, isSelf?} }  // v0 collab (isSelf ⇒ held by current user, e.g. another tab)
 //   { type: 'permissions', canEdit: bool }            // role-gated: canEdit=false hides the Edit button + editing label (sent before `load`)
-//   { type: 'conflict' }                              // v0 collab: another user saved
+//   { type: 'conflict', userId, userName }             // v0 collab: another user saved
 //   { type: 'editor-name', userId, userName }         // reply to request-editor-name: resolved holder display name
 //   { type: 'conflict-cleared' }                       // reserved; modal hides on its own after `reload`
 //   { type: 'reload' }                                  // v0 collab: main app asks us to location.reload()
@@ -86,7 +86,9 @@
   }
 
   WrapperPostMessage.prototype.findIframe = function () {
-    if (this.iframe && this.iframe.contentWindow) return this.iframe;
+    if (this.iframe && this.iframe.contentWindow) {
+      return this.iframe;
+    }
     this.iframe = document.querySelector('iframe[name="frameEditor"]');
     return this.iframe;
   };
@@ -96,11 +98,19 @@
   // paste inside the editor sets editedSinceLastPing, which we report + reset
   // on each pong (L1.8 edit-lock idle signal).
   WrapperPostMessage.prototype.ensureActivityListeners = function () {
-    if (this._activityListenersAttached) return;
+    if (this._activityListenersAttached) {
+      return;
+    }
+
     var iframe = this.findIframe();
-    if (!iframe || !iframe.contentDocument) return;
+
+    if (!iframe || !iframe.contentDocument) {
+      return;
+    }
     var self = this;
-    var markActive = function () { self.editedSinceLastPing = true; };
+    var markActive = function () {
+      self.editedSinceLastPing = true;
+    };
     // Capture phase so we see events regardless of where focus sits inside
     // the editor. keydown = typing, mousedown = toolbar/canvas interaction,
     // paste = clipboard insert. Heuristic "user is interacting" signal.
@@ -208,7 +218,7 @@
         // back to the main app, which sends us a `reload` message that
         // triggers `location.reload()` in this same tab (no popup-blocker
         // re-trip from window.open).
-        window.handleConflict();
+        window.handleConflict(d.userId, d.userName);
 
         return;
       case 'editor-name':
@@ -359,12 +369,19 @@
   // open so the editor doesn't 404-loop on fonts.
   WrapperPostMessage.prototype.primeFontPath = function () {
     var iframe = this.findIframe();
-    if (!iframe || !iframe.contentWindow) return false;
+
+    if (!iframe || !iframe.contentWindow) {
+      return false;
+    }
+
     var w = iframe.contentWindow;
+
     if (w.AscCommon && w.AscCommon.g_font_loader) {
       w.AscCommon.g_font_loader.fontFilesPath = this.fontsPath;
+
       return true;
     }
+
     return false;
   };
 
@@ -375,12 +392,23 @@
   WrapperPostMessage.prototype.rememberHostUser = function (msg) {
     var id   = (msg && typeof msg.userId   === 'string') ? msg.userId.trim()   : '';
     var name = (msg && typeof msg.userName === 'string') ? msg.userName.trim() : '';
-    if (!id && !name) return null;
+
+    if (!id && !name) {
+      return null;
+    }
 
     var user = global.__skHostUser || (global.__skHostUser = {});
-    if (id)   user.userId   = id;
-    if (name) user.userName = name;
+
+    if (id) {
+      user.userId = id;
+    }
+
+    if (name) {
+      user.userName = name;
+    }
+
     log('host user =', user.userName || '(no name)', user.userId || '(no id)');
+
     return user;
   };
 
@@ -395,12 +423,15 @@
   // Same-origin access is fine: edit.html and the editor iframe share an
   // origin.
   WrapperPostMessage.prototype.identifyHostUser = function () {
-    if (!global.__skHostUser)
+    if (!global.__skHostUser) {
       return false;
+    }
 
     var iframe = this.findIframe();
-    if (!iframe || !iframe.contentWindow)
+
+    if (!iframe || !iframe.contentWindow) {
       return false;
+    }
 
     iframe.contentWindow.__skUser = {
       id:   global.__skHostUser.userId || '',
@@ -420,18 +451,34 @@
   // editor iframe live on the dev-server origin, so blob URLs created here
   // are also dereferenceable from inside the iframe.
   WrapperPostMessage.prototype.registerExtractedMedia = function () {
-    if (!global.X2TBridge || typeof global.X2TBridge.getLastMedia !== 'function') return 0;
+    if (!global.X2TBridge || typeof global.X2TBridge.getLastMedia !== 'function') {
+      return 0;
+    }
+
     var media = global.X2TBridge.getLastMedia() || {};
     var iframe = this.findIframe();
-    if (!iframe || !iframe.contentWindow) return 0;
+
+    if (!iframe || !iframe.contentWindow) {
+      return 0;
+    }
+
     var w = iframe.contentWindow;
     var urls = w.AscCommon && w.AscCommon.g_oDocumentUrls;
-    if (!urls || typeof urls.addImageUrl !== 'function') return 0;
+
+    if (!urls || typeof urls.addImageUrl !== 'function') {
+      return 0;
+    }
+
     var names = Object.keys(media);
+
     for (var i = 0; i < names.length; i++) {
       urls.addImageUrl(names[i], media[names[i]]);
     }
-    if (names.length) log('registered ' + names.length + ' media file(s): ' + names.join(', '));
+
+    if (names.length) {
+      log('registered ' + names.length + ' media file(s): ' + names.join(', '));
+    }
+
     return names.length;
   };
 
@@ -446,9 +493,11 @@
     var ab = (msg.bytes instanceof ArrayBuffer) ? msg.bytes :
              (msg.bytes && msg.bytes.buffer instanceof ArrayBuffer) ? msg.bytes.buffer :
              null;
+
     if (!ab) {
       return self.error('BAD_REQUEST', 'load.bytes must be ArrayBuffer or Uint8Array', requestId);
     }
+
     var uint8 = new Uint8Array(ab);
     var fileName = msg.fileName || 'document';
 
@@ -463,16 +512,25 @@
     document.title = fileName;
 
     var x2t;
-    try { x2t = self.ensureX2T(); }
-    catch (e) { return self.error('X2T_NOT_LOADED', e.message, requestId); }
+
+    try {
+      x2t = self.ensureX2T();
+    } catch (e) {
+      return self.error('X2T_NOT_LOADED', e.message, requestId);
+    }
 
     var fmt;
-    try { fmt = x2t.detectFormat(uint8); }
-    catch (e) { return self.error('FORMAT_DETECT_FAILED', e.message, requestId); }
+
+    try {
+      fmt = x2t.detectFormat(uint8);
+    } catch (e) {
+      return self.error('FORMAT_DETECT_FAILED', e.message, requestId);
+    }
 
     log('load', fileName, fmt, '(' + uint8.length + ' bytes)');
 
     var binPromise;
+
     if (fmt === 'bin') {
       binPromise = Promise.resolve(uint8);
     } else if (fmt === 'ooxml') {
@@ -494,9 +552,10 @@
     var _convT0 = Date.now();
     var _convSettled = false;
     var _convWatch = setTimeout(function () {
-      if (!_convSettled)
+      if (!_convSettled) {
         log('⚠ LOAD STALLED: x2t convertToBin still pending after 10s (fmt=' + fmt +
             ', ' + uint8.length + ' bytes, visibility=' + document.visibilityState + ')');
+      }
     }, 10000);
 
     binPromise.then(function (binBytes) {
@@ -532,13 +591,19 @@
       // missing flag (older editor-stubs) can't wedge the load permanently.
       var buf = binBytes.buffer.slice(binBytes.byteOffset, binBytes.byteOffset + binBytes.byteLength);
       var openTries = 0;
+
       (function dispatchWhenReady() {
         var ifw = (function () { var f = self.findIframe(); return f && f.contentWindow; })();
         var ready = !!(ifw && ifw.__wrapperOpenReady === true);
+
         if (!ready && openTries++ < 200) {
           return setTimeout(dispatchWhenReady, 100);
         }
-        if (!ready) log('⚠ editor open-listener never signalled ready after 20s — dispatching anyway');
+
+        if (!ready) {
+          log('⚠ editor open-listener never signalled ready after 20s — dispatching anyway');
+        }
+
         try {
           self.editor.openDocument(new Uint8Array(buf));
           log('openDocument dispatched (openReady=' + ready + ', waited=' + (openTries * 100) +
@@ -755,7 +820,10 @@
       // stuck in 'saving' forever (the diskette dims + disables, looking "greyed
       // out"). Flip to 'error' and clear pendingSaveId so the diskette goes
       // black + red-badge and becomes clickable again, letting the user retry.
-      if (self.saveAckTimer) clearTimeout(self.saveAckTimer);
+      if (self.saveAckTimer) {
+        clearTimeout(self.saveAckTimer);
+      }
+
       self.saveAckTimer = setTimeout(function () {
         self.saveAckTimer = null;
 
@@ -841,13 +909,18 @@
       clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
     }
-    if (!this.dirty) return;
+
+    if (!this.dirty) {
+      return;
+    }
+
     if (this.pendingSaveId !== null) {
       // Already saving — let the in-flight one finish. The next dirty
       // event after save-ack will restart the timer.
       log('triggerAutosave skipped — save already in flight (saveId=' + this.pendingSaveId + ')');
       return;
     }
+
     var saveId = 'auto-' + Date.now();
     log('triggerAutosave fires, saveId=' + saveId);
     this.captureAndSend(saveId, null);
@@ -998,11 +1071,17 @@
   // States: 'idle' | 'dirty' | 'saving' | 'saved' | 'error'.
   WrapperPostMessage.prototype.setSaveState = function (state) {
     // Diskette button (no-op if wrapper-mount hasn't injected it yet).
-    if (typeof window.skSetSaveState === 'function') window.skSetSaveState(state);
+    if (typeof window.skSetSaveState === 'function') {
+      window.skSetSaveState(state);
+    }
 
     // Legacy text indicator — no-op if absent (e.g. standalone test page).
     var el = document.getElementById('save-state');
-    if (!el) return;
+
+    if (!el) {
+      return;
+    }
+
     el.dataset.state = state;
     var text;
     switch (state) {
