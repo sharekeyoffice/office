@@ -90,6 +90,7 @@
     var headerEditBtn  = null;     // our Edit button injected into the iframe header
                                    // (approach B); null until mountHeaderControls runs
     var headerSaveBtn  = null;     // our Save (diskette) button, same approach
+    var headerMainAppBtn = null;   // "Main App" button in the header-right area
     var headerEditingLabel = null; // our "<who> is editing the document…" label,
                                    // injected into the tab row right of the Edit button
     var currentSaveState = 'idle'; // 'idle'|'dirty'|'saving'|'saved'|'error' — drives
@@ -1122,7 +1123,13 @@
       <path fill-rule="evenodd" clip-rule="evenodd" d="M14.7998 4.75C14.9324 4.75 15.0596 4.80278 15.1533 4.89648L19.1025 8.84668C19.1963 8.94044 19.249 9.06763 19.249 9.2002V13.25C19.249 13.5261 19.0252 13.75 18.749 13.75C18.4729 13.75 18.249 13.5261 18.249 13.25V9.40625L14.7998 5.95703V9.2002C14.7997 9.47625 14.5759 9.7002 14.2998 9.7002H8.2002C7.92412 9.7002 7.7003 9.47625 7.7002 9.2002V5.75H7.25098C6.42255 5.75 5.75098 6.42157 5.75098 7.25V16.75C5.75098 17.5784 6.42255 18.25 7.25098 18.25H7.7002V13.1504C7.7002 12.8742 7.92405 12.6504 8.2002 12.6504H15.7998C16.0759 12.6504 16.2998 12.8742 16.2998 13.1504V13.9209C16.2998 14.197 16.0759 14.4209 15.7998 14.4209C15.5237 14.4209 15.2998 14.197 15.2998 13.9209V13.6504H8.7002V18.25H13.252C13.5281 18.25 13.752 18.4739 13.752 18.75C13.752 19.0261 13.5281 19.25 13.252 19.25H7.25098C5.87027 19.25 4.75098 18.1307 4.75098 16.75V7.25C4.75098 5.86929 5.87027 4.75 7.25098 4.75H14.7998ZM8.7002 8.7002H13.7998V5.75H8.7002V8.7002Z" fill="currentColor"/>
       <path d="M18.75 14.749C20.9594 14.749 22.7508 16.5399 22.751 18.749C22.751 20.9583 20.9596 22.75 18.75 22.75C16.5406 22.7498 14.75 20.9582 14.75 18.749C14.7502 16.54 16.5408 14.7493 18.75 14.749ZM21.0547 17.0957C20.8595 16.9005 20.5429 16.9007 20.3477 17.0957L18.1006 19.3418L17.1543 18.3955C16.9591 18.2004 16.6425 18.2004 16.4473 18.3955C16.252 18.5907 16.2521 18.9073 16.4473 19.1025L17.7471 20.4023C17.8408 20.496 17.9681 20.5488 18.1006 20.5488C18.2331 20.5488 18.3604 20.4961 18.4541 20.4023L21.0547 17.8027C21.2496 17.6075 21.2496 17.2909 21.0547 17.0957Z" fill="#2FA0AF"/>
       </svg>
-      `
+      `;
+
+    // Main App — arrow-into-box icon (16×16), recoloured via currentColor.
+    var SK_MAIN_APP_ICON_SVG =
+      `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
+       <path d="M11.5977 2.14941C12.8401 2.14952 13.8474 3.15702 13.8477 4.39941V11.5996C13.8475 12.8421 12.8401 13.8495 11.5977 13.8496H4.39746C3.1551 13.8494 2.14762 12.842 2.14746 11.5996V10.6006C2.14746 10.2414 2.43865 9.9502 2.79785 9.9502C3.15705 9.9502 3.44824 10.2414 3.44824 10.6006V11.5996C3.4484 12.124 3.87307 12.5496 4.39746 12.5498H11.5977C12.1221 12.5497 12.5477 12.1241 12.5479 11.5996V4.39941C12.5476 3.87499 12.1221 3.4503 11.5977 3.4502H4.39746C3.8731 3.45041 3.44845 3.87505 3.44824 4.39941V5.40039C3.44819 5.75955 3.15702 6.05078 2.79785 6.05078C2.43868 6.05078 2.14751 5.75955 2.14746 5.40039V4.39941C2.14767 3.15708 3.15513 2.14963 4.39746 2.14941H11.5977ZM6.22852 5.59082C6.48084 5.33719 6.89165 5.33674 7.14551 5.58887L9.11035 7.54102C9.23239 7.66259 9.30073 7.8287 9.30078 8.00098C9.30057 8.17329 9.2316 8.33848 9.10938 8.45996L7.14551 10.4121C6.8916 10.6642 6.48081 10.6629 6.22852 10.4092C5.97639 10.1552 5.97766 9.74446 6.23145 9.49219L7.08008 8.64941H0.84668C0.488848 8.64941 0.198511 8.35875 0.198242 8.00098C0.198242 7.64298 0.488683 7.35254 0.84668 7.35254H7.08105L6.23145 6.50781C5.97783 6.25547 5.97636 5.84467 6.22852 5.59082Z" fill="currentColor"/>
+      </svg>`
 
     // Figma-derived styles for our header controls. Injected into the iframe
     // <head> (same mechanism as hideNativeDropdown). Unique sk-* class names
@@ -1291,8 +1298,40 @@
       '.theme-type-dark .sk-save-btn--saving{color:#FFFFFF;opacity:.5;}',
       '.theme-type-dark .sk-save-btn--saved{color:rgba(168, 168, 168, 1);}',
       '.theme-type-dark .sk-save-btn--error{color:#FFFFFF;}',
-      '.theme-type-dark .sk-save-btn:not(:disabled):hover{background:rgba(255,255,255,0.1);}'
+      '.theme-type-dark .sk-save-btn:not(:disabled):hover{background:rgba(255,255,255,0.1);}',
+
+      /* ── Main App button — header-right, before the search slot. */
+      '.sk-main-app-slot{display:inline-flex;align-items:center;margin-right:8px;vertical-align:middle;}',
+      '.sk-main-app-btn{',
+      '  box-sizing:border-box;',
+      '  display:inline-flex;align-items:center;justify-content:center;gap:5px;',
+      '  min-width:86px;height:24px;padding:2px 9px 2px 5px;',
+      '  border:none;border-radius:6px;',
+      '  background:rgba(53,80,105,0.1);color:rgba(53,80,105,0.8);',
+      "  font-family:'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
+      '  font-size:13px;line-height:16px;font-weight:500;white-space:nowrap;',
+      '  cursor:pointer;-webkit-appearance:none;appearance:none;margin:0;',
+      '  transition:background .12s ease;',
+      '}',
+      '.sk-main-app-btn__icon{position:relative; top: 1px; display:flex;flex:0 0 auto;flex-shrink:0;width:16px;height:16px;}',
+      '.sk-main-app-btn__icon svg{display:block;flex-shrink:0;width:16px;height:16px;}',
+      '.sk-main-app-btn:not(:disabled):hover{background:rgba(53,80,105,0.2);}',
+      '.theme-type-dark .sk-main-app-btn{background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.8);}',
+      '.theme-type-dark .sk-main-app-btn:not(:disabled):hover{background:rgba(255,255,255,0.2);}'
     ].join('\n');
+
+    // OnlyOffice sets html { zoom: 1/deviceScale } via AscCommon.correctApplicationScale
+    // (device_scale.js) when OS DPR doesn't match a supported scale step — e.g. DPR 1.1
+    // snaps to 1.0 and zoom becomes ~0.909, so a CSS 16px icon renders ~14.55px.
+    // Multiply design px by checkDeviceScale().zoom so the painted size hits 16px.
+    function getEditorUiScaleFactor(doc) {
+      var win = doc.defaultView;
+      if (!win || !win.AscCommon || typeof win.AscCommon.checkDeviceScale !== 'function') {
+        return 1;
+      }
+      var scale = win.AscCommon.checkDeviceScale();
+      return (scale && scale.correct && scale.zoom) ? scale.zoom : 1;
+    }
 
     function injectHeaderControlStyles(doc) {
       var style = doc.getElementById('sk-header-controls');
@@ -1301,7 +1340,17 @@
         style.id = 'sk-header-controls';
         if (doc.head) doc.head.appendChild(style);
       }
-      style.textContent = SK_HEADER_CONTROLS_CSS;
+      var css = SK_HEADER_CONTROLS_CSS;
+      var uiScale = getEditorUiScaleFactor(doc);
+      if (Math.abs(uiScale - 1) > 0.001) {
+        var iconPx = 16 * uiScale;
+        css += '\n#sk-main-app-btn .sk-main-app-btn__icon,' +
+          '#sk-main-app-btn .sk-main-app-btn__icon svg{' +
+          'width:' + iconPx + 'px !important;height:' + iconPx + 'px !important;' +
+          'min-width:' + iconPx + 'px !important;min-height:' + iconPx + 'px !important;' +
+          'flex-shrink:0 !important;}';
+      }
+      style.textContent = css;
       bindHeaderLogoClick(doc);
     }
 
@@ -1491,6 +1540,36 @@
       pm.requestManualSave();
     }
 
+    function focusMainAppWindow() {
+      // Tab focus MUST run synchronously inside the click turn — browsers do
+      // not grant cross-tab focus from async postMessage handlers (so the
+      // host calling window.focus() on `focus-request` is a no-op).
+      // window.open('', name) is the reliable primitive when the host tab was
+      // given window.name before opening the editor (PROTOCOL.md).
+      //
+      // Never read cross-origin opener properties (name, closed, location …)
+      // — the editor (office.origin) and host (app.origin) are different
+      // origins; use the agreed window name directly.
+      var MAIN_APP_WINDOW_NAME = 'sharekey-main';
+
+      try {
+        var target = window.open('', MAIN_APP_WINDOW_NAME);
+        if (target && target !== window) {
+          log('Main App → window.open("", "' + MAIN_APP_WINDOW_NAME + '")');
+          return;
+        }
+      } catch (e) {
+        log('Main App window.open failed: ' + e.message);
+      }
+    }
+
+    function skGoToMainApp() {
+      log('user clicked Main App');
+      focusMainAppWindow();
+    }
+
+    window.skGoToMainApp = skGoToMainApp;
+
     // Approach B: inject OUR OWN Edit control into the editor's toolbar tab
     // strip (inside the iframe), right after the "View" tab, styled from Figma
     // — instead of the brittle outer-page overlay. Same iframe-DOM reach +
@@ -1513,7 +1592,8 @@
       var editDone = mountEditButton(doc);
       mountEditingLabel(doc);              // anchored off the Edit <li>; no-op if edit not mounted yet
       var saveDone = mountSaveButton(doc);
-      return editDone && saveDone;
+      var mainAppDone = !hasOpener || mountMainAppButton(doc);
+      return editDone && saveDone && mainAppDone;
     }
 
     // Edit button → trailing <li> in the toolbar tab strip
@@ -1616,6 +1696,55 @@
       headerSaveBtn = btn;
       renderSaveButton();
       log('mountHeaderControls: Save button injected into quick-access toolbar');
+      return true;
+    }
+
+    // Main App button → header-right, immediately before the search slot
+    // (#slot-btn-search, Header.js). Skipped in standalone mode (no opener).
+    function mountMainAppButton(doc) {
+      var existing = doc.getElementById('sk-main-app-btn');
+      if (existing) {
+        headerMainAppBtn = existing;
+        return true;
+      }
+
+      var searchSlot = doc.getElementById('slot-btn-search') ||
+        doc.querySelector('[data-layout-name="header-search"]');
+      var parent = searchSlot && searchSlot.parentNode;
+      if (!parent) {
+        parent = doc.querySelector('#box-tools') ||
+          doc.querySelector('.extra-right') ||
+          doc.querySelector('.box-tools');
+      }
+      if (!parent) return false;
+
+      var slot = doc.createElement('div');
+      slot.className = 'sk-main-app-slot';
+      var btn = doc.createElement('button');
+      btn.id = 'sk-main-app-btn';
+      btn.className = 'sk-main-app-btn';
+      btn.type = 'button';
+      btn.innerHTML =
+        '<span class="sk-main-app-btn__icon">' + SK_MAIN_APP_ICON_SVG + '</span>' +
+        '<span class="sk-main-app-btn__label">Main App</span>';
+      btn.onclick = function (e) {
+        e.stopPropagation();
+        // Click lands in the OnlyOffice iframe — call the editor root
+        // (edit.html) synchronously so user activation reaches window.open().
+        var topWin = doc.defaultView && doc.defaultView.top;
+        if (topWin && typeof topWin.skGoToMainApp === 'function') {
+          topWin.skGoToMainApp();
+        }
+      };
+      slot.appendChild(btn);
+
+      if (searchSlot && searchSlot.parentNode)
+        searchSlot.parentNode.insertBefore(slot, searchSlot);
+      else
+        parent.appendChild(slot);
+
+      headerMainAppBtn = btn;
+      log('mountHeaderControls: Main App button injected into header-right');
       return true;
     }
 
