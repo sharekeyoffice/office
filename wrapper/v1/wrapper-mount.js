@@ -1299,39 +1299,27 @@
       '.theme-type-dark .sk-save-btn--saved{color:rgba(168, 168, 168, 1);}',
       '.theme-type-dark .sk-save-btn--error{color:#FFFFFF;}',
       '.theme-type-dark .sk-save-btn:not(:disabled):hover{background:rgba(255,255,255,0.1);}',
-
+		/* This is the slot for the buttons in the header. We need to add a margin to the bottom of the slot to make the buttons align correctly. */
+	  '.btn-slot{margin-bottom:6px}',
       /* ── Main App button — header-right, before the search slot. */
       '.sk-main-app-slot{display:inline-flex;align-items:center;margin-right:8px;vertical-align:middle;}',
       '.sk-main-app-btn{',
       '  box-sizing:border-box;',
       '  display:inline-flex;align-items:center;justify-content:center;gap:5px;',
-      '  min-width:86px;height:24px;padding:2px 9px 2px 5px;',
+      '  min-width:86px;height:24px;padding:2px 9px;',
       '  border:none;border-radius:6px;',
       '  background:rgba(53,80,105,0.1);color:rgba(53,80,105,0.8);',
       "  font-family:'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
-      '  font-size:13px;line-height:16px;font-weight:500;white-space:nowrap;',
-      '  cursor:pointer;-webkit-appearance:none;appearance:none;margin:0;',
+      '  font-size:12px;line-height:16px;font-weight:500;white-space:nowrap;',
+      '  cursor:pointer;-webkit-appearance:none;appearance:none;margin:0 0 6px;',
       '  transition:background .12s ease;',
       '}',
-      '.sk-main-app-btn__icon{position:relative; top: 1px; display:flex;flex:0 0 auto;flex-shrink:0;width:16px;height:16px;}',
+      '.sk-main-app-btn__icon{display:flex;flex:0 0 auto;flex-shrink:0;width:16px;height:16px;}',
       '.sk-main-app-btn__icon svg{display:block;flex-shrink:0;width:16px;height:16px;}',
       '.sk-main-app-btn:not(:disabled):hover{background:rgba(53,80,105,0.2);}',
       '.theme-type-dark .sk-main-app-btn{background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.8);}',
       '.theme-type-dark .sk-main-app-btn:not(:disabled):hover{background:rgba(255,255,255,0.2);}'
     ].join('\n');
-
-    // OnlyOffice sets html { zoom: 1/deviceScale } via AscCommon.correctApplicationScale
-    // (device_scale.js) when OS DPR doesn't match a supported scale step — e.g. DPR 1.1
-    // snaps to 1.0 and zoom becomes ~0.909, so a CSS 16px icon renders ~14.55px.
-    // Multiply design px by checkDeviceScale().zoom so the painted size hits 16px.
-    function getEditorUiScaleFactor(doc) {
-      var win = doc.defaultView;
-      if (!win || !win.AscCommon || typeof win.AscCommon.checkDeviceScale !== 'function') {
-        return 1;
-      }
-      var scale = win.AscCommon.checkDeviceScale();
-      return (scale && scale.correct && scale.zoom) ? scale.zoom : 1;
-    }
 
     function injectHeaderControlStyles(doc) {
       var style = doc.getElementById('sk-header-controls');
@@ -1340,17 +1328,7 @@
         style.id = 'sk-header-controls';
         if (doc.head) doc.head.appendChild(style);
       }
-      var css = SK_HEADER_CONTROLS_CSS;
-      var uiScale = getEditorUiScaleFactor(doc);
-      if (Math.abs(uiScale - 1) > 0.001) {
-        var iconPx = 16 * uiScale;
-        css += '\n#sk-main-app-btn .sk-main-app-btn__icon,' +
-          '#sk-main-app-btn .sk-main-app-btn__icon svg{' +
-          'width:' + iconPx + 'px !important;height:' + iconPx + 'px !important;' +
-          'min-width:' + iconPx + 'px !important;min-height:' + iconPx + 'px !important;' +
-          'flex-shrink:0 !important;}';
-      }
-      style.textContent = css;
+      style.textContent = SK_HEADER_CONTROLS_CSS;
       bindHeaderLogoClick(doc);
     }
 
