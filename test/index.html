@@ -141,7 +141,9 @@
         editorTab.focus();
         return;
       }
-      if (!window.name) window.name = 'sharekey-main';
+      if (!window.name) {
+        window.name = 'main-app';
+      }
       // No host parameter — the editor's edit.html has the allowed
       // origin baked in at build time. Make sure that baked-in value
       // matches THIS page's origin (location.origin), otherwise the

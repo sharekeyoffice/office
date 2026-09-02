@@ -1715,7 +1715,7 @@
       // Never read cross-origin opener properties (name, closed, location …)
       // — the editor (office.origin) and host (app.origin) are different
       // origins; use the agreed window name directly.
-      var MAIN_APP_WINDOW_NAME = 'sharekey-main';
+      var MAIN_APP_WINDOW_NAME = 'main-app';
 
         if (!window.opener || window.opener.closed) {
             window.open(window.HOST_ORIGIN, '_blank');

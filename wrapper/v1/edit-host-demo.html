@@ -95,7 +95,10 @@
       if (editorTab && !editorTab.closed) {
         editorTab.focus();
       } else {
-        if (!window.name) window.name = 'sharekey-main';
+        if (!window.name) {
+          window.name = 'main-app';
+        }
+
         editorTab = window.open('/edit.html?type=' + type, 'wrapper-editor');
         editorReady = false;
         setStatus($linkStatus, 'opening…');
