@@ -26,7 +26,9 @@
   }
 
   var modal = document.getElementById("connection-lost-modal");
-  if (!modal) return; // markup missing — nothing to drive
+  if (!modal) {
+    return; // markup missing — nothing to drive
+  }
 
   var lastPing = 0; // 0 = never received any ping yet
   var shown = false;
@@ -58,17 +60,27 @@
   var firstPingAt = 0;
   var bootAt = Date.now();
   var becameVisibleAt = Date.now(); // settle window after foregrounding
+
   function hbLog() {
-    if (window.console)
+    if (window.console) {
       console.log.apply(console, ["[edit][hb]"].concat([].slice.call(arguments)));
+    }
   }
-  function secs(ms) { return (ms / 1000).toFixed(1) + "s"; }
-  function vis() { return document.visibilityState; }
+
+  function secs(ms) {
+    return (ms / 1000).toFixed(1) + "s";
+  }
+
+  function vis() {
+    return document.visibilityState;
+  }
   // --------------------------------------------------------------------
 
   function showConnectionLost(reason) {
-    if (shown)
+    if (shown) {
       return;
+    }
+
     // With the main app gone, the diskette can no longer reach the host. If
     // there's unsaved work, surface it as a save error (red-badge diskette,
     // still clickable) instead of leaving it looking idle/greyed. The save-ack
@@ -80,7 +92,7 @@
     if (!isSavingFailed) {
       var warning = modal.querySelector("div.cl-dialog-warning");
 
-      warning.innerText = "All changes were successfully saved."
+      warning.innerText = "All changes were successfully saved.";
       warning.style.color = "#2FA0AF";
     }
 
@@ -89,15 +101,17 @@
     if (isSavingFailed) {
       window.skSetSaveState("error");
     }
-    if (window.console)
+
+    if (window.console) {
       console.warn(
-        "[edit][hb] CONNECTION LOST:", reason,
-        "| sinceLastPing=", lastPing ? secs(Date.now() - lastPing) : "never",
-        "| pingsReceived=", pingCount,
-        "| droppedPings=", droppedPings,
-        "| visibility=", vis(),
-        "| uptime=", secs(Date.now() - bootAt),
+          "[edit][hb] CONNECTION LOST:", reason,
+          "| sinceLastPing=", lastPing ? secs(Date.now() - lastPing) : "never",
+          "| pingsReceived=", pingCount,
+          "| droppedPings=", droppedPings,
+          "| visibility=", vis(),
+          "| uptime=", secs(Date.now() - bootAt)
       );
+    }
   }
 
   // NOTE: don't poll window.opener.closed for connection-lost detection.
@@ -113,6 +127,7 @@
     if (document.visibilityState === "visible") {
       becameVisibleAt = Date.now();
     }
+
     hbLog("visibility →", vis(),
           "| sinceLastPing=", lastPing ? secs(Date.now() - lastPing) : "never");
   });
@@ -124,30 +139,36 @@
     // Allowed-origin gate. window.matchHostOrigin (set by edit.html) handles
     // exact origins AND `*.suffix` wildcards; fall back to exact compare if it's
     // somehow absent (older edit.html).
-    var originOk = window.matchHostOrigin
-      ? window.matchHostOrigin(ev.origin)
-      : ev.origin === window.HOST_ORIGIN;
+    var originOk = window.matchHostOrigin ? window.matchHostOrigin(ev.origin) : ev.origin === window.HOST_ORIGIN;
+
     if (!originOk) {
       // Diagnostic: surface origin/substitution mismatches instead of failing
       // silently.
       if (ev.data && ev.data.type === "ping") {
         droppedPings++;
+
         if (droppedPings === 1 && window.console) {
           console.warn(
             "[edit] DROPPING ping from", ev.origin, "— expected", window.HOST_ORIGIN,
             ". The editor was built with a HOST_ORIGIN that does not match the",
             "actual main app origin. Check the __ALLOWED_HOST_ORIGIN__",
-            "substitution in edit.html.",
+            "substitution in edit.html."
           );
         }
       }
+
       return;
     }
-    if (!ev.data || ev.data.v !== "edit-1") return;
+
+    if (!ev.data || ev.data.v !== "edit-1") {
+      return;
+    }
+
     if (ev.data.type === "ping") {
       var now = Date.now();
       var gap = lastPing ? now - lastPing : 0;
       pingCount++;
+
       if (firstPingAt === 0) {
         firstPingAt = now;
         hbLog("first ping", secs(now - bootAt), "after boot; visibility=", vis());
@@ -156,6 +177,7 @@
         // message delivery get clamped to ~1/min by Chrome throttling.
         hbLog("SLOW ping #" + pingCount, "gap=", secs(gap), "visibility=", vis());
       }
+
       lastPing = now;
       // Pong back to the CONCRETE sender we just validated — window.HOST_ORIGIN
       // may be a wildcard rule, which is not a valid postMessage targetOrigin.
@@ -178,22 +200,38 @@
   //    live main app's resumed ping clears a stale lastPing from the throttled
   //    hidden period.
   setInterval(function () {
-    if (lastPing === 0) return; // no pings yet, no timeout
-    if (document.visibilityState !== "visible") return;
-    if (Date.now() - becameVisibleAt < SETTLE_MS) return;
+    if (lastPing === 0) {
+      return; // no pings yet, no timeout
+    }
+
+    if (document.visibilityState !== "visible") {
+      return;
+    }
+
+    if (Date.now() - becameVisibleAt < SETTLE_MS) {
+      return;
+    }
+
     var idle = Date.now() - lastPing;
+
     if (idle > 20000 && !shown) {
       hbLog("no ping for", secs(idle), "(timeout", secs(TIMEOUT_MS) + ", visible)");
     }
+
     if (idle > TIMEOUT_MS) {
       showConnectionLost("heartbeat-timeout");
     }
   }, 5000);
 
   var closeBtn = document.getElementById("cl-close-btn");
+
   if (closeBtn) {
     closeBtn.onclick = function () {
-      try { window.close(); } catch (e) { /* ignore */ }
+      try {
+        window.close();
+      } catch (e) {
+        /* ignore */
+      }
     };
   }
 })();
