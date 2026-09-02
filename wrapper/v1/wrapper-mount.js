@@ -2275,20 +2275,18 @@
           // chrome in the wrong place. Safe to fire for all transitions —
           // it only affects review-related buttons.
           nc.trigger('reviewchanges:turn', false);
-            editorApi.asc_setRestriction(disable ? R.View : R.None);
+          editorApi.asc_setRestriction(disable ? R.View : R.None);
 
-            if (!disable) {
-                var documentHolderController = iframeWin.DE &&
-                    iframeWin.DE.getController('DocumentHolder');
+          if (!disable) {
+              var documentHolderController = iframeWin.DE && iframeWin.DE.getController('DocumentHolder');
+              var documentHolderView = documentHolderController && documentHolderController.getView();
+              var shouldCreateDelayedElements = documentHolderView &&
+                  !documentHolderView.tableMenu &&
+                  typeof documentHolderView.createDelayedElements === 'function';
 
-                var documentHolderView = documentHolderController &&
-                    documentHolderController.getView();
-
-                if (documentHolderView &&
-                    !documentHolderView.tableMenu &&
-                    typeof documentHolderView.createDelayedElements === 'function') {
-                    documentHolderView.createDelayedElements();
-                }
+              if (shouldCreateDelayedElements) {
+                  documentHolderView.createDelayedElements();
+              }
             }
 
             nc.trigger('doc:mode-changed', mode);
