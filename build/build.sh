@@ -10,6 +10,7 @@
 #   03-deploy-web-apps.sh  — grunt deploy + inject-boot
 #   04-assemble-dist.sh    — copy artifacts into dist/
 #   05-prune.sh            — remove unneeded fat
+#   06-compress.sh         — write .gz siblings for nginx's gzip_static
 #
 # Final step: copy overlay/* over dist/.
 
@@ -37,6 +38,10 @@ bash "$SCRIPT_DIR/04-assemble-dist.sh"   # also applies overlay + substitutes __
 bash "$SCRIPT_DIR/mscorefonts-step.sh" "${OUT_DIR:-$REPO/dist}"
 
 bash "$SCRIPT_DIR/05-prune.sh"
+
+# Pre-compress for nginx's gzip_static. After the prune, so we only spend CPU on
+# files that actually ship.
+bash "$SCRIPT_DIR/06-compress.sh"
 
 echo
 echo "════════════════════════════════════════════════════════════"

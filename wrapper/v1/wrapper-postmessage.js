@@ -10,12 +10,12 @@
 //                                                     // userId/userName: who is editing; recorded
 //                                                     // as the author of every tracked change.
 //                                                     // Optional — a fallback applies. @adr-0001
-//   { type: 'save-request', requestId? }            // 10.1.2 step 3
+//   { type: 'save-request', requestId?, format?, isDesktopAppClose? }          // 10.1.2 step 3
 //   { type: 'save-ack', saveId, ok: bool, reason? } // v0 collab
 //   { type: 'close',    requestId? }
 //   { type: 'set-mode', mode: 'view'|'edit', lockHolder?: {userId?, userName, isSelf?} }  // v0 collab (isSelf ⇒ held by current user, e.g. another tab)
 //   { type: 'permissions', canEdit: bool }            // role-gated: canEdit=false hides the Edit button + editing label (sent before `load`)
-//   { type: 'conflict' }                              // v0 collab: another user saved
+//   { type: 'conflict', userId, userName }             // v0 collab: another user saved
 //   { type: 'editor-name', userId, userName }         // reply to request-editor-name: resolved holder display name
 //   { type: 'conflict-cleared' }                       // reserved; modal hides on its own after `reload`
 //   { type: 'reload' }                                  // v0 collab: main app asks us to location.reload()
@@ -54,6 +54,8 @@
     this.iframe       = null;              // resolved when iframe is ready
     this.hostWindow   = window.opener || window.parent;   // host tab/iframe
     this.hostOrigin   = '*';               // tightened on first inbound msg
+    this.port         = null;              // Desktop MessagePort transport
+    this.pendingHostMessages = [];
     this.requestId    = null;              // current load/save in flight
     this.fontsPath    = '/fonts/';
 
@@ -66,6 +68,9 @@
     this.saveAckTimer       = null;        // watchdog: if no save-ack lands, the host is gone → error
     this.saveAckTimeoutMs   = 25000;       // no save-ack within this → assume host unreachable, flip to 'error'
     this.everSaved          = false;       // a save has been confirmed this session → clean shows 'saved' (else 'idle')
+    this.closeAfterSaveAck  = false;
+    this.pendingSaveRequest = null;
+    this.hasSaveFailedOnClose = false;
 
     // Chunk-diff self-check state. lastFullBytes is the OOXML we sent on
     // the previous `saved`; on the next save we run a round-trip check via
@@ -81,7 +86,9 @@
   }
 
   WrapperPostMessage.prototype.findIframe = function () {
-    if (this.iframe && this.iframe.contentWindow) return this.iframe;
+    if (this.iframe && this.iframe.contentWindow) {
+      return this.iframe;
+    }
     this.iframe = document.querySelector('iframe[name="frameEditor"]');
     return this.iframe;
   };
@@ -91,11 +98,19 @@
   // paste inside the editor sets editedSinceLastPing, which we report + reset
   // on each pong (L1.8 edit-lock idle signal).
   WrapperPostMessage.prototype.ensureActivityListeners = function () {
-    if (this._activityListenersAttached) return;
+    if (this._activityListenersAttached) {
+      return;
+    }
+
     var iframe = this.findIframe();
-    if (!iframe || !iframe.contentDocument) return;
+
+    if (!iframe || !iframe.contentDocument) {
+      return;
+    }
     var self = this;
-    var markActive = function () { self.editedSinceLastPing = true; };
+    var markActive = function () {
+      self.editedSinceLastPing = true;
+    };
     // Capture phase so we see events regardless of where focus sits inside
     // the editor. keydown = typing, mousedown = toolbar/canvas interaction,
     // paste = clipboard insert. Heuristic "user is interacting" signal.
@@ -105,11 +120,41 @@
     this._activityListenersAttached = true;
   };
 
+  WrapperPostMessage.prototype.flushPendingHostMessages = function () {
+    if (!this.port || !this.pendingHostMessages.length) {
+      return;
+    }
+
+    while (this.pendingHostMessages.length) {
+      var item = this.pendingHostMessages.shift();
+
+      this.port.postMessage(item.msg, item.transfer);
+    }
+  };
+
   WrapperPostMessage.prototype.toHost = function (msg, transfer) {
-    if (!this.hostWindow) return;
     msg.v = POST_VERSION;
+
     try {
-      this.hostWindow.postMessage(msg, this.hostOrigin || '*', transfer || []);
+      if (this.port) {
+        this.port.postMessage(msg, transfer || []);
+
+        return;
+      }
+
+      if (window.SK_DESKTOP_TRANSPORT) {
+        this.pendingHostMessages.push({ msg: msg, transfer: transfer || [] });
+
+        return;
+      }
+
+      if (this.hostWindow) {
+        this.hostWindow.postMessage(msg, this.hostOrigin || '*', transfer || []);
+
+        return;
+      }
+
+      this.pendingHostMessages.push({ msg: msg, transfer: transfer || [] });
     } catch (e) {
       log('postToHost failed:', e.message);
     }
@@ -118,6 +163,97 @@
   WrapperPostMessage.prototype.error = function (code, message, requestId) {
     log('error', code, message);
     this.toHost({ type: 'error', code: code, message: message, requestId: requestId });
+  };
+
+  WrapperPostMessage.prototype.handleInbound = function (d) {
+    switch (d.type) {
+      case 'ping':
+        this.ensureActivityListeners();
+        this.toHost({ type: 'pong', editedSinceLastPing: this.editedSinceLastPing });
+        this.editedSinceLastPing = false;
+
+        return;
+      case 'load':
+        this.onLoad(d);
+
+        return;
+      case 'save-request':
+        this.onSaveRequest(d);
+
+        return;
+      case 'save-ack':
+        this.onSaveAck(d);
+
+        return;
+      case 'close':
+        window.close();
+
+        return;
+      case 'set-mode':
+        // Mode change is authoritative — only the trusted main app
+        // (origin-pinned above) can demand a view↔edit switch. Dispatched
+        // to wrapper-mount.js's handleSetMode, which tears down the
+        // current editor instance and reconstructs in the new mode.
+        if (typeof window.handleSetMode === 'function') {
+          window.handleSetMode(d.mode, d.lockHolder);
+        } else {
+          log('set-mode received before wrapper-mount.js bound it — ignoring');
+        }
+        return;
+      case 'permissions':
+        // Role-gated capability from the main app (canEdit ⇐ EDIT_CONTENT
+        // right). Sent before `load` so the Edit button/label gate before the
+        // toolbar renders. UX/defense-in-depth only — the server enforces edit
+        // rights on acquireEditLock + appendDiffChunk.
+        if (typeof window.handlePermissions === 'function') {
+          window.handlePermissions(d);
+        } else {
+          log('permissions received before wrapper-mount.js bound it — ignoring');
+        }
+        return;
+      case 'conflict':
+        // Another user saved changes to this document while we have it
+        // open. Show the blocking modal; user must click Reload to refresh
+        // their view of the document. The Reload click posts `reload-request`
+        // back to the main app, which sends us a `reload` message that
+        // triggers `location.reload()` in this same tab (no popup-blocker
+        // re-trip from window.open).
+        window.handleConflict(d.userId, d.userName);
+
+        return;
+      case 'editor-name':
+        if (typeof window.handleEditorName === 'function') {
+          window.handleEditorName(d.userId, d.userName);
+        } else {
+          log('editor-name received before wrapper-mount.js bound it — ignoring');
+        }
+
+        return;
+      case 'conflict-cleared':
+        // Reserved: the main app could send this if it ever wants to
+        // dismiss the modal without triggering a full reload (e.g. for
+        // a future in-editor-state-patch flow). Today's in-place reload
+        // doesn't use this path because the whole page reload tears the
+        // modal down naturally. Handle defensively so the modal hides
+        // if it ever arrives.
+        window.handleConflictCleared();
+
+        return;
+      case 'reload':
+        // Main app has fresh bytes for us. Reload the page in-place
+        // (same tab, same Window object — main app's session map stays
+        // valid across the reload, and the post-reload `ready` event
+        // will trigger maybeSendLoad with the new bytes). Clear the
+        // dirty flag first so the editor's beforeunload guard doesn't
+        // re-prompt — the user already acknowledged the loss in the
+        // conflict modal.
+        window.__editorDirty = false;
+        window.location.reload();
+
+        return;
+      default:
+        log('unknown inbound type:', d.type);
+    }
   };
 
   WrapperPostMessage.prototype.installListener = function () {
@@ -129,17 +265,47 @@
     this._messageHandler = function (ev) {
       // Defensive: if this instance was destroyed but the listener is still
       // somehow attached (e.g. during a race window), bail.
-      if (self._destroyed) return;
+      if (self._destroyed) {
+        return;
+      }
 
       // Only handle messages explicitly tagged as our wire format.
       var d = ev.data;
-      if (!d || typeof d !== 'object' || d.v !== POST_VERSION) return;
+
+      if (d && d.__skPort === true && ev.ports && ev.ports[0]) {
+        self.port = ev.ports[0];
+
+        self.port.onmessage = function (portEvent) {
+          var message = portEvent.data;
+
+          if (!message || typeof message !== 'object' || message.v !== POST_VERSION) {
+            return;
+          }
+
+          self.handleInbound(message);
+        };
+
+        if (typeof self.port.start === 'function') {
+          self.port.start();
+        }
+
+        log('desktop MessagePort connected');
+        self.flushPendingHostMessages();
+
+        return;
+      }
+
+      if (!d || typeof d !== 'object' || d.v !== POST_VERSION) {
+        return;
+      }
 
       // Allowed-origin gate. window.matchHostOrigin (set by edit.html's guard)
       // is the single source of truth — it handles an exact baked origin AND a
       // `*.suffix` wildcard. If it's somehow absent (older edit.html), fall back
       // to the prior behaviour of trusting the opener so nothing breaks.
-      if (window.matchHostOrigin && !window.matchHostOrigin(ev.origin)) return;
+      if (window.matchHostOrigin && !window.matchHostOrigin(ev.origin)) {
+        return;
+      }
 
       // Lock the host origin to the first ALLOWED origin we hear from. This is
       // the CONCRETE origin (a wildcard rule can't be a postMessage targetOrigin),
@@ -149,105 +315,34 @@
         log('locked host origin =', ev.origin);
       }
 
-      switch (d.type) {
-        case 'ping':
-          self.ensureActivityListeners();
-          self.toHost({ type: 'pong', editedSinceLastPing: self.editedSinceLastPing });
-          self.editedSinceLastPing = false;
-          return;
-        case 'load':
-          self.onLoad(d);
-          return;
-        case 'save-request':
-          self.onSaveRequest(d);
-          return;
-        case 'save-ack':
-          self.onSaveAck(d);
-          return;
-        case 'close':
-          window.close();
-          return;
-        case 'set-mode':
-          // Mode change is authoritative — only the trusted main app
-          // (origin-pinned above) can demand a view↔edit switch. Dispatched
-          // to wrapper-mount.js's handleSetMode, which tears down the
-          // current editor instance and reconstructs in the new mode.
-          if (typeof window.handleSetMode === 'function') {
-            window.handleSetMode(d.mode, d.lockHolder);
-          } else {
-            log('set-mode received before wrapper-mount.js bound it — ignoring');
-          }
-          return;
-        case 'permissions':
-          // Role-gated capability from the main app (canEdit ⇐ EDIT_CONTENT
-          // right). Sent before `load` so the Edit button/label gate before the
-          // toolbar renders. UX/defense-in-depth only — the server enforces edit
-          // rights on acquireEditLock + appendDiffChunk.
-          if (typeof window.handlePermissions === 'function') {
-            window.handlePermissions(d);
-          } else {
-            log('permissions received before wrapper-mount.js bound it — ignoring');
-          }
-          return;
-        case 'conflict':
-          // Another user saved changes to this document while we have it
-          // open. Show the blocking modal; user must click Reload to refresh
-          // their view of the document. The Reload click posts `reload-request`
-          // back to the main app, which sends us a `reload` message that
-          // triggers `location.reload()` in this same tab (no popup-blocker
-          // re-trip from window.open).
-          window.handleConflict();
-
-          return;
-        case 'editor-name':
-          if (typeof window.handleEditorName === 'function') {
-            window.handleEditorName(d.userId, d.userName);
-          } else {
-            log('editor-name received before wrapper-mount.js bound it — ignoring');
-          }
-          return;
-        case 'conflict-cleared':
-          // Reserved: the main app could send this if it ever wants to
-          // dismiss the modal without triggering a full reload (e.g. for
-          // a future in-editor-state-patch flow). Today's in-place reload
-          // doesn't use this path because the whole page reload tears the
-          // modal down naturally. Handle defensively so the modal hides
-          // if it ever arrives.
-          window.handleConflictCleared();
-          return;
-        case 'reload':
-          // Main app has fresh bytes for us. Reload the page in-place
-          // (same tab, same Window object — main app's session map stays
-          // valid across the reload, and the post-reload `ready` event
-          // will trigger maybeSendLoad with the new bytes). Clear the
-          // dirty flag first so the editor's beforeunload guard doesn't
-          // re-prompt — the user already acknowledged the loss in the
-          // conflict modal.
-          window.__editorDirty = false;
-          window.location.reload();
-          return;
-        default:
-          log('unknown inbound type:', d.type);
-      }
+      self.handleInbound(d);
     };
 
     window.addEventListener('message', this._messageHandler);
+    window.postMessage({ __skRequestPort: true }, '*');
   };
 
   // Tear down: remove the message listener and clear pending state. Called
   // from wrapper-mount.js before destroying the editor instance during a
   // mode switch, so the old pm doesn't race the new one for inbound `load`.
   WrapperPostMessage.prototype.destroy = function () {
-    if (this._destroyed) return;
+    if (this._destroyed) {
+      return;
+    }
+
     this._destroyed = true;
+
     if (this._messageHandler) {
       window.removeEventListener('message', this._messageHandler);
       this._messageHandler = null;
     }
+
+    // Explicit save supersedes any pending autosave debounce.
     if (this.autosaveTimer) {
       clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
     }
+
     // pendingSaveId / lastFullBytes intentionally left as-is; they'll be GC'd
     // with the rest of the instance when wrapper-mount.js drops its reference.
     log('destroyed');
@@ -274,12 +369,19 @@
   // open so the editor doesn't 404-loop on fonts.
   WrapperPostMessage.prototype.primeFontPath = function () {
     var iframe = this.findIframe();
-    if (!iframe || !iframe.contentWindow) return false;
+
+    if (!iframe || !iframe.contentWindow) {
+      return false;
+    }
+
     var w = iframe.contentWindow;
+
     if (w.AscCommon && w.AscCommon.g_font_loader) {
       w.AscCommon.g_font_loader.fontFilesPath = this.fontsPath;
+
       return true;
     }
+
     return false;
   };
 
@@ -290,12 +392,23 @@
   WrapperPostMessage.prototype.rememberHostUser = function (msg) {
     var id   = (msg && typeof msg.userId   === 'string') ? msg.userId.trim()   : '';
     var name = (msg && typeof msg.userName === 'string') ? msg.userName.trim() : '';
-    if (!id && !name) return null;
+
+    if (!id && !name) {
+      return null;
+    }
 
     var user = global.__skHostUser || (global.__skHostUser = {});
-    if (id)   user.userId   = id;
-    if (name) user.userName = name;
+
+    if (id) {
+      user.userId = id;
+    }
+
+    if (name) {
+      user.userName = name;
+    }
+
     log('host user =', user.userName || '(no name)', user.userId || '(no id)');
+
     return user;
   };
 
@@ -310,12 +423,15 @@
   // Same-origin access is fine: edit.html and the editor iframe share an
   // origin.
   WrapperPostMessage.prototype.identifyHostUser = function () {
-    if (!global.__skHostUser)
+    if (!global.__skHostUser) {
       return false;
+    }
 
     var iframe = this.findIframe();
-    if (!iframe || !iframe.contentWindow)
+
+    if (!iframe || !iframe.contentWindow) {
       return false;
+    }
 
     iframe.contentWindow.__skUser = {
       id:   global.__skHostUser.userId || '',
@@ -335,18 +451,34 @@
   // editor iframe live on the dev-server origin, so blob URLs created here
   // are also dereferenceable from inside the iframe.
   WrapperPostMessage.prototype.registerExtractedMedia = function () {
-    if (!global.X2TBridge || typeof global.X2TBridge.getLastMedia !== 'function') return 0;
+    if (!global.X2TBridge || typeof global.X2TBridge.getLastMedia !== 'function') {
+      return 0;
+    }
+
     var media = global.X2TBridge.getLastMedia() || {};
     var iframe = this.findIframe();
-    if (!iframe || !iframe.contentWindow) return 0;
+
+    if (!iframe || !iframe.contentWindow) {
+      return 0;
+    }
+
     var w = iframe.contentWindow;
     var urls = w.AscCommon && w.AscCommon.g_oDocumentUrls;
-    if (!urls || typeof urls.addImageUrl !== 'function') return 0;
+
+    if (!urls || typeof urls.addImageUrl !== 'function') {
+      return 0;
+    }
+
     var names = Object.keys(media);
+
     for (var i = 0; i < names.length; i++) {
       urls.addImageUrl(names[i], media[names[i]]);
     }
-    if (names.length) log('registered ' + names.length + ' media file(s): ' + names.join(', '));
+
+    if (names.length) {
+      log('registered ' + names.length + ' media file(s): ' + names.join(', '));
+    }
+
     return names.length;
   };
 
@@ -361,9 +493,11 @@
     var ab = (msg.bytes instanceof ArrayBuffer) ? msg.bytes :
              (msg.bytes && msg.bytes.buffer instanceof ArrayBuffer) ? msg.bytes.buffer :
              null;
+
     if (!ab) {
       return self.error('BAD_REQUEST', 'load.bytes must be ArrayBuffer or Uint8Array', requestId);
     }
+
     var uint8 = new Uint8Array(ab);
     var fileName = msg.fileName || 'document';
 
@@ -378,16 +512,25 @@
     document.title = fileName;
 
     var x2t;
-    try { x2t = self.ensureX2T(); }
-    catch (e) { return self.error('X2T_NOT_LOADED', e.message, requestId); }
+
+    try {
+      x2t = self.ensureX2T();
+    } catch (e) {
+      return self.error('X2T_NOT_LOADED', e.message, requestId);
+    }
 
     var fmt;
-    try { fmt = x2t.detectFormat(uint8); }
-    catch (e) { return self.error('FORMAT_DETECT_FAILED', e.message, requestId); }
+
+    try {
+      fmt = x2t.detectFormat(uint8);
+    } catch (e) {
+      return self.error('FORMAT_DETECT_FAILED', e.message, requestId);
+    }
 
     log('load', fileName, fmt, '(' + uint8.length + ' bytes)');
 
     var binPromise;
+
     if (fmt === 'bin') {
       binPromise = Promise.resolve(uint8);
     } else if (fmt === 'ooxml') {
@@ -409,9 +552,10 @@
     var _convT0 = Date.now();
     var _convSettled = false;
     var _convWatch = setTimeout(function () {
-      if (!_convSettled)
+      if (!_convSettled) {
         log('⚠ LOAD STALLED: x2t convertToBin still pending after 10s (fmt=' + fmt +
             ', ' + uint8.length + ' bytes, visibility=' + document.visibilityState + ')');
+      }
     }, 10000);
 
     binPromise.then(function (binBytes) {
@@ -447,13 +591,19 @@
       // missing flag (older editor-stubs) can't wedge the load permanently.
       var buf = binBytes.buffer.slice(binBytes.byteOffset, binBytes.byteOffset + binBytes.byteLength);
       var openTries = 0;
+
       (function dispatchWhenReady() {
         var ifw = (function () { var f = self.findIframe(); return f && f.contentWindow; })();
         var ready = !!(ifw && ifw.__wrapperOpenReady === true);
+
         if (!ready && openTries++ < 200) {
           return setTimeout(dispatchWhenReady, 100);
         }
-        if (!ready) log('⚠ editor open-listener never signalled ready after 20s — dispatching anyway');
+
+        if (!ready) {
+          log('⚠ editor open-listener never signalled ready after 20s — dispatching anyway');
+        }
+
         try {
           self.editor.openDocument(new Uint8Array(buf));
           log('openDocument dispatched (openReady=' + ready + ', waited=' + (openTries * 100) +
@@ -483,12 +633,80 @@
   // to override the default; otherwise we infer from the editor type.
   WrapperPostMessage.prototype.onSaveRequest = function (msg) {
     var requestId = msg.requestId || ('req-' + Date.now());
-    // Explicit save supersedes any pending autosave debounce.
+
+    if (this.pendingSaveId !== null) {
+      this.pendingSaveRequest = {
+        requestId: requestId,
+        format: msg.format,
+        isDesktopAppClose: msg.isDesktopAppClose === true
+      };
+
+      log('save-request queued behind pending saveId=' + this.pendingSaveId);
+
+      return;
+    }
+
     if (this.autosaveTimer) {
       clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
     }
-    this.captureAndSend(requestId, msg.format);
+
+    this.runSaveRequest(
+        requestId,
+        msg.format,
+        msg.isDesktopAppClose === true
+    );
+  };
+
+  WrapperPostMessage.prototype.runSaveRequest = function (
+      requestId,
+      format,
+      isDesktopAppClose
+  ) {
+    if (window.SK_DESKTOP_TRANSPORT && isDesktopAppClose) {
+      var iframe = this.findIframe();
+      var iframeWindow = iframe && iframe.contentWindow;
+
+      var spreadsheetApi =
+          iframeWindow &&
+          iframeWindow.SSE &&
+          iframeWindow.SSE.controllers &&
+          iframeWindow.SSE.controllers.Main &&
+          iframeWindow.SSE.controllers.Main.api;
+
+      if (
+          spreadsheetApi &&
+          typeof spreadsheetApi.asc_closeCellEditor === 'function'
+      ) {
+        log('desktop app close → committing active spreadsheet cell');
+
+        var isCellEditorClosed = spreadsheetApi.asc_closeCellEditor();
+
+        if (isCellEditorClosed === false) {
+          return this.error(
+              'CELL_EDIT_COMMIT_FAILED',
+              'Could not commit the active spreadsheet cell',
+              requestId
+          );
+        }
+      }
+    }
+
+    this.captureAndSend(requestId, format);
+  };
+
+  WrapperPostMessage.prototype.runPendingSaveRequest = function () {
+    if (!this.pendingSaveRequest) {
+      return;
+    }
+
+    var pendingSaveRequest = this.pendingSaveRequest;
+
+    this.pendingSaveRequest = null;
+
+    log('running queued save-request: ' + pendingSaveRequest.requestId);
+
+    this.onSaveRequest(pendingSaveRequest);
   };
 
   // Shared byte-capture + send path. Used by:
@@ -501,32 +719,50 @@
     var ext = formatOverride || formatByEditor[self.editorType] || 'docx';
 
     var iframe = self.findIframe();
+
     if (!iframe || !iframe.contentWindow) {
       self.setSaveState('error');
-      return self.error('IFRAME_NOT_READY', 'editor iframe not available', saveId);
+      self.error('IFRAME_NOT_READY', 'editor iframe not available', saveId);
+      self.handleFailedSaveOnClose();
+
+      return;
     }
+
     var capture = iframe.contentWindow.__captureSave;
+
     if (typeof capture !== 'function') {
       self.setSaveState('error');
-      return self.error('CAPTURE_NOT_INSTALLED', '__captureSave missing — editor-stubs.js may not have loaded', saveId);
+      self.error('CAPTURE_NOT_INSTALLED', '__captureSave missing — editor-stubs.js may not have loaded', saveId);
+      self.handleFailedSaveOnClose();
+
+      return;
     }
 
     self.toHost({ type: 'progress', stage: 'saving', requestId: saveId });
     self.setSaveState('saving');
 
     var binBytes;
+
     try {
       binBytes = capture();
     } catch (e) {
       self.setSaveState('error');
-      return self.error('SERIALIZE_FAILED', e.message, saveId);
+      self.error('SERIALIZE_FAILED', e.message, saveId);
+      self.handleFailedSaveOnClose();
+
+      return;
     }
 
     var x2t;
-    try { x2t = self.ensureX2T(); }
-    catch (e) {
+
+    try {
+      x2t = self.ensureX2T();
+    } catch (e) {
       self.setSaveState('error');
-      return self.error('X2T_NOT_LOADED', e.message, saveId);
+      self.error('X2T_NOT_LOADED', e.message, saveId);
+      self.handleFailedSaveOnClose();
+
+      return;
     }
 
     // Track this save so onSaveAck can correlate
@@ -584,20 +820,38 @@
       // stuck in 'saving' forever (the diskette dims + disables, looking "greyed
       // out"). Flip to 'error' and clear pendingSaveId so the diskette goes
       // black + red-badge and becomes clickable again, letting the user retry.
-      if (self.saveAckTimer) clearTimeout(self.saveAckTimer);
+      if (self.saveAckTimer) {
+        clearTimeout(self.saveAckTimer);
+      }
+
       self.saveAckTimer = setTimeout(function () {
         self.saveAckTimer = null;
-        if (self.pendingSaveId !== saveId) return;   // already ack'd / superseded
+
+        if (self.pendingSaveId !== saveId) {
+          return;
+        }
+
         log('save-ack timeout — no confirmation from host for saveId=' + saveId + ' → error');
-        self.pendingSaveId      = null;
+
+        self.pendingSaveId = null;
         self.editedSincePending = false;
         self.setSaveState('error');
+
+        self.handleFailedSaveOnClose();
+        self.runPendingSaveRequest();
       }, self.saveAckTimeoutMs);
     }).catch(function (err) {
-      if (self.saveAckTimer) { clearTimeout(self.saveAckTimer); self.saveAckTimer = null; }
+      if (self.saveAckTimer) {
+        clearTimeout(self.saveAckTimer);
+        self.saveAckTimer = null;
+      }
+
       self.setSaveState('error');
       self.pendingSaveId = null;
       self.error('CONVERT_FROM_BIN_FAILED', err.message || String(err), saveId);
+
+      self.handleFailedSaveOnClose();
+      self.runPendingSaveRequest();
     });
   };
 
@@ -655,15 +909,74 @@
       clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
     }
-    if (!this.dirty) return;
+
+    if (!this.dirty) {
+      return;
+    }
+
     if (this.pendingSaveId !== null) {
       // Already saving — let the in-flight one finish. The next dirty
       // event after save-ack will restart the timer.
       log('triggerAutosave skipped — save already in flight (saveId=' + this.pendingSaveId + ')');
       return;
     }
+
     var saveId = 'auto-' + Date.now();
     log('triggerAutosave fires, saveId=' + saveId);
+    this.captureAndSend(saveId, null);
+  };
+
+  WrapperPostMessage.prototype.handleFailedSaveOnClose = function () {
+    if (!this.closeAfterSaveAck) {
+      return;
+    }
+
+    this.closeAfterSaveAck = false;
+    this.hasSaveFailedOnClose = true;
+    this.pendingSaveRequest = null;
+
+    log('save during close failed — next close will close without saving');
+  };
+
+  WrapperPostMessage.prototype.saveAndClose = function () {
+    if (window.SK_DESKTOP_TRANSPORT && this.hasSaveFailedOnClose) {
+      this.hasSaveFailedOnClose = false;
+      this.closeAfterSaveAck = false;
+      this.pendingSaveRequest = null;
+
+      window.__editorDirty = false;
+
+      this.toHost({
+        type: 'force-close-request'
+      });
+
+      return;
+    }
+
+    if (!this.dirty) {
+      window.__editorDirty = false;
+      window.close();
+
+      return;
+    }
+
+    this.closeAfterSaveAck = true;
+
+    if (this.pendingSaveId !== null) {
+      log('saveAndClose waits for pending saveId=' + this.pendingSaveId);
+
+      return;
+    }
+
+    if (this.autosaveTimer) {
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
+    }
+
+    var saveId = 'close-' + Date.now();
+
+    log('saveAndClose fires, saveId=' + saveId);
+
     this.captureAndSend(saveId, null);
   };
 
@@ -709,6 +1022,7 @@
       // the upload (→ still dirty). Falls back to the pre-edit flag if the
       // iframe hook isn't available.
       var stillModified = this.markEditorSaved(wasEdited);
+
       if (stillModified) {
         log('save-ack ok, but edited past the saved point during upload — back to dirty');
         this.setSaveState('dirty');
@@ -716,12 +1030,22 @@
         log('save-ack ok — saved point advanced, all clean');
         this.setSaveState('saved');
       }
+
+      if (this.closeAfterSaveAck && !stillModified) {
+        this.closeAfterSaveAck = false;
+        this.pendingSaveRequest = null;
+        window.__editorDirty = false;
+        window.close();
+      }
     } else {
       log('save-ack failed: ' + (msg.reason || '(no reason)'));
       this.setSaveState('error');
       // The next dirty event will restart the timer; or, if the doc is
       // still dirty, the timer might already be queued by a recent edit.
+      this.handleFailedSaveOnClose();
     }
+
+    this.runPendingSaveRequest();
   };
 
   // Advance the editor's history saved point to the last captured save via the
@@ -747,11 +1071,17 @@
   // States: 'idle' | 'dirty' | 'saving' | 'saved' | 'error'.
   WrapperPostMessage.prototype.setSaveState = function (state) {
     // Diskette button (no-op if wrapper-mount hasn't injected it yet).
-    if (typeof window.skSetSaveState === 'function') window.skSetSaveState(state);
+    if (typeof window.skSetSaveState === 'function') {
+      window.skSetSaveState(state);
+    }
 
     // Legacy text indicator — no-op if absent (e.g. standalone test page).
     var el = document.getElementById('save-state');
-    if (!el) return;
+
+    if (!el) {
+      return;
+    }
+
     el.dataset.state = state;
     var text;
     switch (state) {
