@@ -2275,7 +2275,23 @@
           // chrome in the wrong place. Safe to fire for all transitions —
           // it only affects review-related buttons.
           nc.trigger('reviewchanges:turn', false);
-          editorApi.asc_setRestriction(disable ? R.View : R.None);
+            editorApi.asc_setRestriction(disable ? R.View : R.None);
+
+            if (!disable) {
+                var documentHolderController = iframeWin.DE &&
+                    iframeWin.DE.getController('DocumentHolder');
+
+                var documentHolderView = documentHolderController &&
+                    documentHolderController.getView();
+
+                if (documentHolderView &&
+                    !documentHolderView.tableMenu &&
+                    typeof documentHolderView.createDelayedElements === 'function') {
+                    documentHolderView.createDelayedElements();
+                }
+            }
+
+            nc.trigger('doc:mode-changed', mode);
           log('applyRestriction(word): editing:disable ' + disable + ' + reviewchanges:turn false + asc_setRestriction(' + (disable ? 'View' : 'None') + ')');
         } else if (type === 'cell') {
           // Build flags per-call so `viewMode` (and `clear` sub-flags) track
