@@ -1,0 +1,92 @@
+#cannot-start-edit-mode {
+    position: fixed;
+    inset: 0;
+    z-index: 999999;
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+
+#cannot-start-edit-mode .csem-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(20, 20, 30, .55);
+    backdrop-filter: blur(2px);
+}
+
+#cannot-start-edit-mode .csem-dialog {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px 0 #35506933;
+    padding: 17px 16px 16px 16px;
+    max-width: 450px;
+    width: calc(100vw - 40px);
+    color: #242B2E;
+    box-sizing: border-box;
+    font-size: 13px;
+}
+
+#csem-title {
+    margin-bottom: 16px;
+    line-height: 20px;
+    text-align: center;
+    font-family: system-ui, sans-serif;
+}
+
+#cannot-start-edit-mode .csem-dialog-icon {
+    align-self: center;
+    margin-bottom: 16px;
+}
+
+#cannot-start-edit-mode .csem-dialog-description, .csem-dialog-footnote {
+    line-height: 18px;
+    margin-bottom: 8px;
+    font-family: system-ui, sans-serif;
+}
+
+#cannot-start-edit-mode .csem-dialog-footnote {
+    color: #2FA0AF;
+    font-family: system-ui, sans-serif;
+}
+
+#cannot-start-edit-mode .csem-dialog-description strong {
+    font-family: system-ui, sans-serif;
+}
+
+#cannot-start-edit-mode .csem-dialog button {
+    display: block;
+    height: 30px;
+    width: 116px;
+    margin-top: 16px;
+    border-radius: 6px;
+    border: none;
+    color: white;
+    background: #3FC0C4;
+    align-self: flex-end;
+    font-size: 12px;
+    line-height: 16px;
+    font-family: system-ui, sans-serif;
+    cursor: pointer;
+}
+
+#cannot-start-edit-mode .csem-dialog button:hover {
+    background: #41D1C9;
+}
+
+#cannot-start-edit-mode .csem-dialog button:active {
+    background: #41D1C9;
+}
+
+#csem-close-btn {
+    position: absolute;
+    right: 16px;
+    top: 16px;
+    cursor: pointer;
+}
+
+#csem-close-btn:hover rect {
+    fill-opacity: 0.25;
+}

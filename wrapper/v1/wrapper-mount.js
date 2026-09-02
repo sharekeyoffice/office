@@ -74,7 +74,7 @@
     // its `load` postMessage.
     var hasOpener = !!(window.opener && window.opener !== window);
     var hasParent = !!(window.parent && window.parent !== window);
-    var isStandalone = !hasOpener && !hasParent;
+    var isStandalone = !hasOpener && !hasParent && !window.SK_DESKTOP_TRANSPORT;
     // Pick the fixture matching the editor type so the standalone smoke test
     // exercises the cascade for the right document family.
     var fixtureExt = type === 'cell' ? 'xlsx' : (type === 'slide' ? 'pptx' : 'docx');
@@ -114,6 +114,7 @@
     var lastPresentationPointerDownAt = 0;
     var lastPresentationEditModalAt = 0;
     var lastBlockedEditAttemptFocus = null;
+    var isDesktopClosing = false;
 
     // ── Restriction-API state (hot view↔edit toggle, no destroy) ────────
     var editorApi      = null;     // iframe-internal api, cached after onAppReady
@@ -150,19 +151,22 @@
 
       // Determines the relevant DOM element for an edit attempt event.
       function getEditAttemptTarget(e) {
-          if (!e || !e.target)
+          if (!e || !e.target) {
               return null;
+          }
 
-          if (e.target.nodeType === 1)
+          if (e.target.nodeType === 1) {
               return e.target;
+          }
 
           return e.target.parentElement || null;
       }
 
       // Checks if an element is a native editable element (input, textarea, select, or contentEditable).
       function isNativeEditableElement(element) {
-          if (!element)
+          if (!element) {
               return false;
+          }
 
           var tagName = element.tagName ? element.tagName.toLowerCase() : '';
 
@@ -173,47 +177,55 @@
       }
 
       function handleBlockedContentCopy(e) {
-          if (canEdit)
+          if (canEdit) {
               return;
+          }
 
           e.preventDefault();
           e.stopPropagation();
 
-          if (typeof e.stopImmediatePropagation === 'function')
+          if (typeof e.stopImmediatePropagation === 'function') {
               e.stopImmediatePropagation();
+          }
 
-          if (e.clipboardData && typeof e.clipboardData.setData === 'function')
+          if (e.clipboardData && typeof e.clipboardData.setData === 'function') {
               e.clipboardData.setData('text/plain', '');
+          }
       }
 
       function handleBlockedContentCopyEvent(e) {
-          if (canEdit)
+          if (canEdit) {
               return;
+          }
 
           const shouldBlockContentCopy = e.type !== 'pointerdown' &&
               e.type !== 'mousedown' &&
               e.type !== 'mouseup' ||
               e.button === 2;
 
-          if (shouldBlockContentCopy)
+          if (shouldBlockContentCopy) {
               handleBlockedContentCopy(e);
+          }
       }
 
       function handleBlockedContentCopyKeyDown(e) {
-          if (canEdit)
+          if (canEdit) {
               return;
+          }
 
           const key = e.key ? e.key.toLowerCase() : '';
           const isCopyShortcut = (e.metaKey || e.ctrlKey) && (key === 'c' || key === 'x');
           const isContextMenuShortcut = e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10');
 
-          if (isCopyShortcut || isContextMenuShortcut)
+          if (isCopyShortcut || isContextMenuShortcut) {
               handleBlockedContentCopy(e);
+          }
       }
 
       function bindBlockedContentCopyListeners(targetDocument) {
-          if (!targetDocument || targetDocument.__blockedContentCopyListenersBound)
+          if (!targetDocument || targetDocument.__blockedContentCopyListenersBound) {
               return;
+          }
 
           targetDocument.__blockedContentCopyListenersBound = true;
 
@@ -224,8 +236,9 @@
       }
 
       function showNeedEditModeModalFromCellEditor() {
-          if (currentMode === 'edit' || !canEdit)
+          if (currentMode === 'edit' || !canEdit) {
               return false;
+          }
 
           showNeedEditModeModal();
 
@@ -235,16 +248,19 @@
       }
 
       function bindCellEditorEditAttemptListener() {
-          if (type !== 'cell')
+          if (type !== 'cell') {
               return;
+          }
 
           var iframe = document.querySelector('iframe[name="frameEditor"]');
 
-          if (!iframe || !iframe.contentDocument)
+          if (!iframe || !iframe.contentDocument) {
               return;
+          }
 
-          if (iframe.contentDocument.__cellEditorEditAttemptListenerBound)
+          if (iframe.contentDocument.__cellEditorEditAttemptListenerBound) {
               return;
+          }
 
           iframe.contentDocument.__cellEditorEditAttemptListenerBound = true;
 
@@ -252,8 +268,9 @@
               const target = getEditAttemptTarget(e);
               const isCellEditorInput = !!(target && target.id === 'ce-cell-content');
 
-              if (!isCellEditorInput || !showNeedEditModeModalFromCellEditor())
+              if (!isCellEditorInput || !showNeedEditModeModalFromCellEditor()) {
                   return;
+              }
 
               e.preventDefault();
               e.stopPropagation();
@@ -261,40 +278,47 @@
       }
 
       function bindSheetTabEditAttemptListener() {
-          if (type !== 'cell')
+          if (type !== 'cell') {
               return;
+          }
 
           var iframe = document.querySelector('iframe[name="frameEditor"]');
 
-          if (!iframe || !iframe.contentDocument)
+          if (!iframe || !iframe.contentDocument) {
               return;
+          }
 
-          if (iframe.contentDocument.__sheetTabEditAttemptListenerBound)
+          if (iframe.contentDocument.__sheetTabEditAttemptListenerBound) {
               return;
+          }
 
           iframe.contentDocument.__sheetTabEditAttemptListenerBound = true;
 
           iframe.contentDocument.addEventListener('dblclick', function (e) {
               var target = getEditAttemptTarget(e);
 
-              if (!target || !target.closest || !target.closest('.statusbar .list-item'))
+              if (!target || !target.closest || !target.closest('.statusbar .list-item')) {
                   return;
+              }
 
-              if (!showBlockedEditAttempt('SheetTab.rename'))
+              if (!showBlockedEditAttempt('SheetTab.rename')) {
                   return;
+              }
 
               e.preventDefault();
               e.stopPropagation();
 
-              if (typeof e.stopImmediatePropagation === 'function')
+              if (typeof e.stopImmediatePropagation === 'function') {
                   e.stopImmediatePropagation();
+              }
           }, true);
       }
 
       function getPresentationController(name, editorWindow) {
           try {
-              if (!editorWindow || !editorWindow.PE || typeof editorWindow.PE.getController !== 'function')
+              if (!editorWindow || !editorWindow.PE || typeof editorWindow.PE.getController !== 'function') {
                   return null;
+              }
 
               return editorWindow.PE.getController(name);
           } catch (e) {
@@ -303,16 +327,19 @@
       }
 
       function handlePresentationCanvasClick(e) {
-          if (type !== 'slide' || !isPresentationCanvasElement(getEditAttemptTarget(e)))
+          if (type !== 'slide' || !isPresentationCanvasElement(getEditAttemptTarget(e))) {
               return;
+          }
 
-          if (hasRecentPresentationPointerDown() && isPresentationEmptySlidePlaceholderFocused())
+          if (hasRecentPresentationPointerDown() && isPresentationEmptySlidePlaceholderFocused()) {
               showBlockedPresentationEditAttemptOnce('Canvas.emptySlidePlaceholder');
+          }
       }
 
       function showBlockedEditAttempt(label) {
-          if (currentMode === 'edit' || !canEdit)
+          if (currentMode === 'edit' || !canEdit) {
               return false;
+          }
 
           if (lockHolder && !lockHolder.isSelf) {
               showViewerModeModal(false);
@@ -360,46 +387,54 @@
       function focusTurnOnEditModeModal() {
           var modal = document.getElementById('turn-on-edit-mode');
 
-          if (!modal)
+          if (!modal) {
               return;
+          }
 
           modal.setAttribute('tabindex', '-1');
           modal.focus();
       }
 
       function handleTurnOnEditModeModalKeyDown(e) {
-          if (!isTurnOnEditModeModalVisible())
+          if (!isTurnOnEditModeModalVisible()) {
               return;
+          }
 
-          if (!e || e.key !== 'Enter')
+          if (!e || e.key !== 'Enter') {
               return;
+          }
 
           e.preventDefault();
           e.stopPropagation();
 
-          if (typeof e.stopImmediatePropagation === 'function')
+          if (typeof e.stopImmediatePropagation === 'function') {
               e.stopImmediatePropagation();
+          }
 
           var editButton = document.getElementById('toem-edit-btn');
 
-          if (editButton)
+          if (editButton) {
               editButton.click();
+          }
       }
 
       function wrapPresentationFocusObjectMethod(object) {
-          if (!object || typeof object.onFocusObject !== 'function')
+          if (!object || typeof object.onFocusObject !== 'function') {
               return false;
+          }
 
-          if (object.onFocusObject.__sharekeyFocusObjectEditAttemptWrapped)
+          if (object.onFocusObject.__sharekeyFocusObjectEditAttemptWrapped) {
               return true;
+          }
 
           var originalMethod = object.onFocusObject;
 
           object.onFocusObject = function () {
               var result = originalMethod.apply(this, arguments);
 
-              if (hasRecentPresentationPointerDown() && isPresentationObjectOrPlaceholderFocused())
+              if (hasRecentPresentationPointerDown() && isPresentationObjectOrPlaceholderFocused()) {
                   showBlockedPresentationEditAttemptOnce('Main.onFocusObject');
+              }
 
               return result;
           };
@@ -410,8 +445,9 @@
       }
 
       function bindPresentationEditAttemptMethods() {
-          if (type !== 'slide')
+          if (type !== 'slide') {
               return;
+          }
 
           var iframe = document.querySelector('iframe[name="frameEditor"]');
           var editorWindow = iframe && iframe.contentWindow;
@@ -430,8 +466,9 @@
               'onDuplicateSlide',
               'onDeleteSlide'
           ].forEach(function (methodName) {
-              if (wrapPresentationEditAttemptMethod(documentHolder, methodName, 'DocumentHolder'))
+              if (wrapPresentationEditAttemptMethod(documentHolder, methodName, 'DocumentHolder')) {
                   wrappedCount += 1;
+              }
           });
 
           [
@@ -446,12 +483,14 @@
               'onInsertEquationClick',
               'onInsertSymbolClick'
           ].forEach(function (methodName) {
-              if (wrapPresentationEditAttemptMethod(toolbar, methodName, 'Toolbar'))
+              if (wrapPresentationEditAttemptMethod(toolbar, methodName, 'Toolbar')) {
                   wrappedCount += 1;
+              }
           });
 
-          if (wrapPresentationFocusObjectMethod(main))
+          if (wrapPresentationFocusObjectMethod(main)) {
               wrappedCount += 1;
+          }
       }
 
       function rememberBlockedEditAttemptFocus() {
@@ -468,8 +507,9 @@
       function restoreBlockedEditAttemptFocus() {
           var focusState = lastBlockedEditAttemptFocus;
 
-          if (!focusState)
+          if (!focusState) {
               return;
+          }
 
           setTimeout(function () {
               var iframe = focusState.iframe;
@@ -510,16 +550,17 @@
       }
 
       function markPresentationPointerDown(e) {
-          const isNotPresentationCanvasClick = type !== 'slide'
-              || !e
-              || e.button !== 0
-              || e.metaKey
-              || e.ctrlKey
-              || e.altKey
-              || !isPresentationCanvasElement(getEditAttemptTarget(e));
+          const isNotPresentationCanvasClick = type !== 'slide' ||
+              !e ||
+              e.button !== 0 ||
+              e.metaKey ||
+              e.ctrlKey ||
+              e.altKey ||
+              !isPresentationCanvasElement(getEditAttemptTarget(e));
 
-          if (isNotPresentationCanvasClick)
+          if (isNotPresentationCanvasClick) {
               return;
+          }
 
           lastPresentationPointerDownAt = Date.now();
       }
@@ -533,14 +574,16 @@
       }
 
       function getPresentationSelectedElementsCount() {
-          if (!editorApi || typeof editorApi.getSelectedElements !== 'function')
+          if (!editorApi || typeof editorApi.getSelectedElements !== 'function') {
               return 0;
+          }
 
           try {
               var selectedElements = editorApi.getSelectedElements();
 
-              if (!selectedElements || typeof selectedElements.length !== 'number')
+              if (!selectedElements || typeof selectedElements.length !== 'number') {
                   return 0;
+              }
 
               return selectedElements.length;
           } catch (e) {
@@ -557,8 +600,9 @@
       }
 
       function showBlockedPresentationEditAttemptOnce(methodName) {
-          if (hasRecentPresentationEditModal() || !showBlockedEditAttempt(methodName))
+          if (hasRecentPresentationEditModal() || !showBlockedEditAttempt(methodName)) {
               return false;
+          }
 
           lastPresentationEditModalAt = Date.now();
 
@@ -570,25 +614,30 @@
     // common navigation / system shortcuts so simple scrolling, copying, finding
     // or selecting text doesn't show a modal.
     function isEditAttemptEvent(e) {
-        if (!e)
+        if (!e) {
             return false;
+        }
 
         var target = getEditAttemptTarget(e);
         var isOnlyOfficeDocumentInput = !!(target && target.id === 'area_id');
 
-        if (isNativeEditableElement(target) && !isOnlyOfficeDocumentInput)
+        if (isNativeEditableElement(target) && !isOnlyOfficeDocumentInput) {
             return false;
+        }
 
-        if (e.type === 'paste' || e.type === 'cut' || e.type === 'drop')
+        if (e.type === 'paste' || e.type === 'cut' || e.type === 'drop') {
             return true;
+        }
 
-        if (e.type !== 'keydown')
+        if (e.type !== 'keydown') {
             return false;
+        }
 
         var key = e.key;
 
-        if (!key)
+        if (!key) {
             return false;
+        }
 
         if (e.metaKey || e.ctrlKey) {
             return key.toLowerCase() === 'b' ||
@@ -596,8 +645,9 @@
                 key.toLowerCase() === 'u';
         }
 
-        if (e.altKey)
+        if (e.altKey) {
             return false;
+        }
 
       return key.length === 1 ||
           key === 'Backspace' ||
@@ -606,15 +656,17 @@
     }
 
       function isSaveShortcut(e) {
-          if (!e || e.code !== 'KeyS')
+          if (!e || e.code !== 'KeyS') {
               return false;
+          }
 
           return e.metaKey || e.ctrlKey;
       }
 
       function handleSaveShortcut(e) {
-          if (!isSaveShortcut(e))
+          if (!isSaveShortcut(e)) {
               return;
+          }
 
           e.preventDefault();
           e.stopPropagation();
@@ -636,8 +688,24 @@
     // If another user already holds the edit lock, we do nothing here: the header
     // already explains that someone is editing, and the Edit button is disabled.
     function handleBlockedEditAttempt(e) {
-      if (currentMode === 'edit' || !canEdit || !isEditAttemptEvent(e))
+      if ((currentMode === 'edit' && !isDesktopClosing) || !canEdit || !isEditAttemptEvent(e)) {
           return;
+      }
+
+        if (isDesktopClosing) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            if (typeof e.stopImmediatePropagation === 'function') {
+                e.stopImmediatePropagation();
+            }
+
+            showDesktopClosingModal();
+
+            log('blocked edit attempt: desktop closing');
+
+            return;
+        }
 
       if (lockHolder && !lockHolder.isSelf) {
         showViewerModeModal(false);
@@ -662,8 +730,13 @@
     function bindBlockedEditAttemptListeners() {
       var iframe = document.querySelector('iframe[name="frameEditor"]');
 
-      if (!iframe || !iframe.contentDocument) return false;
-      if (iframe.contentDocument.__blockedEditAttemptListenersBound) return true;
+      if (!iframe || !iframe.contentDocument) {
+          return false;
+      }
+
+      if (iframe.contentDocument.__blockedEditAttemptListenersBound) {
+          return true;
+      }
 
       iframe.contentDocument.__blockedEditAttemptListenersBound = true;
       bindBlockedContentCopyListeners(iframe.contentDocument);
@@ -709,6 +782,53 @@
       log('showNeedEditModeModal');
     }
 
+      function showDesktopClosingModal() {
+          var modal = document.getElementById('cannot-start-edit-mode');
+
+          if (!modal) {
+              log('showDesktopClosingModal: modal element not found');
+              return;
+          }
+
+          rememberBlockedEditAttemptFocus();
+
+          modal.style.display = 'flex';
+
+          log('showDesktopClosingModal');
+      }
+
+      function bindDesktopClosingModal() {
+          var modal = document.getElementById('cannot-start-edit-mode');
+          var closeButton = document.getElementById('csem-close-btn');
+          var confirmButton = document.getElementById('csem-сonfirm-btn');
+
+          if (!modal || !closeButton || !confirmButton) {
+              log('bindDesktopClosingModal: modal or close button not found');
+
+              return;
+          }
+
+          if (modal.__desktopClosingBound) {
+              return;
+          }
+
+          modal.__desktopClosingBound = true;
+
+          closeButton.onclick = function () {
+              modal.style.display = 'none';
+              restoreBlockedEditAttemptFocus();
+          };
+
+          confirmButton.onclick = function () {
+              modal.style.display = 'none';
+              restoreBlockedEditAttemptFocus();
+
+              if (pm) {
+                  pm.toHost({ type: 'focus' });
+              }
+          };
+      }
+
       // Shows the outer-page modal for the case where the user tries to edit while
       // another user already holds the edit lock. The header already shows who is
       // editing, but this modal gives immediate feedback after a typing attempt.
@@ -750,7 +870,9 @@
         return;
       }
 
-      if (modal.__turnOnEditModeBound) return;
+      if (modal.__turnOnEditModeBound) {
+          return;
+      }
 
       modal.__turnOnEditModeBound = true;
 
@@ -782,10 +904,13 @@
 
           if (!modal || !closeButton || !confirmButton) {
               log('bindViewerModeModal: modal or close button not found');
+
               return;
           }
 
-          if (modal.__viewerModeBound) return;
+          if (modal.__viewerModeBound) {
+              return;
+          }
 
           modal.__viewerModeBound = true;
 
@@ -832,7 +957,9 @@
       // a newer version, the important action is reload/refresh, not edit-lock status.
       // In this state the label explains who changed the document.
       function renderEditingLabel() {
-          if (!headerEditingLabel) return;
+          if (!headerEditingLabel) {
+              return;
+          }
 
           var li = headerEditingLabel.parentNode;
           var doc = headerEditingLabel.ownerDocument;
@@ -854,17 +981,21 @@
               headerEditingLabel.classList.remove('sk-editing-label--self', 'sk-editing-label--other');
               headerEditingLabel.classList.add('sk-editing-label--conflict');
 
-              if (li) li.style.display = '';
+              if (li) {
+                  li.style.display = '';
+              }
 
               return;
           }
 
           // No edit right ⇒ never surface normal "who is editing" status.
-          if (!canEdit) {
+          if (!canEdit || isDesktopClosing) {
               headerEditingLabel.classList.remove('sk-editing-label--conflict', 'sk-editing-label--self', 'sk-editing-label--other');
               headerEditingLabel.textContent = '';
 
-              if (li) li.style.display = 'none';
+              if (li) {
+                  li.style.display = 'none';
+              }
 
               return;
           }
@@ -894,7 +1025,9 @@
           headerEditingLabel.classList.toggle('sk-editing-label--self', isSelf);
           headerEditingLabel.classList.toggle('sk-editing-label--other', show && !isSelf);
 
-          if (li) li.style.display = show ? '' : 'none';
+          if (li) {
+              li.style.display = show ? '' : 'none';
+          }
       }
 
       // Reflect currentMode/lockHolder/conflictState onto the in-header Edit button.
@@ -912,7 +1045,9 @@
       // control: layout stays stable, and the only visual differences from Edit are
       // icon, text and background colour.
       function renderEditButton() {
-          if (!headerEditBtn) return;
+          if (!headerEditBtn) {
+              return;
+          }
 
           var li = headerEditBtn.parentNode;   // the .sk-edit-tab <li>
           var icon = headerEditBtn.querySelector('.sk-edit-btn__icon');
@@ -926,7 +1061,9 @@
           // because it only reloads the document and does not request edit mode.
           // It becomes available only after the edit lock is released.
           if (conflictState) {
-              if (li) li.style.display = '';
+              if (li) {
+                  li.style.display = '';
+              }
 
               headerEditBtn.classList.add('is-refresh');
               headerEditBtn.disabled = false;
@@ -945,14 +1082,33 @@
           // No edit right ⇒ hide the Edit button entirely (display:none on the <li>).
           // Visibility-based so there's never a "visible-but-dead" button.
           if (!canEdit) {
-              if (li) li.style.display = 'none';
+              if (li) {
+                  li.style.display = 'none';
+              }
 
               headerEditBtn.disabled = true;
 
               return;
           }
 
-          if (li) li.style.display = '';
+          if (isDesktopClosing) {
+              if (li) {
+                  li.style.display = '';
+              }
+
+              headerEditBtn.classList.add('is-locked');
+              headerEditBtn.disabled = false;
+
+              if (label) {
+                  label.textContent = 'Edit';
+              }
+
+              return;
+          }
+
+          if (li) {
+              li.style.display = '';
+          }
 
           if (icon) {
               icon.innerHTML = SK_EDIT_ICON_SVG;
@@ -979,8 +1135,9 @@
       // in a disabled visual state, the spinner icon rotates, and the text shows
       // animated dots.
       function renderRefreshingButton() {
-          if (!headerEditBtn)
+          if (!headerEditBtn) {
               return;
+          }
 
           var icon = headerEditBtn.querySelector('.sk-edit-btn__icon');
           var label = headerEditBtn.querySelector('.sk-edit-btn__label');
@@ -1011,7 +1168,10 @@
     // now) or 'error' (retry). 'idle'/'saving'/'saved' are disabled — nothing to
     // save, or a save is already in flight. No-op until the button is injected.
     function renderSaveButton() {
-      if (!headerSaveBtn) return;
+      if (!headerSaveBtn) {
+          return;
+      }
+
       var s = currentSaveState;
       var clickable = (s === 'dirty' || s === 'error');
       headerSaveBtn.className = 'sk-save-btn sk-save-btn--' + s;
@@ -1045,13 +1205,20 @@
     // dropdown"> element.
     function hideNativeDropdown() {
       var iframe = document.querySelector('iframe[name="frameEditor"]');
-      if (!iframe || !iframe.contentDocument) return;
+
+      if (!iframe || !iframe.contentDocument) {
+          return;
+      }
       var doc = iframe.contentDocument;
       var style = doc.getElementById('hide-native-dropdown');
+
       if (!style) {
         style = doc.createElement('style');
         style.id = 'hide-native-dropdown';
-        if (doc.head) doc.head.appendChild(style);
+
+        if (doc.head) {
+            doc.head.appendChild(style);
+        }
       }
       // Hide both the dropdown AND the canRequestEditRights button (if any
       // legacy config flips it back on by accident).
@@ -1166,9 +1333,11 @@
         '  position:fixed;',
         '  display:none;',
         '  box-sizing:border-box;',
-        '  width:192px;',
+        '  width: max-content;',
+        '  max-width: none;',
         '  height:18px;',
         '  padding:2px 8px;',
+        '  white-space: nowrap;',
         '  border-radius:3px;',
         '  background:#728596;',
         '  color:#FFFFFF;',
@@ -1323,11 +1492,16 @@
 
     function injectHeaderControlStyles(doc) {
       var style = doc.getElementById('sk-header-controls');
+
       if (!style) {
         style = doc.createElement('style');
         style.id = 'sk-header-controls';
-        if (doc.head) doc.head.appendChild(style);
+
+        if (doc.head) {
+            doc.head.appendChild(style);
+        }
       }
+
       style.textContent = SK_HEADER_CONTROLS_CSS;
       bindHeaderLogoClick(doc);
     }
@@ -1356,12 +1530,15 @@
 
       function ensureEditTooltip(doc) {
           if (headerEditTooltip && headerEditTooltip.ownerDocument === doc) {
+              headerEditTooltip.textContent = isDesktopClosing ? 'Cancel closing the Main App to start editing' : 'Only one Member can edit at a time';
+
               return headerEditTooltip;
           }
 
           headerEditTooltip = doc.createElement('div');
           headerEditTooltip.className = 'sk-edit-tooltip';
-          headerEditTooltip.textContent = 'Only one Member can edit at a time';
+
+          headerEditTooltip.textContent = isDesktopClosing ? 'Cancel closing the Main App to start editing' : 'Only one Member can edit at a time';
 
           if (doc.body) {
               doc.body.appendChild(headerEditTooltip);
@@ -1473,8 +1650,9 @@
       // host drives the actual mode flip back via set-mode → handleSetMode, which
       // re-renders the button.
       function onEditButtonClick() {
-          if (!pm || !headerEditBtn || headerEditBtn.disabled)
+          if (!pm || !headerEditBtn || headerEditBtn.disabled) {
               return;
+          }
 
           // Refresh is not an edit-right action: it only asks the host to reload the
           // fresh document bytes. Allow it even when canEdit=false, but only once the
@@ -1488,6 +1666,12 @@
 
           if (!canEdit) {
               return;   // role has no edit right — refuse (button shouldn't exist anyway)
+          }
+
+          if (isDesktopClosing) {
+              showDesktopClosingModal();
+
+              return;
           }
 
           if (currentMode === 'view') {
@@ -1513,7 +1697,10 @@
     // capture → x2t → `saved` path as autosave and drives the state back via
     // skSetSaveState.
     function onSaveButtonClick() {
-      if (!pm || (currentSaveState !== 'dirty' && currentSaveState !== 'error')) return;
+      if (!pm || (currentSaveState !== 'dirty' && currentSaveState !== 'error')) {
+          return;
+      }
+
       log('user clicked Save (' + currentSaveState + ') → requestManualSave');
       pm.requestManualSave();
     }
@@ -1556,7 +1743,10 @@
     // so callers poll on a false return — mirrors the tryCacheApi poller.
     function mountHeaderControls() {
       var iframe = document.querySelector('iframe[name="frameEditor"]');
-      if (!iframe || !iframe.contentDocument) return false;
+
+      if (!iframe || !iframe.contentDocument) {
+          return false;
+      }
       var doc = iframe.contentDocument;
 
       // Inject (or refresh) our styles whenever the iframe doc is reachable.
@@ -1571,6 +1761,7 @@
       mountEditingLabel(doc);              // anchored off the Edit <li>; no-op if edit not mounted yet
       var saveDone = mountSaveButton(doc);
       var mainAppDone = !hasOpener || mountMainAppButton(doc);
+
       return editDone && saveDone && mainAppDone;
     }
 
@@ -1581,6 +1772,7 @@
       // false — visibility-based, not DOM removal, so a permissions/iframe
       // timing race can never leave a "visible-but-dead" button.
       var existing = doc.getElementById('sk-edit-btn');
+
       if (existing) {
           headerEditBtn = existing;
 
@@ -1596,7 +1788,10 @@
         }
       var anchor = doc.querySelector('.tabs ul[role="tablist"]') ||
                    doc.querySelector('ul[role="tablist"]');
-      if (!anchor) return false;
+
+      if (!anchor) {
+          return false;
+      }
 
       var slot = doc.createElement('li');
       slot.className = 'sk-edit-tab';
@@ -1621,6 +1816,7 @@
       headerEditBtn = btn;
       renderEditButton();
       log('mountHeaderControls: Edit button injected into toolbar tab strip');
+
       return true;
     }
 
@@ -1631,10 +1827,22 @@
     function mountEditingLabel(doc) {
       // Always mount; renderEditingLabel keeps it hidden when canEdit is false.
       var existing = doc.getElementById('sk-editing-label');
-      if (existing) { headerEditingLabel = existing; renderEditingLabel(); return true; }
-      if (!headerEditBtn) return false;                 // mount the Edit button first
+
+      if (existing) {
+          headerEditingLabel = existing;
+          renderEditingLabel();
+          return true;
+      }
+
+      if (!headerEditBtn) {
+          return false;                 // mount the Edit button first
+      }
+
       var editLi = headerEditBtn.parentNode;            // the .sk-edit-tab <li>
-      if (!editLi || !editLi.parentNode) return false;
+
+      if (!editLi || !editLi.parentNode) {
+          return false;
+      }
 
       var slot = doc.createElement('li');
       slot.className = 'sk-editing-tab';
@@ -1648,6 +1856,7 @@
       headerEditingLabel = span;
       renderEditingLabel();
       log('mountHeaderControls: editing label injected into toolbar tab strip');
+
       return true;
     }
 
@@ -1655,9 +1864,19 @@
     // Save slot (#slot-btn-dt-save, Header.js:149), which we hide via CSS.
     function mountSaveButton(doc) {
       var existing = doc.getElementById('sk-save-btn');
-      if (existing) { headerSaveBtn = existing; renderSaveButton(); return true; }
+
+      if (existing) {
+          headerSaveBtn = existing;
+          renderSaveButton();
+
+          return true;
+      }
+
       var nativeSlot = doc.getElementById('slot-btn-dt-save');
-      if (!nativeSlot || !nativeSlot.parentNode) return false;
+
+      if (!nativeSlot || !nativeSlot.parentNode) {
+          return false;
+      }
 
       var slot = doc.createElement('div');
       slot.className = 'sk-save-slot';
@@ -1674,6 +1893,7 @@
       headerSaveBtn = btn;
       renderSaveButton();
       log('mountHeaderControls: Save button injected into quick-access toolbar');
+
       return true;
     }
 
@@ -1729,10 +1949,16 @@
     function autoLoadFixture() {
       log('standalone mode — auto-loading ' + fixtureUrl);
       fetch(fixtureUrl).then(function (r) {
-        if (!r.ok) throw new Error('fixture fetch ' + r.status);
+        if (!r.ok) {
+            throw new Error('fixture fetch ' + r.status);
+        }
+
         return r.arrayBuffer();
       }).then(function (buf) {
-        if (!window.X2TBridge) throw new Error('X2TBridge not available');
+        if (!window.X2TBridge) {
+            throw new Error('X2TBridge not available');
+        }
+
         return window.X2TBridge.convertToBin(new Uint8Array(buf), 'sample.' + fixtureExt);
       }).then(function (bin) {
         log('fixture converted, bin=' + bin.length + ' bytes — calling editor.openDocument');
@@ -1780,21 +2006,27 @@
     function cacheEditorApi() {
       try {
         var iframe = document.querySelector('iframe[name="frameEditor"]');
+
         if (!iframe || !iframe.contentWindow) {
           log('cacheEditorApi: iframe not yet present');
           return false;
         }
+
         var w = iframe.contentWindow;
         var ns = w.DE || w.SSE || w.PE;
+
         if (!ns || typeof ns.getController !== 'function') {
           log('cacheEditorApi: editor namespace not yet exposed');
           return false;
         }
+
         var vp = ns.getController('Viewport');
+
         if (!vp || typeof vp.getApi !== 'function') {
           log('cacheEditorApi: Viewport controller not yet available');
           return false;
         }
+
         editorApi   = vp.getApi();
         editorApiNs = w.Asc;
         log('cacheEditorApi: editor api cached');
@@ -1825,6 +2057,7 @@
         // the polled block long since finished.
         try {
           var nc = w.Common && w.Common.NotificationCenter;
+
           if (type === 'word' && nc && typeof nc.on === 'function' && !nc.__wrapperDocReadyBound) {
             nc.__wrapperDocReadyBound = true;
             nc.on('document:ready', function () {
@@ -1840,15 +2073,17 @@
         } catch (e) {
           log('cacheEditorApi: document:ready bind error: ' + (e && e.message ? e.message : e));
         }
+
         return true;
       } catch (e) {
         log('cacheEditorApi error:', e && e.message ? e.message : e);
+
         return false;
       }
     }
 
     // ── Flag objects for editing:disable dispatched on cell/slide ──────
-    // Modelled on the editor controllers' `disableEditing` methods
+    // Modeled on the editor controllers' `disableEditing` methods
     // (disconnect path), but constructed *dynamically* per call because
     // some sub-handlers ignore the outer `disable` arg and key off the
     // flag-object instead. Most notably, Toolbar.DisableToolbar reads
@@ -1965,23 +2200,32 @@
       // host-driven set-mode that arrived during the appReady→documentReady
       // window.
       pendingRestrict = mode;
+
       if (!editorApi || !editorApiNs) {
         log('applyRestriction: api not yet cached, queuing ' + mode);
+
         return;
       }
+
       var iframe = document.querySelector('iframe[name="frameEditor"]');
+
       if (!iframe || !iframe.contentWindow) {
         log('applyRestriction: iframe gone, queuing ' + mode);
         pendingRestrict = mode;
+
         return;
       }
+
       var iframeWin = iframe.contentWindow;
       var nc        = iframeWin.Common && iframeWin.Common.NotificationCenter;
+
       if (!nc || typeof nc.trigger !== 'function') {
         log('applyRestriction: NotificationCenter not ready, falling back to bare asc_setRestriction');
         bareSetRestriction(mode);
+
         return;
       }
+
       var R = editorApiNs.c_oAscRestrictionType;
       var disable = (mode === 'view');
 
@@ -2032,10 +2276,14 @@
     }
 
     function bareSetRestriction(mode) {
-      if (!editorApi || !editorApiNs) return;
+      if (!editorApi || !editorApiNs) {
+          return;
+      }
+
       var R = editorApiNs.c_oAscRestrictionType;
       var target = (mode === 'view') ? R.View : R.None;
       lastAppliedRestriction = target;
+
       try {
         editorApi.asc_setRestriction(target);
       } catch (e) {
@@ -2071,9 +2319,14 @@
     function onRestrictionsChanged(r) {
       if (r === lastAppliedRestriction) {
         lastAppliedRestriction = null;
+
         return;
       }
-      if (!editorApi || !editorApiNs) return;
+
+      if (!editorApi || !editorApiNs) {
+          return;
+      }
+
       log('asc_onChangeRestrictions: SDK-internal change (raw=' + r + ') — re-asserting ' + pendingRestrict);
       bareSetRestriction(pendingRestrict);
     }
@@ -2084,6 +2337,7 @@
     function handleSetMode(newMode, newLockHolder) {
       if (newMode !== 'view' && newMode !== 'edit') {
         log('handleSetMode: invalid mode "' + newMode + '" — ignoring');
+
         return;
       }
       // NOTE: we intentionally do NOT gate edit on canEdit here. set-mode is only
@@ -2097,18 +2351,21 @@
       // arrives right after the lock is released (cleared above) can still name
       // who edited. Not cleared on release — it's always overwritten by the next
       // real holder before another conflict can occur.
-      if (newLockHolder && newLockHolder.userName)
-        lastLockHolderName = newLockHolder.isSelf ? 'You' : newLockHolder.userName;
+      if (newLockHolder && newLockHolder.userName) {
+          lastLockHolderName = newLockHolder.isSelf ? 'You' : newLockHolder.userName;
+      }
       // Remember the OTHER user's id too (not our own — isSelf never needs a
       // lookup). Survives the lock release the same way lastLockHolderName does,
       // so a post-release conflict can still ask the host to name who edited by
       // id — even after the host's editLock (and its reactive watcher) forgot them.
-      if (newLockHolder && newLockHolder.userId)
-        lastLockHolderId = newLockHolder.userId;
+      if (newLockHolder && newLockHolder.userId) {
+          lastLockHolderId = newLockHolder.userId;
+      }
       // Live "Someone is editing…" (lock held, name unresolved) — ask the host to
       // resolve it by id too, same path as the conflict banner below.
-      if (newLockHolder && (!newLockHolder.userName || newLockHolder.userName === 'Someone'))
-        maybeRequestEditorName('Someone', newLockHolder.userId);
+      if (newLockHolder && (!newLockHolder.userName || newLockHolder.userName === 'Someone')) {
+          maybeRequestEditorName('Someone', newLockHolder.userId);
+      }
 
       currentMode = newMode;
       updateOverlayUI();
@@ -2125,26 +2382,28 @@
     // beat as its save: the set-mode:view that clears `lockHolder` can be
     // processed just before this conflict, so we fall back to the last holder
     // name we remembered (lastLockHolderName) before finally landing on "Someone".
-    function handleConflict() {
-      conflictState = {
-        updatedBy: (lockHolder && lockHolder.userName) || lastLockHolderName || 'Someone',
-        userId:    (lockHolder && lockHolder.userId)   || lastLockHolderId   || null
-      };
+      function handleConflict(userId, userName) {
+          conflictState = {
+              updatedBy: userName || 'Someone',
+              userId: userId || null
+          };
 
-      updateOverlayUI();
+          updateOverlayUI();
 
-      log('handleConflict: document updated by ' + conflictState.updatedBy);
+          log('handleConflict: document updated by ' + conflictState.updatedBy);
 
-      maybeRequestEditorName(conflictState.updatedBy, conflictState.userId);
-    }
+          maybeRequestEditorName(conflictState.updatedBy, conflictState.userId);
+      }
     window.handleConflict = handleConflict;
 
     function maybeRequestEditorName(displayName, userId) {
-      if (displayName !== 'Someone' || !pm)
+      if (displayName !== 'Someone' || !pm) {
           return;
+      }
 
-      if (editorNameRequestedFor === userId)
+      if (editorNameRequestedFor === userId) {
           return;
+      }
 
       editorNameRequestedFor = userId;
       log('holder name unresolved → request-editor-name for ' + userId);
@@ -2156,13 +2415,15 @@
       log(userId);
       log(userName);
 
-      if (!userId || !userName || userName === 'Someone')
+      if (!userId || !userName || userName === 'Someone') {
           return;
+      }
 
       let changed = false;
 
-      if (lastLockHolderId === userId)
+      if (lastLockHolderId === userId) {
           lastLockHolderName = userName;
+      }
 
       if (conflictState && conflictState.userId === userId && conflictState.updatedBy === 'Someone') {
         conflictState.updatedBy = userName;
@@ -2201,9 +2462,15 @@
     // Role / EDIT_CONTENT right). Sent before `load`, so it lands before the
     // toolbar tab-strip exists → no Edit-button flash for viewers.
     function handlePermissions(perms) {
-      var next = !(perms && perms.canEdit === false);   // default true unless explicitly false
-      if (next === canEdit) return;
-      canEdit = next;
+    var nextCanEdit = !(perms && perms.canEdit === false);
+    var nextDesktopClosing = !!(perms && perms.isDesktopClosing);
+
+    if (nextCanEdit === canEdit && nextDesktopClosing === isDesktopClosing) {
+        return;
+    }
+
+    canEdit = nextCanEdit;
+    isDesktopClosing = nextDesktopClosing;
       log('handlePermissions: canEdit=' + canEdit);
       // Re-render the Edit button + editing label to reflect the new capability
       // (renderEditButton hides the button when !canEdit). The controls are
@@ -2219,9 +2486,14 @@
         log('onAppReady — initialising postmessage bridge mode=' + currentMode);
         pm = new window.WrapperPostMessage({ editor: editorInstance, editorType: type });
         pm.signalReady();
-        if (isStandalone) autoLoadFixture();
+
+        if (isStandalone) {
+            autoLoadFixture();
+        }
+
         updateOverlayUI();
         bindTurnOnEditModeModal();
+        bindDesktopClosingModal();
         bindViewerModeModal();
         bindOnlyOfficeWelcomeScreen();
         bindSaveShortcutListeners();
@@ -2263,8 +2535,11 @@
             hideNativeDropdown();
             return;
           }
-          if (++attempts < 20) setTimeout(tryCacheApi, 50);   // up to ~1 s of polling
-          else log('tryCacheApi: gave up after ' + attempts + ' attempts');
+          if (++attempts < 20) {
+              setTimeout(tryCacheApi, 50);   // up to ~1 s of polling
+          } else {
+              log('tryCacheApi: gave up after ' + attempts + ' attempts');
+          }
         }
         tryCacheApi();
 
@@ -2272,10 +2547,17 @@
         // renders late and independently of the Viewport api, so poll on its
         // own clock (~3 s). Idempotent, so a later onDocumentReady call is safe.
         var mountAttempts = 0;
+
         (function tryMountHeader() {
-          if (mountHeaderControls()) return;
-          if (++mountAttempts < 60) setTimeout(tryMountHeader, 50);
-          else log('tryMountHeader: header anchor never appeared');
+          if (mountHeaderControls()) {
+              return;
+          }
+
+          if (++mountAttempts < 60) {
+              setTimeout(tryMountHeader, 50);
+          } else {
+              log('tryMountHeader: header anchor never appeared');
+          }
         })();
       },
       onDocumentReady: function () {
@@ -2329,7 +2611,9 @@
       },
       onError: function (e) {
         log('onError', e && e.data);
-        if (pm) pm.error('SDK_ERROR', JSON.stringify(e && e.data || {}), pm.requestId);
+        if (pm) {
+            pm.error('SDK_ERROR', JSON.stringify(e && e.data || {}), pm.requestId);
+        }
       },
       onWarning: function (e) {
         log('onWarning', e && e.data);
@@ -2346,28 +2630,61 @@
         window.__editorDirty = dirty;
         // pm.onDirtyChanged relays to host (`dirty` postMessage) AND drives
         // the editor-side autosave debounce.
-        if (pm) pm.onDirtyChanged(dirty);
+        if (pm) {
+            pm.onDirtyChanged(dirty);
+        }
       },
       onRequestClose: function () {
         log('onRequestClose');
-        if (pm) pm.toHost({ type: 'close-request' });
+
+        if (pm) {
+            pm.toHost({type: 'close-request'});
+        }
       }
     };
+
+      function notifyHostAboutPageClosing() {
+          if (!pm || window.__skPageClosingNotified) {
+              return;
+          }
+
+          window.__skPageClosingNotified = true;
+
+          if (window.__editorDirty) {
+              pm.triggerAutosave();
+          }
+
+          pm.toHost({
+              type: 'page-closing',
+              dirty: !!window.__editorDirty,
+          });
+      }
 
     // Browser-level guard: if the user closes the editor tab with unsaved
     // edits, prompt before discarding. The host main app should ALSO show
     // a confirmation in its own UI on `close-request`, but this is the
     // last line of defence for direct tab-close (Cmd-W, X button) where no
     // host event ever fires.
-    window.addEventListener('beforeunload', function (e) {
-      if (window.__editorDirty) {
-        // Modern browsers ignore the custom message and show their own,
-        // but `returnValue` must be set for the prompt to appear at all.
-        e.preventDefault();
-        e.returnValue = 'You have unsaved edits. Close anyway?';
-        return e.returnValue;
-      }
-    });
+      window.addEventListener('beforeunload', function (e) {
+          if (!window.__editorDirty) {
+              return;
+          }
+
+          if (window.SK_DESKTOP_TRANSPORT && pm) {
+              e.preventDefault();
+
+              log('desktop beforeunload + dirty → saveAndClose');
+
+              pm.saveAndClose();
+
+              return;
+          }
+
+          e.preventDefault();
+          e.returnValue = 'You have unsaved edits. Close anyway?';
+
+          return e.returnValue;
+      });
 
     // Autosave: also fire when the tab is backgrounded. visibilitychange
     // fires while the page is still alive (unlike beforeunload), so the
@@ -2379,6 +2696,8 @@
         pm.triggerAutosave();
       }
     });
+
+    window.addEventListener('pagehide', notifyHostAboutPageClosing);
 
     // The Edit button is injected into the iframe header after onAppReady
     // (mountHeaderControls); its click handler is wired there. Nothing to

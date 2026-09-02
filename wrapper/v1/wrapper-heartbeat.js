@@ -21,7 +21,9 @@
 (function () {
   "use strict";
 
-  if (!window.HOST_ORIGIN) return; // pre-mount validation failed
+  if (window.SK_DESKTOP_TRANSPORT || !window.HOST_ORIGIN) { // pre-mount validation failed
+    return;
+  }
 
   var modal = document.getElementById("connection-lost-modal");
   if (!modal) return; // markup missing — nothing to drive
