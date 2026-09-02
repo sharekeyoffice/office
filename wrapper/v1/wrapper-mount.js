@@ -1296,7 +1296,7 @@
     var SK_MAIN_APP_ICON_SVG =
       `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
        <path d="M11.5977 2.14941C12.8401 2.14952 13.8474 3.15702 13.8477 4.39941V11.5996C13.8475 12.8421 12.8401 13.8495 11.5977 13.8496H4.39746C3.1551 13.8494 2.14762 12.842 2.14746 11.5996V10.6006C2.14746 10.2414 2.43865 9.9502 2.79785 9.9502C3.15705 9.9502 3.44824 10.2414 3.44824 10.6006V11.5996C3.4484 12.124 3.87307 12.5496 4.39746 12.5498H11.5977C12.1221 12.5497 12.5477 12.1241 12.5479 11.5996V4.39941C12.5476 3.87499 12.1221 3.4503 11.5977 3.4502H4.39746C3.8731 3.45041 3.44845 3.87505 3.44824 4.39941V5.40039C3.44819 5.75955 3.15702 6.05078 2.79785 6.05078C2.43868 6.05078 2.14751 5.75955 2.14746 5.40039V4.39941C2.14767 3.15708 3.15513 2.14963 4.39746 2.14941H11.5977ZM6.22852 5.59082C6.48084 5.33719 6.89165 5.33674 7.14551 5.58887L9.11035 7.54102C9.23239 7.66259 9.30073 7.8287 9.30078 8.00098C9.30057 8.17329 9.2316 8.33848 9.10938 8.45996L7.14551 10.4121C6.8916 10.6642 6.48081 10.6629 6.22852 10.4092C5.97639 10.1552 5.97766 9.74446 6.23145 9.49219L7.08008 8.64941H0.84668C0.488848 8.64941 0.198511 8.35875 0.198242 8.00098C0.198242 7.64298 0.488683 7.35254 0.84668 7.35254H7.08105L6.23145 6.50781C5.97783 6.25547 5.97636 5.84467 6.22852 5.59082Z" fill="currentColor"/>
-      </svg>`
+      </svg>`;
 
     // Figma-derived styles for our header controls. Injected into the iframe
     // <head> (same mechanism as hideNativeDropdown). Unique sk-* class names
@@ -1717,11 +1717,17 @@
       // origins; use the agreed window name directly.
       var MAIN_APP_WINDOW_NAME = 'sharekey-main';
 
+        if (!window.opener || window.opener.closed) {
+            window.open(window.HOST_ORIGIN, '_blank');
+
+            return;
+        }
+
       try {
         var target = window.open('', MAIN_APP_WINDOW_NAME);
+
         if (target && target !== window) {
           log('Main App → window.open("", "' + MAIN_APP_WINDOW_NAME + '")');
-          return;
         }
       } catch (e) {
         log('Main App window.open failed: ' + e.message);
@@ -1760,7 +1766,8 @@
       var editDone = mountEditButton(doc);
       mountEditingLabel(doc);              // anchored off the Edit <li>; no-op if edit not mounted yet
       var saveDone = mountSaveButton(doc);
-      var mainAppDone = !hasOpener || mountMainAppButton(doc);
+      var shouldMountMainAppButton = window.SK_DESKTOP_TRANSPORT || hasOpener;
+      var mainAppDone = !shouldMountMainAppButton || mountMainAppButton(doc);
 
       return editDone && saveDone && mainAppDone;
     }
@@ -1901,6 +1908,7 @@
     // (#slot-btn-search, Header.js). Skipped in standalone mode (no opener).
     function mountMainAppButton(doc) {
       var existing = doc.getElementById('sk-main-app-btn');
+
       if (existing) {
         headerMainAppBtn = existing;
         return true;
@@ -1909,12 +1917,16 @@
       var searchSlot = doc.getElementById('slot-btn-search') ||
         doc.querySelector('[data-layout-name="header-search"]');
       var parent = searchSlot && searchSlot.parentNode;
+
       if (!parent) {
         parent = doc.querySelector('#box-tools') ||
           doc.querySelector('.extra-right') ||
           doc.querySelector('.box-tools');
       }
-      if (!parent) return false;
+
+      if (!parent) {
+          return false;
+      }
 
       var slot = doc.createElement('div');
       slot.className = 'sk-main-app-slot';
@@ -1925,24 +1937,38 @@
       btn.innerHTML =
         '<span class="sk-main-app-btn__icon">' + SK_MAIN_APP_ICON_SVG + '</span>' +
         '<span class="sk-main-app-btn__label">Main App</span>';
+
       btn.onclick = function (e) {
         e.stopPropagation();
+
+          if (window.SK_DESKTOP_TRANSPORT) {
+              if (pm) {
+                  pm.toHost({ type: 'focus' });
+              }
+
+              return;
+          }
+
         // Click lands in the OnlyOffice iframe — call the editor root
         // (edit.html) synchronously so user activation reaches window.open().
         var topWin = doc.defaultView && doc.defaultView.top;
+
         if (topWin && typeof topWin.skGoToMainApp === 'function') {
           topWin.skGoToMainApp();
         }
       };
+
       slot.appendChild(btn);
 
-      if (searchSlot && searchSlot.parentNode)
-        searchSlot.parentNode.insertBefore(slot, searchSlot);
-      else
-        parent.appendChild(slot);
+      if (searchSlot && searchSlot.parentNode) {
+          searchSlot.parentNode.insertBefore(slot, searchSlot);
+      } else {
+          parent.appendChild(slot);
+      }
 
       headerMainAppBtn = btn;
       log('mountHeaderControls: Main App button injected into header-right');
+
       return true;
     }
 
