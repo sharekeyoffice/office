@@ -688,9 +688,14 @@
     // If another user already holds the edit lock, we do nothing here: the header
     // already explains that someone is editing, and the Edit button is disabled.
     function handleBlockedEditAttempt(e) {
-      if ((currentMode === 'edit' && !isDesktopClosing) || !canEdit || !isEditAttemptEvent(e)) {
-          return;
-      }
+        console.log(isEditAttemptEvent(e), canEdit, currentMode, isDesktopClosing)
+        if (
+            !isEditAttemptEvent(e) ||
+            (!canEdit && !isDesktopClosing) ||
+            (currentMode === 'edit' && !isDesktopClosing)
+        ) {
+            return;
+        }
 
         if (isDesktopClosing) {
             e.preventDefault();
@@ -784,6 +789,11 @@
 
       function showDesktopClosingModal() {
           var modal = document.getElementById('cannot-start-edit-mode');
+          var firstDescription = modal.querySelector('.cm-description');
+
+          if (firstDescription && canEdit) {
+              firstDescription.style.display = 'none';
+          }
 
           if (!modal) {
               log('showDesktopClosingModal: modal element not found');
@@ -842,7 +852,7 @@
 
           var userName = (lockHolder && lockHolder.userName) || 'Someone';
           var userNameElement = document.getElementById('vm-username');
-          var firstDescription = modal.querySelector('.vm-dialog-description');
+          var firstDescription = modal.querySelector('.cm-description');
 
           if (userNameElement) {
               userNameElement.textContent = userName;

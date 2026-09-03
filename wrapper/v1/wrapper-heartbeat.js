@@ -25,13 +25,16 @@
     return;
   }
 
-  var modal = document.getElementById("connection-lost-modal");
-  if (!modal) {
+  var cannotReconnectModal = document.getElementById("cannot-reconnect-modal");
+  var reconnectingModal = document.getElementById("reconnecting-modal");
+
+  if (!reconnectingModal || !cannotReconnectModal) {
     return; // markup missing — nothing to drive
   }
 
   var lastPing = 0; // 0 = never received any ping yet
-  var shown = false;
+  var isCannotReconnectModalShown = false;
+  var isReconnectingModalShow = false;
   var isSavingFailed = false;
   var droppedPings = 0; // diagnostic: messages from other origins
   // We only judge the connection while the editor tab is VISIBLE.
@@ -49,7 +52,7 @@
   // timeout vs ~60s throttled pings showed the modal for ~15s, then a ping
   // cleared it — repeatedly). 120s tolerates a throttled sender plus one fully
   // missed ping; a genuinely-closed main app still surfaces within ~2 min.
-  var TIMEOUT_MS = 120000; // no ping for this long, while visible → lost
+  var TIMEOUT_MS = 30000; // no ping for this long, while visible → lost
   var SETTLE_MS = 15000; // grace after (re)gaining visibility for a ping to land
 
   // ---- Diagnostic instrumentation (temporary) -------------------------
@@ -77,9 +80,11 @@
   // --------------------------------------------------------------------
 
   function showConnectionLost(reason) {
-    if (shown) {
+    if (isCannotReconnectModalShown) {
       return;
     }
+
+    hideReconnecting();
 
     // With the main app gone, the diskette can no longer reach the host. If
     // there's unsaved work, surface it as a save error (red-badge diskette,
@@ -87,16 +92,16 @@
     // watchdog in wrapper-postmessage.js does the same for an in-flight save;
     // this also covers a doc that's merely dirty with no save attempted.
     isSavingFailed = window.__editorDirty && typeof window.skSetSaveState === "function";
-    shown = true;
+    isCannotReconnectModalShown = true;
 
-    if (!isSavingFailed) {
-      var warning = modal.querySelector("div.cl-dialog-warning");
+    if (isSavingFailed) {
+      var warning = cannotReconnectModal.querySelector("div.cm-footnote");
 
-      warning.innerText = "All changes were successfully saved.";
-      warning.style.color = "#2FA0AF";
+      warning.innerText = "The latest changes made in this document could NOT be saved.";
+      warning.style.color = "#FF274B";
     }
 
-    modal.style.display = "flex";
+    cannotReconnectModal.style.display = "flex";
 
     if (isSavingFailed) {
       window.skSetSaveState("error");
@@ -112,6 +117,42 @@
           "| uptime=", secs(Date.now() - bootAt)
       );
     }
+  }
+
+  function showReconnecting() {
+    if (isReconnectingModalShow) {
+      return;
+    }
+
+    // With the main app gone, the diskette can no longer reach the host. If
+    // there's unsaved work, surface it as a save error (red-badge diskette,
+    // still clickable) instead of leaving it looking idle/greyed. The save-ack
+    // watchdog in wrapper-postmessage.js does the same for an in-flight save;
+    // this also covers a doc that's merely dirty with no save attempted.
+    isSavingFailed = window.__editorDirty && typeof window.skSetSaveState === "function";
+    isReconnectingModalShow = true;
+
+    if (isSavingFailed) {
+      var warning = reconnectingModal.querySelector("div.cm-footnote");
+
+      warning.innerText = "The latest changes made in this document could NOT be saved.";
+      warning.style.color = "#FF274B";
+    }
+
+    reconnectingModal.style.display = "flex";
+
+    if (isSavingFailed) {
+      window.skSetSaveState("error");
+    }
+  }
+
+  function hideReconnecting() {
+    if (!isReconnectingModalShow) {
+      return;
+    }
+
+    reconnectingModal.style.display = "none";
+    isReconnectingModalShow = false;
   }
 
   // NOTE: don't poll window.opener.closed for connection-lost detection.
@@ -165,6 +206,8 @@
     }
 
     if (ev.data.type === "ping") {
+      hideReconnecting();
+
       var now = Date.now();
       var gap = lastPing ? now - lastPing : 0;
       pingCount++;
@@ -184,9 +227,9 @@
       ev.source.postMessage({ v: "edit-1", type: "pong" }, ev.origin);
       // A ping proves the link is alive — if we'd shown the modal (e.g. a
       // throttling false-positive), take it back.
-      if (shown) {
-        shown = false;
-        modal.style.display = "none";
+      if (isCannotReconnectModalShown) {
+        isCannotReconnectModalShown = false;
+        cannotReconnectModal.style.display = "none";
         hbLog("connection restored (ping resumed) — hiding modal");
       }
     }
@@ -214,7 +257,8 @@
 
     var idle = Date.now() - lastPing;
 
-    if (idle > 20000 && !shown) {
+    if (idle > 20000 && !isCannotReconnectModalShown) {
+      showReconnecting();
       hbLog("no ping for", secs(idle), "(timeout", secs(TIMEOUT_MS) + ", visible)");
     }
 
@@ -223,15 +267,22 @@
     }
   }, 5000);
 
-  var closeBtn = document.getElementById("cl-close-btn");
+  var cannotReconnectCloseBtn = document.getElementById("crm-close-btn");
+  var reconnectingCloseBtn = document.getElementById("rm-close-btn");
 
-  if (closeBtn) {
-    closeBtn.onclick = function () {
-      try {
-        window.close();
-      } catch (e) {
-        /* ignore */
-      }
-    };
+  function closeWindow() {
+    try {
+      window.close();
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  if (cannotReconnectCloseBtn) {
+    cannotReconnectCloseBtn.onclick = closeWindow;
+  }
+
+  if (reconnectingCloseBtn) {
+    reconnectingCloseBtn.onclick = closeWindow;
   }
 })();
