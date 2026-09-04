@@ -189,6 +189,11 @@
         window.close();
 
         return;
+
+      case 'host-close':
+        this.showHostCloseModal();
+
+        return;
       case 'set-mode':
         // Mode change is authoritative — only the trusted main app
         // (origin-pinned above) can demand a view↔edit switch. Dispatched
@@ -924,6 +929,37 @@
     var saveId = 'auto-' + Date.now();
     log('triggerAutosave fires, saveId=' + saveId);
     this.captureAndSend(saveId, null);
+  };
+
+  WrapperPostMessage.prototype.showHostCloseModal = function () {
+    var mainAppClosedModal = document.getElementById('main-app-closed-modal');
+    var closeButton = document.getElementById('macm-close-btn');
+
+    if (!mainAppClosedModal) {
+      return;
+    }
+
+    var isSavingFailed = window.__editorDirty && typeof window.skSetSaveState === 'function';
+
+    if (isSavingFailed) {
+      var warning = mainAppClosedModal.querySelector('div.cm-footnote');
+
+      if (warning) {
+        warning.innerText = 'The latest changes made in this document could NOT be saved.';
+        warning.style.color = '#FF274B';
+      }
+
+      window.skSetSaveState('error');
+    }
+
+    mainAppClosedModal.style.display = 'flex';
+
+    if (closeButton) {
+      closeButton.onclick = function () {
+        window.__editorDirty = false;
+        window.close();
+      };
+    }
   };
 
   WrapperPostMessage.prototype.handleFailedSaveOnClose = function () {
