@@ -52,7 +52,7 @@
   // timeout vs ~60s throttled pings showed the modal for ~15s, then a ping
   // cleared it — repeatedly). 120s tolerates a throttled sender plus one fully
   // missed ping; a genuinely-closed main app still surfaces within ~2 min.
-  var TIMEOUT_MS = 30000; // no ping for this long, while visible → lost
+  var TIMEOUT_MS = 120000; // no ping for this long, while visible → lost
   var SETTLE_MS = 15000; // grace after (re)gaining visibility for a ping to land
 
   // ---- Diagnostic instrumentation (temporary) -------------------------
