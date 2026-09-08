@@ -1,0 +1,156 @@
+.confirmation-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 999999;
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+
+.cm-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(20, 20, 30, .55);
+    backdrop-filter: blur(2px);
+}
+
+.cm-content {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px 0 #35506933;
+    padding: 17px 16px 16px 16px;
+    max-width: 450px;
+    width: calc(100vw - 40px);
+    color: #242B2E;
+    box-sizing: border-box;
+    font-size: 13px;
+}
+
+.cm-close-button {
+    position: absolute;
+    right: 16px;
+    top: 16px;
+    cursor: pointer;
+}
+
+.cm-close-button:hover rect {
+    fill-opacity: 0.25;
+}
+
+.cm-title {
+    margin-bottom: 16px;
+    line-height: 20px;
+    text-align: center;
+    font-family: system-ui, sans-serif;
+    font-weight: bold;
+}
+
+.cm-icon {
+    align-self: center;
+    margin-bottom: 16px;
+}
+
+.cm-description {
+    line-height: 18px;
+    margin-bottom: 8px;
+    font-family: system-ui, sans-serif;
+}
+
+.cm-description strong {
+    font-family: system-ui, sans-serif;
+}
+
+.cm-footnote {
+    color: #2FA0AF;
+}
+
+.cm-button {
+    display: block;
+    height: 30px;
+    width: 60px;
+    margin-top: 16px;
+    border-radius: 6px;
+    border: none;
+    align-self: flex-end;
+    font-size: 12px;
+    line-height: 16px;
+    color: rgba(53, 80, 105, 0.8);
+    background: rgba(53, 80, 105, 0.1);
+    font-family: system-ui, sans-serif;
+    cursor: pointer;
+}
+
+.cm-button:hover,
+.cm-button:active {
+    background: rgba(53, 80, 105, 0.2);
+}
+
+.cm-button--marine {
+    color: #fff;
+    background: #3FC0C4;
+}
+
+.cm-button--marine:hover,
+.cm-button--marine:active {
+    background: #41D1C9;
+}
+
+.cm-button--auto-size {
+    width: auto;
+    padding: 0 11px;
+}
+
+.cm-divider {
+    height: 1px;
+    background: rgba(53, 80, 105, 0.1);
+    margin: 8px 0;
+}
+
+.cm-loader {
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 0;
+}
+
+.cm-loader-description {
+    line-height: 18px;
+    font-family: system-ui, sans-serif;
+    color: rgba(53, 80, 105, 0.55);
+}
+
+.cm-round-loader {
+    margin: 0 4px;
+    animation: spin 2s linear infinite;
+}
+
+.cm-dot-loader {
+    color: inherit;
+    animation-name: dot-loader-blink;
+    animation-duration: 1.4s;
+    animation-iteration-count: infinite;
+    animation-fill-mode: both;
+}
+
+.cm-dot-loader:nth-of-type(2) {
+    animation-delay: 0.2s;
+}
+
+.cm-dot-loader:nth-of-type(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes dot-loader-blink {
+    0% { opacity: 0.2 }
+    20% { opacity: 1 }
+    100% { opacity: 0.2 }
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg) }
+    100% { transform: rotate(360deg) }
+}

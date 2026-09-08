@@ -688,9 +688,13 @@
     // If another user already holds the edit lock, we do nothing here: the header
     // already explains that someone is editing, and the Edit button is disabled.
     function handleBlockedEditAttempt(e) {
-      if ((currentMode === 'edit' && !isDesktopClosing) || !canEdit || !isEditAttemptEvent(e)) {
-          return;
-      }
+        if (
+            !isEditAttemptEvent(e) ||
+            (!canEdit && !isDesktopClosing) ||
+            (currentMode === 'edit' && !isDesktopClosing)
+        ) {
+            return;
+        }
 
         if (isDesktopClosing) {
             e.preventDefault();
@@ -784,6 +788,11 @@
 
       function showDesktopClosingModal() {
           var modal = document.getElementById('cannot-start-edit-mode');
+          var firstDescription = modal.querySelector('.cm-description');
+
+          if (firstDescription && canEdit) {
+              firstDescription.style.display = 'none';
+          }
 
           if (!modal) {
               log('showDesktopClosingModal: modal element not found');
@@ -842,7 +851,7 @@
 
           var userName = (lockHolder && lockHolder.userName) || 'Someone';
           var userNameElement = document.getElementById('vm-username');
-          var firstDescription = modal.querySelector('.vm-dialog-description');
+          var firstDescription = modal.querySelector('.cm-description');
 
           if (userNameElement) {
               userNameElement.textContent = userName;
@@ -1294,8 +1303,8 @@
 
     // Main App — arrow-into-box icon (16×16), recoloured via currentColor.
     var SK_MAIN_APP_ICON_SVG =
-      `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
-       <path d="M11.5977 2.14941C12.8401 2.14952 13.8474 3.15702 13.8477 4.39941V11.5996C13.8475 12.8421 12.8401 13.8495 11.5977 13.8496H4.39746C3.1551 13.8494 2.14762 12.842 2.14746 11.5996V10.6006C2.14746 10.2414 2.43865 9.9502 2.79785 9.9502C3.15705 9.9502 3.44824 10.2414 3.44824 10.6006V11.5996C3.4484 12.124 3.87307 12.5496 4.39746 12.5498H11.5977C12.1221 12.5497 12.5477 12.1241 12.5479 11.5996V4.39941C12.5476 3.87499 12.1221 3.4503 11.5977 3.4502H4.39746C3.8731 3.45041 3.44845 3.87505 3.44824 4.39941V5.40039C3.44819 5.75955 3.15702 6.05078 2.79785 6.05078C2.43868 6.05078 2.14751 5.75955 2.14746 5.40039V4.39941C2.14767 3.15708 3.15513 2.14963 4.39746 2.14941H11.5977ZM6.22852 5.59082C6.48084 5.33719 6.89165 5.33674 7.14551 5.58887L9.11035 7.54102C9.23239 7.66259 9.30073 7.8287 9.30078 8.00098C9.30057 8.17329 9.2316 8.33848 9.10938 8.45996L7.14551 10.4121C6.8916 10.6642 6.48081 10.6629 6.22852 10.4092C5.97639 10.1552 5.97766 9.74446 6.23145 9.49219L7.08008 8.64941H0.84668C0.488848 8.64941 0.198511 8.35875 0.198242 8.00098C0.198242 7.64298 0.488683 7.35254 0.84668 7.35254H7.08105L6.23145 6.50781C5.97783 6.25547 5.97636 5.84467 6.22852 5.59082Z" fill="currentColor"/>
+      `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M11.5967 2.15039C12.8387 2.15039 13.8457 3.15742 13.8457 4.39941V11.6006C13.8457 12.8426 12.8387 13.8496 11.5967 13.8496H4.39551C3.15361 13.8495 2.14648 12.8425 2.14648 11.6006V10.3389C2.14648 9.98081 2.43689 9.69054 2.79492 9.69043C3.15304 9.69043 3.44336 9.98074 3.44336 10.3389V11.6006C3.44336 12.1261 3.87 12.5526 4.39551 12.5527H11.5967C12.1223 12.5527 12.5488 12.1262 12.5488 11.6006V4.39941C12.5488 3.87382 12.1223 3.44727 11.5967 3.44727H4.39551C3.87003 3.44742 3.44341 3.87391 3.44336 4.39941V5.66504C3.44336 6.02316 3.15304 6.31348 2.79492 6.31348C2.43689 6.31337 2.14648 6.0231 2.14648 5.66504V4.39941C2.14653 3.15752 3.15364 2.15054 4.39551 2.15039H11.5967ZM6.52539 5.54297C6.77775 5.28919 7.18838 5.28795 7.44238 5.54004L9.45703 7.54199C9.57946 7.66372 9.64845 7.83028 9.64844 8.00293C9.64824 8.17539 9.57939 8.34133 9.45703 8.46289L7.44238 10.4639C7.18835 10.716 6.77774 10.7148 6.52539 10.4609C6.27316 10.2069 6.27454 9.79634 6.52832 9.54395L7.42773 8.65039H0.698242C0.340375 8.65016 0.0499313 8.35984 0.0498047 8.00195C0.0498204 7.64397 0.340307 7.35374 0.698242 7.35352H7.42773L6.52832 6.45996C6.2746 6.20756 6.27324 5.79694 6.52539 5.54297Z" fill="#2FA0AF"/>
       </svg>`;
 
     // Figma-derived styles for our header controls. Injected into the iframe
@@ -1356,9 +1365,9 @@
       '  border:1px solid transparent;border-radius:5px;',          /* keeps box size stable across bordered/unbordered states */
       '  background:#3fc0c4;color:#FFFFFF;',                         /* free state; color drives icon (currentColor) + label */
       "  font-family:'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
-      '  font-size:12px;line-height:1;font-weight:500;',
+      '  font-size:12px;line-height:16px;font-weight:500;',
       '  white-space:nowrap;cursor:pointer;',
-      '  -webkit-appearance:none;appearance:none;margin:0 0 6px;',  /* margin-bottom lifts the button within the row */
+      '  -webkit-appearance:none;appearance:none;margin-bottom:5px;',  /* margin-bottom lifts the button within the row */
       '  transition:background .12s ease,border-color .12s ease,color .12s ease;',
       '}',
       '.sk-edit-btn__icon{display:flex;flex:0 0 auto;width:16px;height:16px;margin-right:4px}',
@@ -1367,8 +1376,8 @@
       /* free (default) hover — not while pending/disabled */
       '.sk-edit-btn:not(.is-editing):not(.is-locked):not(.is-refresh):not(:disabled):hover{background:#41D1C9;}',
       /* editing — you hold the lock */
-      '.sk-edit-btn.is-editing{background:#FFFFFF;color:#2FA0AF;border-color:#2FA0AF;}',
-      '.sk-edit-btn.is-editing:hover{background:#F0F8F9;}',
+      '.sk-edit-btn.is-editing{background:#E2F5F6;color:#2FA0AF;border-color:#2FA0AF;}',
+      '.sk-edit-btn.is-editing:hover{background:#CFEDEF;}',
       /* locked — someone else is editing (disabled) */
       '.sk-edit-btn.is-locked{background:rgba(53,80,105,0.15);color:#FFFFFF;border-color:transparent;cursor:default;}',
       '.sk-edit-btn:disabled{cursor:default;pointer-events:none;}',
@@ -1413,7 +1422,7 @@
       // more-specific `.toolbar .tabs li` (our `.sk-editing-tab{align-items:center}`
       // loses on specificity), so the row is bottom-aligned. This bottom margin
       // lifts the label to baseline-align with the Edit button. Don't remove it.
-      '  margin-bottom:6px;',
+      '  margin-bottom:5px;',
       '}',
       '.sk-editing-label__who{font-weight:600;}',                   /* #4: the editing user (or "You") — semibold */
       '.theme-type-dark .sk-editing-label{color:rgba(255,255,255,0.7);}', /* dark theme: #355069 would vanish */
@@ -1469,23 +1478,23 @@
       '.theme-type-dark .sk-save-btn--error{color:#FFFFFF;}',
       '.theme-type-dark .sk-save-btn:not(:disabled):hover{background:rgba(255,255,255,0.1);}',
 		/* This is the slot for the buttons in the header. We need to add a margin to the bottom of the slot to make the buttons align correctly. */
-	  '.btn-slot{margin-bottom:6px}',
+	  '#slot-btn-search{margin-bottom:5px}',
       /* ── Main App button — header-right, before the search slot. */
       '.sk-main-app-slot{display:inline-flex;align-items:center;margin-right:8px;vertical-align:middle;}',
       '.sk-main-app-btn{',
       '  box-sizing:border-box;',
-      '  display:inline-flex;align-items:center;justify-content:center;gap:5px;',
-      '  min-width:86px;height:24px;padding:2px 9px;',
-      '  border:none;border-radius:6px;',
-      '  background:rgba(53,80,105,0.1);color:rgba(53,80,105,0.8);',
+      '  display:inline-flex;align-items:center;gap:4px;',
+      '  height:24px;padding:0 8px 0 4px;',
+      '  border:1px solid #2FA0AF;border-radius:5px;',
+      '  background:white;color:#2FA0AF;',
       "  font-family:'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
       '  font-size:12px;line-height:16px;font-weight:500;white-space:nowrap;',
-      '  cursor:pointer;-webkit-appearance:none;appearance:none;margin:0 0 6px;',
+      '  cursor:pointer;-webkit-appearance:none;appearance:none;margin-bottom: 5px;',
       '  transition:background .12s ease;',
       '}',
       '.sk-main-app-btn__icon{display:flex;flex:0 0 auto;flex-shrink:0;width:16px;height:16px;}',
       '.sk-main-app-btn__icon svg{display:block;flex-shrink:0;width:16px;height:16px;}',
-      '.sk-main-app-btn:not(:disabled):hover{background:rgba(53,80,105,0.2);}',
+      '.sk-main-app-btn:not(:disabled):hover{background:#F0F8F9;}',
       '.theme-type-dark .sk-main-app-btn{background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.8);}',
       '.theme-type-dark .sk-main-app-btn:not(:disabled):hover{background:rgba(255,255,255,0.2);}'
     ].join('\n');

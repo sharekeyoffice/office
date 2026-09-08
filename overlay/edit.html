@@ -6,12 +6,8 @@
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="stylesheet" href="/fonts.css" />
         <link rel="stylesheet" href="/edit.css" />
-        <link rel="stylesheet" href="/connection-lost.css" />
-        <link rel="stylesheet" href="/turn-on-edit-mode.css" />
-        <link rel="stylesheet" href="/viewer-mode.css" />
         <link rel="stylesheet" href="/welcome-screen.css" />
-        <link rel="stylesheet" href="/cannot-start-edit-mode.css" />
-
+        <link rel="stylesheet" href="/confirmation-modal.css" />
 
         <!-- Tab favicon from ?type= so users can recognise document tabs at a
        glance. Title gets replaced with the filename later, once the host
@@ -159,37 +155,99 @@
        Empty text in idle state (data-state="idle"). -->
         <div id="save-state" data-state="idle"></div>
 
-        <!-- Connection-lost modal (hidden by default; shown on disconnection) -->
-        <div id="connection-lost-modal">
-            <div class="cl-backdrop"></div>
+        <div id="main-app-closed-modal" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
             <div
-                class="cl-dialog"
+                class="cm-content"
                 role="alertdialog"
                 aria-labelledby="cl-title"
                 aria-describedby="cl-desc"
             >
-                <div id="cl-title">Sharekey Main App Closed</div>
-                <div class="cl-dialog-description">The Sharekey Main App needs to be always open to access Office Documents.</div>
-                <div class="cl-dialog-description">Please reopen the Main App and this document.</div>
-                <div class="cl-dialog-warning">The latest changes made in this document could NOT be saved.</div>
-                <button id="cl-close-btn" type="button">Close Document</button>
+                <div class="cm-title">Sharekey Main App Closed</div>
+                <div class="cm-description">The Sharekey Main App needs to remain open while you work<br>with Office Documents.</div>
+                <div class="cm-description">Please close this document, then open the Main App and reopen<br>the document from there.</div>
+                <div class="cm-description cm-footnote">All changes were successfully saved before the Main App closed.</div>
+                <button id="macm-close-btn" class="cm-button cm-button--auto-size" type="button">Close Document</button>
             </div>
         </div>
 
-        <div id="turn-on-edit-mode">
-            <div class="toem-backdrop"></div>
+        <div id="cannot-reconnect-modal" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
             <div
-                class="toem-dialog"
+                class="cm-content"
                 role="alertdialog"
                 aria-labelledby="cl-title"
                 aria-describedby="cl-desc"
             >
-                <svg id="toem-close-btn" width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <div class="cm-title">Could Not Reconnect to Sharekey</div>
+                <div class="cm-description">The connection to the Sharekey Main App could not be restored.</div>
+                <div class="cm-description">Once you are online, please close this document and reopen it<br>from the Main App.</div>
+                <div class="cm-description cm-footnote">All changes were successfully saved before the connection<br>was interrupted.</div>
+                <button id="crm-close-btn" class="cm-button cm-button--auto-size" type="button">Close Document</button>
+            </div>
+        </div>
+
+        <div id="reconnecting-modal" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
+            <div
+                class="cm-content"
+                role="alertdialog"
+                aria-labelledby="cl-title"
+                aria-describedby="cl-desc"
+            >
+                <div class="cm-title">Connection to Sharekey Interrupted</div>
+                <div class="cm-description">The connection to the Sharekey Main App was interrupted.<br>All actions in this document are temporarily unavailable.</div>
+                <div class="cm-description">We will keep trying to reconnect while this document remains<br>open. You can also check your internet connection.</div>
+                <div class="cm-description cm-footnote">All changes were successfully saved before the connection<br>was interrupted.</div>
+                <div class="cm-divider"></div>
+                <div class="cm-loader">
+                    <svg
+                        class='cm-round-loader'
+                        xmlns='http://www.w3.org/2000/svg'
+                        width='12'
+                        height='12'
+                        viewBox='0 0 12 12'
+                        fill='none'
+                    >
+                        <circle cx='6' cy='6' r='5.35' stroke='#355069' stroke-opacity='0.1' stroke-width='1.3'/>
+                        <path
+                            d='M6 0.65C7.4189 0.65 8.77968 1.21365 9.783 2.21696C10.7863 3.22027 11.35 4.58105 11.35 5.99995'
+                            stroke='#355069'
+                            stroke-opacity='0.55'
+                            stroke-width='1.3'
+                            stroke-linecap='round'
+                        />
+                    </svg>
+                    <div class="cm-loader-description">
+                        Reconnecting to Sharekey<span class="cm-dot-loader">.</span><span class="cm-dot-loader">.</span><span class="cm-dot-loader">.</span> This may take up to 2 minutes.
+                    </div>
+                </div>
+                <button id="rm-close-btn" class="cm-button cm-button--auto-size" type="button">Close Document</button>
+            </div>
+        </div>
+
+        <div id="turn-on-edit-mode" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
+            <div
+                class="cm-content"
+                role="alertdialog"
+                aria-labelledby="cl-title"
+                aria-describedby="cl-desc"
+            >
+                <svg
+                    id="toem-close-btn"
+                    class="cm-close-button"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                >
                     <rect width="20" height="20" rx="10" fill="#355069" fill-opacity="0.15"/>
                     <path d="M12.8769 6.20356C13.1307 5.94972 13.543 5.94972 13.7968 6.20356C14.0505 6.45733 14.0504 6.86869 13.7968 7.12251L10.9189 10.0004L13.7958 12.8774C14.0493 13.1312 14.0495 13.5426 13.7958 13.7963C13.542 14.0502 13.1298 14.0502 12.8759 13.7963L9.99897 10.9194L7.123 13.7963C6.8692 14.0501 6.4579 14.0501 6.20405 13.7963C5.95021 13.5425 5.95021 13.1312 6.20405 12.8774L9.08003 10.0004L6.20308 7.12251C5.94924 6.86867 5.94924 6.4574 6.20308 6.20356C6.45692 5.94982 6.86821 5.94976 7.12202 6.20356L9.99897 9.08052L12.8769 6.20356Z" fill="#355069" fill-opacity="0.8"/>
                 </svg>
-                <div id="toem-title">TURN ON EDITING</div>
-                <svg class="toem-dialog-icon" width="250" height="150" viewBox="0 0 250 150" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <div class="cm-title">TURN ON EDITING</div>
+                <svg class="cm-icon" width="250" height="150" viewBox="0 0 250 150" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <rect width="250" height="150" fill="white"/>
                     <path d="M138.284 13.7021C139.638 13.7022 140.941 14.2071 141.939 15.1123L142.136 15.2988L174.908 48.1064C175.928 49.127 176.5 50.5107 176.5 51.9531V65.5811L176.486 65.5908C176.13 65.8055 175.781 66.0539 175.45 66.3428L175.298 66.4824L175.188 66.5869C175.157 66.6162 175.126 66.6457 175.096 66.6758L143.347 98.4248C142.268 99.5033 141.554 100.894 141.309 102.402C141.296 102.479 141.285 102.557 141.276 102.635L141.252 102.84C141.244 102.911 141.239 102.983 141.233 103.055L140.5 113.343C140.349 115.461 141.131 117.535 142.634 119.026C144.042 120.424 145.959 121.185 147.938 121.137L148.335 121.116L158.604 120.303L158.925 120.27C160.527 120.071 162.026 119.343 163.176 118.193L176.5 104.869V114.107C176.5 126.171 166.873 135.987 154.882 136.291C154.692 136.296 154.501 136.298 154.31 136.298H95.6914L95.1182 136.291C94.1665 136.267 93.2298 136.182 92.3115 136.042C91.9442 135.986 91.5799 135.921 91.2188 135.847C88.8714 135.366 86.6591 134.515 84.6455 133.357C84.0258 133.001 83.4249 132.616 82.8447 132.203C82.4744 131.94 82.1137 131.664 81.7607 131.379C81.2845 130.994 80.8234 130.592 80.3809 130.17C79.4816 129.313 78.6537 128.381 77.9082 127.384C77.7502 127.173 77.5978 126.957 77.4473 126.74C76.4817 125.349 75.6693 123.842 75.0391 122.244C74.774 121.572 74.5412 120.884 74.3418 120.182C74.292 120.006 74.2438 119.83 74.1982 119.653C74.149 119.462 74.1028 119.269 74.0586 119.076C73.6931 117.479 73.5001 115.816 73.5 114.107V35.8936C73.5 34.3614 73.6555 32.8656 73.9512 31.4209C74.099 30.6985 74.2819 29.9889 74.498 29.2939C74.7141 28.5993 74.9635 27.9194 75.2441 27.2559C75.8056 25.9284 76.4925 24.6669 77.29 23.4863C78.3868 21.8629 79.6925 20.3922 81.1689 19.1133C81.4373 18.8808 81.7108 18.6541 81.9902 18.4346C82.4094 18.1051 82.8414 17.7913 83.2842 17.4922C84.1695 16.8941 85.1003 16.3581 86.0703 15.8906C86.3939 15.7347 86.7216 15.5858 87.0537 15.4453C87.3855 15.305 87.7217 15.1732 88.0615 15.0488C88.4015 14.9243 88.7452 14.8073 89.0928 14.6992C89.4401 14.5912 89.7911 14.4916 90.1455 14.4004C91.0319 14.1723 91.9397 13.9975 92.8652 13.8799C93.4206 13.8093 93.9824 13.7592 94.5498 13.7305C94.7386 13.7209 94.9281 13.7138 95.1182 13.709C95.3086 13.7042 95.4998 13.7021 95.6914 13.7021H138.284ZM138.206 35.2197C138.206 44.4691 145.705 51.9678 154.954 51.9678H169.298L138.206 20.8438V35.2197Z" fill="#D5ECEF"/>
                     <g filter="url(#filter0_d_16164_11753)">
@@ -211,26 +269,34 @@
                         </linearGradient>
                     </defs>
                 </svg>
-                <div class="toem-dialog-description">You are in <strong>Viewer Mode.</strong></div>
-                <div class="toem-dialog-description">Click the <strong>Edit</strong> button to start editing this document.</div>
-                <button id="toem-edit-btn" type="button">Edit</button>
+                <div class="cm-description">You are in <strong>Viewer Mode.</strong></div>
+                <div class="cm-description">Click the <strong>Edit</strong> button to start editing this document.</div>
+                <button id="toem-edit-btn" class="cm-button cm-button--marine" type="button">Edit</button>
             </div>
         </div>
 
-        <div id="viewer-mode">
-            <div class="vm-backdrop"></div>
+        <div id="viewer-mode" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
             <div
-                    class="vm-dialog"
+                    class="cm-content"
                     role="alertdialog"
                     aria-labelledby="cl-title"
                     aria-describedby="cl-desc"
             >
-                <svg id="vm-close-btn" width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <svg
+                    id="vm-close-btn"
+                    class="cm-close-button"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                >
                     <rect width="20" height="20" rx="10" fill="#355069" fill-opacity="0.15"/>
                     <path d="M12.8769 6.20356C13.1307 5.94972 13.543 5.94972 13.7968 6.20356C14.0505 6.45733 14.0504 6.86869 13.7968 7.12251L10.9189 10.0004L13.7958 12.8774C14.0493 13.1312 14.0495 13.5426 13.7958 13.7963C13.542 14.0502 13.1298 14.0502 12.8759 13.7963L9.99897 10.9194L7.123 13.7963C6.8692 14.0501 6.4579 14.0501 6.20405 13.7963C5.95021 13.5425 5.95021 13.1312 6.20405 12.8774L9.08003 10.0004L6.20308 7.12251C5.94924 6.86867 5.94924 6.4574 6.20308 6.20356C6.45692 5.94982 6.86821 5.94976 7.12202 6.20356L9.99897 9.08052L12.8769 6.20356Z" fill="#355069" fill-opacity="0.8"/>
                 </svg>
-                <div id="vm-title">EDITING LOCKED</div>
-                <svg class="vm-dialog-icon" width="250" height="160" viewBox="0 0 250 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <div class="cm-title">EDITING LOCKED</div>
+                <svg class="cm-icon" width="250" height="160" viewBox="0 0 250 160" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <rect width="250" height="150" fill="white"/>
                     <path d="M138.284 13.7021C139.638 13.7022 140.941 14.2071 141.939 15.1123L142.136 15.2988L174.908 48.1064C175.928 49.127 176.5 50.5107 176.5 51.9531V65.5811L176.486 65.5908C176.13 65.8055 175.781 66.0539 175.45 66.3428L175.298 66.4824L175.188 66.5869C175.157 66.6162 175.126 66.6457 175.096 66.6758L143.347 98.4248C142.268 99.5033 141.554 100.894 141.309 102.402C141.296 102.479 141.285 102.557 141.276 102.635L141.252 102.84C141.244 102.911 141.239 102.983 141.233 103.055L140.5 113.343C140.349 115.461 141.131 117.535 142.634 119.026C144.042 120.424 145.959 121.185 147.938 121.137L148.335 121.116L158.604 120.303L158.925 120.27C160.527 120.071 162.026 119.343 163.176 118.193L176.5 104.869V114.107C176.5 126.171 166.873 135.987 154.882 136.291C154.692 136.296 154.501 136.298 154.31 136.298H95.6914L95.1182 136.291C94.1665 136.267 93.2298 136.182 92.3115 136.042C91.9442 135.986 91.5799 135.921 91.2188 135.847C88.8714 135.366 86.6591 134.515 84.6455 133.357C84.0258 133.001 83.4249 132.616 82.8447 132.203C82.4744 131.94 82.1137 131.664 81.7607 131.379C81.2845 130.994 80.8234 130.592 80.3809 130.17C79.4816 129.313 78.6537 128.381 77.9082 127.384C77.7502 127.173 77.5978 126.957 77.4473 126.74C76.4817 125.349 75.6693 123.842 75.0391 122.244C74.774 121.572 74.5412 120.884 74.3418 120.182C74.292 120.006 74.2438 119.83 74.1982 119.653C74.149 119.462 74.1028 119.269 74.0586 119.076C73.6931 117.479 73.5001 115.816 73.5 114.107V35.8936C73.5 34.3614 73.6555 32.8656 73.9512 31.4209C74.099 30.6985 74.2819 29.9889 74.498 29.2939C74.7141 28.5993 74.9635 27.9194 75.2441 27.2559C75.8056 25.9284 76.4925 24.6669 77.29 23.4863C78.3868 21.8629 79.6925 20.3922 81.1689 19.1133C81.4373 18.8808 81.7108 18.6541 81.9902 18.4346C82.4094 18.1051 82.8414 17.7913 83.2842 17.4922C84.1695 16.8941 85.1003 16.3581 86.0703 15.8906C86.3939 15.7347 86.7216 15.5858 87.0537 15.4453C87.3855 15.305 87.7217 15.1732 88.0615 15.0488C88.4015 14.9243 88.7452 14.8073 89.0928 14.6992C89.4401 14.5912 89.7911 14.4916 90.1455 14.4004C91.0319 14.1723 91.9397 13.9975 92.8652 13.8799C93.4206 13.8093 93.9824 13.7592 94.5498 13.7305C94.7386 13.7209 94.9281 13.7138 95.1182 13.709C95.3086 13.7042 95.4998 13.7021 95.6914 13.7021H138.284ZM138.206 35.2197C138.206 44.4691 145.705 51.9678 154.954 51.9678H169.298L138.206 20.8438V35.2197Z" fill="#D5ECEF"/>
                     <path fill-rule="evenodd" clip-rule="evenodd" d="M76.0049 149.3C91.1927 149.3 103.505 136.988 103.505 121.8C103.505 106.612 91.1927 94.2998 76.0049 94.2998C60.8171 94.2998 48.5049 106.612 48.5049 121.8C48.5049 136.988 60.8171 149.3 76.0049 149.3Z" fill="white"/>
@@ -269,28 +335,36 @@
                         </linearGradient>
                     </defs>
                 </svg>
-                <div class="vm-dialog-description">You are in <strong>Viewer Mode.</strong></div>
-                <div class="vm-dialog-description"><strong id="vm-username"></strong> is currently editing this document.</div>
-                <div class="vm-dialog-description">You can edit it when no one else is editing.</div>
-                <div class="vm-dialog-footnote">Co-Editing is coming soon.</div>
-                <button id="vm-сonfirm-btn" type="button">Got it</button>
+                <div class="cm-description">You are in <strong>Viewer Mode.</strong></div>
+                <div class="cm-description"><strong id="vm-username"></strong> is currently editing this document.</div>
+                <div class="cm-description">You can edit it when no one else is editing.</div>
+                <div class="cm-description cm-footnote">Co-Editing is coming soon.</div>
+                <button id="vm-сonfirm-btn" class="cm-button" type="button">Got it</button>
             </div>
         </div>
 
-        <div id="cannot-start-edit-mode">
-            <div class="csem-backdrop"></div>
+        <div id="cannot-start-edit-mode" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
             <div
-                    class="csem-dialog"
+                    class="cm-content"
                     role="alertdialog"
                     aria-labelledby="cl-title"
                     aria-describedby="cl-desc"
             >
-                <svg id="csem-close-btn" width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <svg
+                    id="csem-close-btn"
+                    class="cm-close-button"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                >
                     <rect width="20" height="20" rx="10" fill="#355069" fill-opacity="0.15"/>
                     <path d="M12.8769 6.20356C13.1307 5.94972 13.543 5.94972 13.7968 6.20356C14.0505 6.45733 14.0504 6.86869 13.7968 7.12251L10.9189 10.0004L13.7958 12.8774C14.0493 13.1312 14.0495 13.5426 13.7958 13.7963C13.542 14.0502 13.1298 14.0502 12.8759 13.7963L9.99897 10.9194L7.123 13.7963C6.8692 14.0501 6.4579 14.0501 6.20405 13.7963C5.95021 13.5425 5.95021 13.1312 6.20405 12.8774L9.08003 10.0004L6.20308 7.12251C5.94924 6.86867 5.94924 6.4574 6.20308 6.20356C6.45692 5.94982 6.86821 5.94976 7.12202 6.20356L9.99897 9.08052L12.8769 6.20356Z" fill="#355069" fill-opacity="0.8"/>
                 </svg>
-                <div id="csem-title">CANNOT START EDITING</div>
-                <svg class="csem-dialog-icon" width="250" height="160" viewBox="0 0 250 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <div class="cm-title">CANNOT START EDITING</div>
+                <svg class="cm-icon" width="250" height="160" viewBox="0 0 250 160" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <rect width="250" height="150" fill="white"/>
                     <path d="M138.284 13.7021C139.638 13.7022 140.941 14.2071 141.939 15.1123L142.136 15.2988L174.908 48.1064C175.928 49.127 176.5 50.5107 176.5 51.9531V65.2715L143.347 98.4248L143.149 98.6309C142.181 99.678 141.539 100.989 141.309 102.402C141.296 102.48 141.284 102.557 141.275 102.635L141.252 102.839C141.244 102.91 141.238 102.983 141.232 103.055L140.5 113.343L140.482 113.739C140.45 115.719 141.226 117.629 142.634 119.026L142.923 119.297C144.397 120.608 146.349 121.273 148.334 121.116L148.335 121.115L158.604 120.302C160.219 120.174 161.747 119.511 162.942 118.418L163.176 118.193L176.5 104.869V114.107C176.5 126.171 166.873 135.987 154.882 136.291C154.692 136.296 154.501 136.298 154.31 136.298H95.6914L95.1182 136.291C94.1665 136.267 93.2298 136.182 92.3115 136.042C91.9442 135.986 91.5799 135.921 91.2188 135.847C88.8714 135.366 86.6591 134.515 84.6455 133.357C84.0258 133.001 83.4249 132.616 82.8447 132.203C82.4744 131.94 82.1137 131.664 81.7607 131.379C81.2845 130.994 80.8234 130.592 80.3809 130.17C79.4816 129.313 78.6537 128.381 77.9082 127.384C77.7502 127.173 77.5978 126.957 77.4473 126.74C76.4817 125.349 75.6693 123.842 75.0391 122.244C74.774 121.572 74.5412 120.884 74.3418 120.182C74.292 120.006 74.2438 119.83 74.1982 119.653C74.149 119.462 74.1028 119.269 74.0586 119.076C73.6931 117.479 73.5001 115.816 73.5 114.107V35.8936C73.5 34.3614 73.6555 32.8656 73.9512 31.4209C74.099 30.6985 74.2819 29.9889 74.498 29.2939C74.7141 28.5993 74.9635 27.9194 75.2441 27.2559C75.8056 25.9284 76.4925 24.6669 77.29 23.4863C78.3868 21.8629 79.6925 20.3922 81.1689 19.1133C81.4373 18.8808 81.7108 18.6541 81.9902 18.4346C82.4094 18.1051 82.8414 17.7913 83.2842 17.4922C84.1695 16.8941 85.1003 16.3581 86.0703 15.8906C86.3939 15.7347 86.7216 15.5858 87.0537 15.4453C87.3855 15.305 87.7217 15.1732 88.0615 15.0488C88.4015 14.9243 88.7452 14.8073 89.0928 14.6992C89.4401 14.5912 89.7911 14.4916 90.1455 14.4004C91.0319 14.1723 91.9397 13.9975 92.8652 13.8799C93.4206 13.8093 93.9824 13.7592 94.5498 13.7305C94.7386 13.7209 94.9281 13.7138 95.1182 13.709C95.3086 13.7042 95.4998 13.7021 95.6914 13.7021H138.284ZM138.206 35.2197C138.206 44.4691 145.705 51.9678 154.954 51.9678H169.298L138.206 20.8438V35.2197Z" fill="#D5ECEF"/>
                     <path fill-rule="evenodd" clip-rule="evenodd" d="M76.0049 149.3C91.1927 149.3 103.505 136.988 103.505 121.8C103.505 106.612 91.1927 94.2998 76.0049 94.2998C60.8171 94.2998 48.5049 106.612 48.5049 121.8C48.5049 136.988 60.8171 149.3 76.0049 149.3Z" fill="white"/>
@@ -329,14 +403,15 @@
                         </linearGradient>
                     </defs>
                 </svg>
-                <div class="csem-dialog-description">The <strong>Close Sharekey Main App</strong> window is open.</div>
-                <div class="csem-dialog-description">To edit this document, go to the Main App and cancel closing.</div>
-                <button id="csem-сonfirm-btn" type="button">Go to Main App</button>
+                <div class="cm-description">You are in <strong>Viewer Mode.</strong></div>
+                <div class="cm-description">The <strong>Close Sharekey Main App</strong> window is open.</div>
+                <div class="cm-description">To edit this document, go to the Main App and cancel closing.</div>
+                <button id="csem-сonfirm-btn" class="cm-button cm-button--marine cm-button--auto-size" type="button">Go to Main App</button>
             </div>
         </div>
 
-        <div id="welcome-screen">
-            <div class="ws-backdrop"></div>
+        <div id="welcome-screen" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
             <div
                     class="ws-dialog"
                     role="alertdialog"
