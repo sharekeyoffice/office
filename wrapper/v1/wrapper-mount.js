@@ -115,6 +115,7 @@
     var lastPresentationEditModalAt = 0;
     var lastBlockedEditAttemptFocus = null;
     var isDesktopClosing = false;
+    var isDesktopLoggingOut = false;
 
     // ── Restriction-API state (hot view↔edit toggle, no destroy) ────────
     var editorApi      = null;     // iframe-internal api, cached after onAppReady
@@ -690,13 +691,13 @@
     function handleBlockedEditAttempt(e) {
         if (
             !isEditAttemptEvent(e) ||
-            (!canEdit && !isDesktopClosing) ||
-            (currentMode === 'edit' && !isDesktopClosing)
+            (!canEdit && !isDesktopClosing && !isDesktopLoggingOut) ||
+            (currentMode === 'edit' && !isDesktopClosing && !isDesktopLoggingOut)
         ) {
             return;
         }
 
-        if (isDesktopClosing) {
+        if (isDesktopClosing || isDesktopLoggingOut) {
             e.preventDefault();
             e.stopPropagation();
 
@@ -788,10 +789,24 @@
 
       function showDesktopClosingModal() {
           var modal = document.getElementById('cannot-start-edit-mode');
-          var firstDescription = modal.querySelector('.cm-description');
+          var descriptions = modal.querySelectorAll('.cm-description');
 
-          if (firstDescription && canEdit) {
-              firstDescription.style.display = 'none';
+          if (descriptions[0] && canEdit) {
+              descriptions[0].style.display = 'none';
+          } else if (descriptions[0]) {
+              descriptions[0].style.display = 'block';
+          }
+
+          if (descriptions[1] && isDesktopLoggingOut) {
+              descriptions[1].innerHTML = 'The <strong>Log Out of Sharekey Main App</strong> window is open.';
+          } else if (descriptions[1]) {
+              descriptions[1].innerHTML = 'The <strong>Close Sharekey Main App</strong> window is open.';
+          }
+
+          if (descriptions[2] && isDesktopLoggingOut) {
+              descriptions[2].innerText = 'To edit this document, go to the Main App and cancel logging out.';
+          } else if (descriptions[2]) {
+              descriptions[2].innerText = 'To edit this document, go to the Main App and cancel closing.';
           }
 
           if (!modal) {
@@ -998,7 +1013,7 @@
           }
 
           // No edit right ⇒ never surface normal "who is editing" status.
-          if (!canEdit || isDesktopClosing) {
+          if (!canEdit || isDesktopClosing || isDesktopLoggingOut) {
               headerEditingLabel.classList.remove('sk-editing-label--conflict', 'sk-editing-label--self', 'sk-editing-label--other');
               headerEditingLabel.textContent = '';
 
@@ -1100,7 +1115,7 @@
               return;
           }
 
-          if (isDesktopClosing) {
+          if (isDesktopClosing || isDesktopLoggingOut) {
               if (li) {
                   li.style.display = '';
               }
@@ -1539,7 +1554,11 @@
 
       function ensureEditTooltip(doc) {
           if (headerEditTooltip && headerEditTooltip.ownerDocument === doc) {
-              headerEditTooltip.textContent = isDesktopClosing ? 'Cancel closing the Main App to start editing' : 'Only one Member can edit at a time';
+              headerEditTooltip.textContent = isDesktopClosing ?
+                  'Cancel closing the Main App to start editing' :
+                  isDesktopLoggingOut ?
+                      'Cancel logging out of the Main App to start editing' :
+                      'Only one Member can edit at a time';
 
               return headerEditTooltip;
           }
@@ -1547,7 +1566,11 @@
           headerEditTooltip = doc.createElement('div');
           headerEditTooltip.className = 'sk-edit-tooltip';
 
-          headerEditTooltip.textContent = isDesktopClosing ? 'Cancel closing the Main App to start editing' : 'Only one Member can edit at a time';
+          headerEditTooltip.textContent = isDesktopClosing ?
+              'Cancel closing the Main App to start editing' :
+              isDesktopLoggingOut ?
+                    'Cancel logging out of the Main App to start editing' :
+                    'Only one Member can edit at a time';
 
           if (doc.body) {
               doc.body.appendChild(headerEditTooltip);
@@ -1677,7 +1700,7 @@
               return;   // role has no edit right — refuse (button shouldn't exist anyway)
           }
 
-          if (isDesktopClosing) {
+          if (isDesktopClosing || isDesktopLoggingOut) {
               showDesktopClosingModal();
 
               return;
@@ -2499,13 +2522,15 @@
     function handlePermissions(perms) {
     var nextCanEdit = !(perms && perms.canEdit === false);
     var nextDesktopClosing = !!(perms && perms.isDesktopClosing);
+    var nextDesktopLoggingOut = !!(perms && perms.isDesktopLoggingOut);
 
-    if (nextCanEdit === canEdit && nextDesktopClosing === isDesktopClosing) {
+    if (nextCanEdit === canEdit && nextDesktopClosing === isDesktopClosing && nextDesktopLoggingOut === isDesktopLoggingOut) {
         return;
     }
 
     canEdit = nextCanEdit;
     isDesktopClosing = nextDesktopClosing;
+    isDesktopLoggingOut = nextDesktopLoggingOut;
       log('handlePermissions: canEdit=' + canEdit);
       // Re-render the Edit button + editing label to reflect the new capability
       // (renderEditButton hides the button when !canEdit). The controls are
@@ -2701,24 +2726,29 @@
     // last line of defence for direct tab-close (Cmd-W, X button) where no
     // host event ever fires.
       window.addEventListener('beforeunload', function (e) {
-          if (!window.__editorDirty) {
-              return;
-          }
-
           if (window.SK_DESKTOP_TRANSPORT && pm) {
+              if (!window.__editorDirty) {
+                  return;
+              }
+
               e.preventDefault();
-
               log('desktop beforeunload + dirty → saveAndClose');
-
               pm.saveAndClose();
 
               return;
           }
 
-          e.preventDefault();
-          e.returnValue = 'You have unsaved edits. Close anyway?';
+          var cannotReconnectModal = document.getElementById("cannot-reconnect-modal");
+          var closedHostModal = document.getElementById("main-app-closed-modal");
+          var loggedOutModal = document.getElementById("main-app-logged-out-modal");
+          var isNativeCloseConfirmationNeeded = window.__editorDirty &&
+              (!cannotReconnectModal || getComputedStyle(cannotReconnectModal).display === 'none') &&
+              (!loggedOutModal || getComputedStyle(loggedOutModal).display === 'none') &&
+              (!closedHostModal || getComputedStyle(closedHostModal).display === 'none');
 
-          return e.returnValue;
+          if (isNativeCloseConfirmationNeeded) {
+              e.preventDefault();
+          }
       });
 
     // Autosave: also fire when the tab is backgrounded. visibilitychange

@@ -163,11 +163,27 @@
                 aria-labelledby="cl-title"
                 aria-describedby="cl-desc"
             >
-                <div class="cm-title">Sharekey Main App Closed</div>
-                <div class="cm-description">The Sharekey Main App needs to remain open while you work<br>with Office Documents.</div>
-                <div class="cm-description">Please close this document, then open the Main App and reopen<br>the document from there.</div>
-                <div class="cm-description cm-footnote">All changes were successfully saved before the Main App closed.</div>
-                <button id="macm-close-btn" class="cm-button cm-button--auto-size" type="button">Close Document</button>
+                <div class="cm-title">Sharekey Main App Tab Closed</div>
+                <div class="cm-description">The Main App tab you opened this document from needs to remain open while you work with Office Documents.</div>
+                <div class="cm-description"><strong>This document can no longer be used here.</strong> Please close this tab, then open the Main App and reopen the document from there.</div>
+                <div class="cm-description cm-footnote">All changes were successfully saved before the Main App tab was closed.</div>
+                <button id="macm-close-btn" class="cm-button cm-button--auto-size" type="button">Close Tab</button>
+            </div>
+        </div>
+
+        <div id="main-app-logged-out-modal" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
+            <div
+                    class="cm-content"
+                    role="alertdialog"
+                    aria-labelledby="cl-title"
+                    aria-describedby="cl-desc"
+            >
+                <div class="cm-title">Logged Out of Sharekey Main App</div>
+                <div class="cm-description">You are logged out of the Main App in the tab you opened this document from. You need to remain signed in while you work with Office Documents.</div>
+                <div class="cm-description"><strong>This document can no longer be used here.</strong> Please close this tab, then sign back in to the Main App and reopen the document from there.</div>
+                <div class="cm-description cm-footnote">All changes were successfully saved before you logged out.</div>
+                <button id="malom-close-btn" class="cm-button cm-button--auto-size" type="button">Close Tab</button>
             </div>
         </div>
 
@@ -179,11 +195,11 @@
                 aria-labelledby="cl-title"
                 aria-describedby="cl-desc"
             >
-                <div class="cm-title">Could Not Reconnect to Sharekey</div>
-                <div class="cm-description">The connection to the Sharekey Main App could not be restored.</div>
-                <div class="cm-description">Once you are online, please close this document and reopen it<br>from the Main App.</div>
-                <div class="cm-description cm-footnote">All changes were successfully saved before the connection<br>was interrupted.</div>
-                <button id="crm-close-btn" class="cm-button cm-button--auto-size" type="button">Close Document</button>
+                <div class="cm-title">Could Not Reconnect to Sharekey Main App Tab</div>
+                <div class="cm-description">The connection to the Main App tab you opened this document from could not be restored.</div>
+                <div class="cm-description"><strong>This document can no longer be used here.</strong> Please close this tab, then open the Main App and reopen the document from there. If you are offline, reconnect to the internet first.</div>
+                <div class="cm-description cm-footnote">All changes were successfully saved before the connection was interrupted.</div>
+                <button id="crm-close-btn" class="cm-button cm-button--auto-size" type="button">Close Tab</button>
             </div>
         </div>
 
@@ -195,10 +211,10 @@
                 aria-labelledby="cl-title"
                 aria-describedby="cl-desc"
             >
-                <div class="cm-title">Connection to Sharekey Interrupted</div>
-                <div class="cm-description">The connection to the Sharekey Main App was interrupted.<br>All actions in this document are temporarily unavailable.</div>
-                <div class="cm-description">We will keep trying to reconnect while this document remains<br>open. You can also check your internet connection.</div>
-                <div class="cm-description cm-footnote">All changes were successfully saved before the connection<br>was interrupted.</div>
+                <div class="cm-title">Connection to Sharekey Main App Tab Interrupted</div>
+                <div class="cm-description">The connection to the Main App tab you opened this document from was interrupted.</div>
+                <div class="cm-description">All actions in this document are temporarily unavailable. Please keep this tab open while we try to reconnect.</div>
+                <div class="cm-description cm-footnote">All changes were successfully saved before the connection was interrupted.</div>
                 <div class="cm-divider"></div>
                 <div class="cm-loader">
                     <svg
@@ -222,7 +238,7 @@
                         Reconnecting to Sharekey<span class="cm-dot-loader">.</span><span class="cm-dot-loader">.</span><span class="cm-dot-loader">.</span> This may take up to 2 minutes.
                     </div>
                 </div>
-                <button id="rm-close-btn" class="cm-button cm-button--auto-size" type="button">Close Document</button>
+                <button id="rm-close-btn" class="cm-button cm-button--auto-size cm-button--positive" type="button">Close Tab</button>
             </div>
         </div>
 

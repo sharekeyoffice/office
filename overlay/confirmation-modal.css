@@ -98,6 +98,26 @@
     background: #41D1C9;
 }
 
+.cm-button--positive {
+    background: #E2F5F6;
+    color: #2FA0AF;
+}
+
+.cm-button--positive:hover,
+.cm-button--positive:active {
+    background: #D5ECEF;
+}
+
+.cm-button--negative {
+    background: rgba(255, 39, 75, 0.14);
+    color: #FF274B;
+}
+
+.cm-button--negative:hover,
+.cm-button--negative:active {
+    background: rgba(255, 39, 75, 0.17);
+}
+
 .cm-button--auto-size {
     width: auto;
     padding: 0 11px;

@@ -172,6 +172,10 @@
         this.toHost({ type: 'pong', editedSinceLastPing: this.editedSinceLastPing });
         this.editedSinceLastPing = false;
 
+        if (window.SK_DESKTOP_TRANSPORT) {
+          window.dispatchEvent(new Event('host-ping'));
+        }
+
         return;
       case 'load':
         this.onLoad(d);
@@ -192,6 +196,11 @@
 
       case 'host-close':
         this.showHostCloseModal();
+
+        return;
+
+      case 'logout':
+        this.showHostLogoutModal();
 
         return;
       case 'set-mode':
@@ -945,7 +954,38 @@
       var warning = mainAppClosedModal.querySelector('div.cm-footnote');
 
       if (warning) {
-        warning.innerText = 'The latest changes made in this document could NOT be saved.';
+        warning.innerText = 'The latest changes made in this document could NOT be saved\nbefore the Main App tab was closed and will be lost.';
+        warning.style.color = '#FF274B';
+      }
+
+      window.skSetSaveState('error');
+    }
+
+    mainAppClosedModal.style.display = 'flex';
+
+    if (closeButton) {
+      closeButton.onclick = function () {
+        window.__editorDirty = false;
+        window.close();
+      };
+    }
+  };
+
+  WrapperPostMessage.prototype.showHostLogoutModal = function () {
+    var mainAppClosedModal = document.getElementById('main-app-logged-out-modal');
+    var closeButton = document.getElementById('malom-close-btn');
+
+    if (!mainAppClosedModal) {
+      return;
+    }
+
+    var isSavingFailed = window.__editorDirty && typeof window.skSetSaveState === 'function';
+
+    if (isSavingFailed) {
+      var warning = mainAppClosedModal.querySelector('div.cm-footnote');
+
+      if (warning) {
+        warning.innerText = 'The latest changes made in this document could NOT be saved\nbefore you logged out and will be lost.';
         warning.style.color = '#FF274B';
       }
 
@@ -982,9 +1022,10 @@
 
       window.__editorDirty = false;
 
-      this.toHost({
-        type: 'force-close-request'
-      });
+      window.postMessage(
+          { __skForceCloseWindow: true },
+          window.location.origin
+      );
 
       return;
     }

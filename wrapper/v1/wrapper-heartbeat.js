@@ -21,12 +21,17 @@
 (function () {
   "use strict";
 
-  if (window.SK_DESKTOP_TRANSPORT || !window.HOST_ORIGIN) { // pre-mount validation failed
+  if (!window.SK_DESKTOP_TRANSPORT && !window.HOST_ORIGIN) { // pre-mount validation failed
     return;
   }
 
   var cannotReconnectModal = document.getElementById("cannot-reconnect-modal");
   var reconnectingModal = document.getElementById("reconnecting-modal");
+  var closedHostModal = document.getElementById("main-app-closed-modal");
+  var loggedOutModal = document.getElementById("main-app-logged-out-modal");
+
+  var cannotReconnectCloseBtn = document.getElementById("crm-close-btn");
+  var reconnectingCloseBtn = document.getElementById("rm-close-btn");
 
   if (!reconnectingModal || !cannotReconnectModal) {
     return; // markup missing — nothing to drive
@@ -77,10 +82,37 @@
   function vis() {
     return document.visibilityState;
   }
-  // --------------------------------------------------------------------
+
+  function handlePing() {
+    hideReconnecting();
+
+    var now = Date.now();
+    var gap = lastPing ? now - lastPing : 0;
+
+    pingCount++;
+
+    if (firstPingAt === 0) {
+      firstPingAt = now;
+      hbLog('first ping', secs(now - bootAt), 'after boot; visibility=', vis());
+    } else if (gap > 20000) {
+      hbLog('SLOW ping #' + pingCount, 'gap=', secs(gap), 'visibility=', vis());
+    }
+
+    lastPing = now;
+
+    if (isCannotReconnectModalShown) {
+      isCannotReconnectModalShown = false;
+      cannotReconnectModal.style.display = 'none';
+      hbLog('connection restored (ping resumed) — hiding modal');
+    }
+  }
 
   function showConnectionLost(reason) {
-    if (isCannotReconnectModalShown) {
+    var shouldShowModal = !isCannotReconnectModalShown &&
+        (!loggedOutModal || getComputedStyle(loggedOutModal).display === 'none') &&
+        (!closedHostModal || getComputedStyle(closedHostModal).display === 'none');
+
+    if (!shouldShowModal) {
       return;
     }
 
@@ -97,8 +129,29 @@
     if (isSavingFailed) {
       var warning = cannotReconnectModal.querySelector("div.cm-footnote");
 
-      warning.innerText = "The latest changes made in this document could NOT be saved.";
+      warning.innerText = "The latest changes made in this document could NOT be saved\nbefore the connection was interrupted and will be lost.";
       warning.style.color = "#FF274B";
+    }
+
+    if (window.SK_DESKTOP_TRANSPORT) {
+      var title = cannotReconnectModal.querySelector('div.cm-title');
+      var descriptions = cannotReconnectModal.querySelectorAll('div.cm-description');
+
+      if (title) {
+        title.innerText = 'Could Not Reconnect to Sharekey Main App';
+      }
+
+      if (descriptions[0]) {
+        descriptions[0].innerText = 'The connection to the Main App you opened this document from\ncould not be restored.';
+      }
+
+      if (descriptions[1]) {
+        descriptions[1].innerHTML = "<strong>This document needs to be reopened.</strong> Please close this<br>document, then open the Main App and reopen the document<br>from there. If you are offline, reconnect to the internet first."
+      }
+
+      if (cannotReconnectCloseBtn) {
+        cannotReconnectCloseBtn.innerText = 'Close Document';
+      }
     }
 
     cannotReconnectModal.style.display = "flex";
@@ -120,7 +173,11 @@
   }
 
   function showReconnecting() {
-    if (isReconnectingModalShow) {
+    var shouldShowModal = !isReconnectingModalShow &&
+        (!loggedOutModal || getComputedStyle(loggedOutModal).display === 'none') &&
+        (!closedHostModal || getComputedStyle(closedHostModal).display === 'none');
+
+    if (!shouldShowModal) {
       return;
     }
 
@@ -135,8 +192,30 @@
     if (isSavingFailed) {
       var warning = reconnectingModal.querySelector("div.cm-footnote");
 
-      warning.innerText = "The latest changes made in this document could NOT be saved.";
-      warning.style.color = "#FF274B";
+      warning.classList.remove('cm-footnote');
+      warning.innerHTML = '<span class="cm-footnote" style="color: #FF274B">The latest changes made in this document could NOT be saved<br>and will be lost if you close this tab.</span> They will be saved if the<br>connection is restored.';
+
+      if (reconnectingCloseBtn) {
+        reconnectingCloseBtn.classList.remove('cm-button--positive');
+        reconnectingCloseBtn.classList.add('cm-button--negative');
+      }
+    }
+
+    if (window.SK_DESKTOP_TRANSPORT) {
+      var title = reconnectingModal.querySelector('div.cm-title');
+      var descriptionFirstLine = reconnectingModal.querySelector('div.cm-description');
+
+      if (title) {
+        title.innerText = 'Connection to Sharekey Main App Interrupted';
+      }
+
+      if (descriptionFirstLine) {
+        descriptionFirstLine.innerText = 'The connection to the Main App you opened this document from\nwas interrupted.';
+      }
+
+      if (reconnectingCloseBtn) {
+        reconnectingCloseBtn.innerText = 'Close Document';
+      }
     }
 
     reconnectingModal.style.display = "flex";
@@ -173,6 +252,10 @@
           "| sinceLastPing=", lastPing ? secs(Date.now() - lastPing) : "never");
   });
 
+  if (window.SK_DESKTOP_TRANSPORT) {
+    window.addEventListener('host-ping', handlePing);
+  }
+
   // Reject anything not from the baked-in allowed origin. This is the security
   // boundary: even if a malicious page opens this editor, its messages are
   // silently dropped here.
@@ -206,32 +289,12 @@
     }
 
     if (ev.data.type === "ping") {
-      hideReconnecting();
+      handlePing();
 
-      var now = Date.now();
-      var gap = lastPing ? now - lastPing : 0;
-      pingCount++;
-
-      if (firstPingAt === 0) {
-        firstPingAt = now;
-        hbLog("first ping", secs(now - bootAt), "after boot; visibility=", vis());
-      } else if (gap > 20000) {
-        // Only the interesting (slow) pings are logged: a hidden tab's timers +
-        // message delivery get clamped to ~1/min by Chrome throttling.
-        hbLog("SLOW ping #" + pingCount, "gap=", secs(gap), "visibility=", vis());
-      }
-
-      lastPing = now;
-      // Pong back to the CONCRETE sender we just validated — window.HOST_ORIGIN
-      // may be a wildcard rule, which is not a valid postMessage targetOrigin.
-      ev.source.postMessage({ v: "edit-1", type: "pong" }, ev.origin);
-      // A ping proves the link is alive — if we'd shown the modal (e.g. a
-      // throttling false-positive), take it back.
-      if (isCannotReconnectModalShown) {
-        isCannotReconnectModalShown = false;
-        cannotReconnectModal.style.display = "none";
-        hbLog("connection restored (ping resumed) — hiding modal");
-      }
+      ev.source.postMessage(
+          { v: 'edit-1', type: 'pong' },
+          ev.origin
+      );
     }
   });
 
@@ -251,31 +314,36 @@
       return;
     }
 
+    var idle = Date.now() - lastPing;
+
+    if (idle > TIMEOUT_MS) {
+      showConnectionLost("heartbeat-timeout");
+
+      return;
+    }
+
     if (Date.now() - becameVisibleAt < SETTLE_MS) {
       return;
     }
 
-    var idle = Date.now() - lastPing;
-
-    if (idle > 20000 && !isCannotReconnectModalShown) {
+    if (idle > 20000) {
       showReconnecting();
       hbLog("no ping for", secs(idle), "(timeout", secs(TIMEOUT_MS) + ", visible)");
     }
-
-    if (idle > TIMEOUT_MS) {
-      showConnectionLost("heartbeat-timeout");
-    }
   }, 5000);
 
-  var cannotReconnectCloseBtn = document.getElementById("crm-close-btn");
-  var reconnectingCloseBtn = document.getElementById("rm-close-btn");
-
   function closeWindow() {
-    try {
-      window.close();
-    } catch (e) {
-      /* ignore */
+    if (window.SK_DESKTOP_TRANSPORT) {
+      window.postMessage(
+          { __skForceCloseWindow: true },
+          window.location.origin
+      );
+
+      return;
     }
+
+    window.__editorDirty = false;
+    window.close();
   }
 
   if (cannotReconnectCloseBtn) {
