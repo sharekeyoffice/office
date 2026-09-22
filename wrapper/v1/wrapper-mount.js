@@ -347,11 +347,13 @@
       }
 
       function showBlockedEditAttempt(label) {
-          if (currentMode === 'edit' || !canEdit) {
+          if (currentMode === 'edit') {
               return false;
           }
 
-          if (lockHolder && !lockHolder.isSelf) {
+          if (!canEdit) {
+              showViewOnlyModeModal(false);
+          } else if (lockHolder && !lockHolder.isSelf) {
               showViewerModeModal(false);
 
               log('blocked edit attempt: ' + label + ', lock held by ' + (lockHolder.userName || 'Someone'));
@@ -700,23 +702,28 @@
     function handleBlockedEditAttempt(e) {
         if (
             !isEditAttemptEvent(e) ||
-            (!canEdit && !isDesktopClosing && !isDesktopLoggingOut) ||
             (currentMode === 'edit' && !isDesktopClosing && !isDesktopLoggingOut)
         ) {
             return;
         }
 
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (typeof e.stopImmediatePropagation === 'function') {
+            e.stopImmediatePropagation();
+        }
+
         if (isDesktopClosing || isDesktopLoggingOut) {
-            e.preventDefault();
-            e.stopPropagation();
-
-            if (typeof e.stopImmediatePropagation === 'function') {
-                e.stopImmediatePropagation();
-            }
-
-            showDesktopClosingModal();
+            showDesktopClosingModal(false);
 
             log('blocked edit attempt: desktop closing');
+
+            return;
+        }
+
+        if (!canEdit) {
+            showViewOnlyModeModal(false);
 
             return;
         }
@@ -796,11 +803,11 @@
       log('showNeedEditModeModal');
     }
 
-      function showDesktopClosingModal() {
+      function showDesktopClosingModal(shouldHideFirstLine) {
           var modal = document.getElementById('cannot-start-edit-mode');
           var descriptions = modal.querySelectorAll('.cm-description');
 
-          if (descriptions[0] && canEdit) {
+          if (descriptions[0] && shouldHideFirstLine) {
               descriptions[0].style.display = 'none';
           } else if (descriptions[0]) {
               descriptions[0].style.display = 'block';
@@ -862,6 +869,49 @@
           };
       }
 
+      function showViewOnlyModeModal(hideFirstLine) {
+          var modal = document.getElementById('view-only-mode');
+
+          if (!modal) {
+              log('showViewOnlyModeModal: modal element not found');
+
+              return;
+          }
+
+          var descriptions = modal.querySelectorAll('.cm-description');
+          var illustration = modal.querySelector('.cm-icon');
+
+          if (illustration && isLargeFile) {
+              illustration.innerHTML = '<rect width="250" height="150" fill="white"/>\n' +
+                  '<path d="M138.284 13.7021C139.638 13.7022 140.941 14.2071 141.939 15.1123L142.136 15.2988L174.908 48.1064C175.928 49.127 176.5 50.5107 176.5 51.9531V64.0869C176.398 64.086 176.295 64.085 176.192 64.085C163.323 64.0851 152.12 71.1935 146.284 81.6768C144.751 84.4314 144.751 87.7824 146.284 90.5371C152.12 101.02 163.323 108.129 176.192 108.129C176.295 108.129 176.398 108.127 176.5 108.126V114.107C176.5 126.171 166.873 135.987 154.882 136.291C154.692 136.296 154.501 136.298 154.31 136.298H95.6914L95.1182 136.291C94.1665 136.267 93.2298 136.182 92.3115 136.042C91.9442 135.986 91.5799 135.921 91.2188 135.847C88.8714 135.366 86.6591 134.515 84.6455 133.357C84.0258 133.001 83.4249 132.616 82.8447 132.203C82.4744 131.94 82.1137 131.664 81.7607 131.379C81.2845 130.994 80.8234 130.592 80.3809 130.17C79.4816 129.313 78.6537 128.381 77.9082 127.384C77.7502 127.173 77.5978 126.957 77.4473 126.74C76.4817 125.349 75.6693 123.842 75.0391 122.244C74.774 121.572 74.5412 120.884 74.3418 120.182C74.292 120.006 74.2438 119.83 74.1982 119.653C74.149 119.462 74.1028 119.269 74.0586 119.076C73.6931 117.479 73.5001 115.816 73.5 114.107V35.8936C73.5 34.3614 73.6555 32.8656 73.9512 31.4209C74.099 30.6985 74.2819 29.9889 74.498 29.2939C74.7141 28.5993 74.9635 27.9194 75.2441 27.2559C75.8056 25.9284 76.4925 24.6669 77.29 23.4863C78.3868 21.8629 79.6925 20.3922 81.1689 19.1133C81.4373 18.8808 81.7108 18.6541 81.9902 18.4346C82.4094 18.1051 82.8414 17.7913 83.2842 17.4922C84.1695 16.8941 85.1003 16.3581 86.0703 15.8906C86.3939 15.7347 86.7216 15.5858 87.0537 15.4453C87.3855 15.305 87.7217 15.1732 88.0615 15.0488C88.4015 14.9243 88.7452 14.8073 89.0928 14.6992C89.4401 14.5912 89.7911 14.4916 90.1455 14.4004C91.0319 14.1723 91.9397 13.9975 92.8652 13.8799C93.4206 13.8093 93.9824 13.7592 94.5498 13.7305C94.7386 13.7209 94.9281 13.7138 95.1182 13.709C95.3086 13.7042 95.4998 13.7021 95.6914 13.7021H138.284ZM166.809 85.6221C166.816 85.4782 166.828 85.3354 166.842 85.1934C166.828 85.3354 166.816 85.4783 166.809 85.6221ZM167.074 83.8359C167.081 83.81 167.085 83.7836 167.092 83.7578L167.107 83.7021C167.096 83.7465 167.085 83.7913 167.074 83.8359ZM167.483 82.5781C167.497 82.5453 167.509 82.5121 167.522 82.4795C167.509 82.5121 167.497 82.5453 167.483 82.5781ZM172.208 77.5977C172.276 77.566 172.344 77.5349 172.412 77.5049C172.344 77.535 172.276 77.566 172.208 77.5977ZM138.206 35.2197C138.206 44.4691 145.705 51.9678 154.954 51.9678H169.298L138.206 20.8438V35.2197Z" fill="#D5ECEF"/>' +
+                  '<path d="M176.193 68.3369C187.458 68.3371 197.27 74.5548 202.386 83.7451C203.204 85.214 203.204 86.9999 202.386 88.4688C197.27 97.6591 187.458 103.877 176.193 103.877C164.928 103.877 155.115 97.6592 149.999 88.4688C149.181 86.9999 149.181 85.2139 149.999 83.7451C155.115 74.5546 164.928 68.3369 176.193 68.3369ZM176.189 76.7119C171.001 76.7123 166.796 80.9177 166.796 86.1055C166.796 91.293 171.002 95.4996 176.189 95.5C181.377 95.5 185.582 91.2932 185.583 86.1055C185.583 80.9175 181.377 76.7119 176.189 76.7119ZM176.189 81.7119C178.616 81.7119 180.583 83.6789 180.583 86.1055C180.582 88.533 178.614 90.5 176.189 90.5C173.764 90.4996 171.796 88.5328 171.796 86.1055C171.796 83.6791 173.763 81.7123 176.189 81.7119Z" fill="url(#paint0_linear_18074_38991)"/>\n' +
+                  '<path d="M8.6 91V84.019L6.455 84.89V82.797L10.524 81.211H10.68V91H8.6ZM16.7852 83.031C15.7452 83.031 14.9262 84.175 14.9262 86.164C14.9262 88.127 15.7452 89.271 16.7852 89.271C17.8252 89.271 18.6962 88.127 18.6962 86.164C18.6962 84.175 17.8252 83.031 16.7852 83.031ZM12.8202 86.164C12.8202 83.031 14.5752 81.081 16.7852 81.081C18.9822 81.081 20.7632 83.031 20.7632 86.164C20.7632 89.271 18.9822 91.221 16.7852 91.221C14.5752 91.221 12.8202 89.271 12.8202 86.164ZM28.0031 84.24L27.1581 91H25.1431L26.5341 81.302H29.0431L31.0841 87.789H31.1101L33.1121 81.302H35.5561L36.9471 91H34.9191L34.1001 84.214H34.0481L31.9421 91H30.1351L28.0421 84.24H28.0031ZM38.4993 91V81.302H42.1263C44.3233 81.302 45.4803 82.459 45.4803 83.902C45.4803 84.981 44.8693 85.67 44.0633 86.021C45.1553 86.385 45.7403 87.217 45.7403 88.283C45.7403 89.739 44.6223 91 42.2823 91H38.4993ZM40.6053 89.206H42.1263C43.1403 89.206 43.6733 88.699 43.6733 88.01C43.6733 87.295 43.0753 86.827 42.1653 86.827H40.6053V89.206ZM40.6053 85.332H42.0483C42.9973 85.332 43.4783 84.825 43.4783 84.201C43.4783 83.564 42.9843 83.096 42.0873 83.096H40.6053V85.332Z" fill="#2FA0AF"/>' +
+                  '<path d="M62.592 84.344L57.964 86.164L62.592 87.971V89.947L55.559 87.126V85.202L62.592 82.368V84.344Z" fill="#2FA0AF"/>' +
+                  '<path opacity="0.55" d="M91.4275 82V72.302H93.5465V80.076H97.5635V82H91.4275ZM101.404 82.182C99.7791 82.182 98.2061 80.674 98.2061 78.425C98.2061 76.124 99.7791 74.616 101.404 74.616C102.483 74.616 103.289 75.162 103.757 75.903H103.77L103.978 74.798H105.733V82H103.978L103.77 80.895H103.757C103.289 81.649 102.483 82.182 101.404 82.182ZM100.299 78.399C100.299 79.504 101.027 80.31 102.015 80.31C102.977 80.31 103.692 79.517 103.692 78.399C103.692 77.281 102.977 76.488 102.015 76.488C101.027 76.488 100.299 77.307 100.299 78.399ZM107.457 82V74.798H109.108L109.316 75.877H109.342C109.823 75.006 110.655 74.72 111.292 74.72C111.513 74.72 111.682 74.733 111.838 74.772V76.722C111.643 76.67 111.435 76.657 111.24 76.657C110.369 76.657 109.537 77.125 109.537 78.477V82H107.457ZM115.598 74.629C116.625 74.629 117.444 75.175 117.899 75.877L118.107 74.798H119.862V81.09C119.862 83.521 118.172 84.912 115.819 84.912C114.818 84.912 113.843 84.613 113.089 84.093V82.117C113.804 82.715 114.792 83.105 115.624 83.105C116.898 83.105 117.782 82.377 117.782 81.324V80.661C117.34 81.324 116.573 81.857 115.572 81.857C113.895 81.857 112.374 80.388 112.374 78.23C112.374 76.137 113.934 74.629 115.598 74.629ZM114.467 78.243C114.467 79.244 115.182 80.024 116.144 80.024C117.106 80.024 117.808 79.231 117.808 78.23C117.808 77.242 117.106 76.462 116.144 76.462C115.182 76.462 114.467 77.268 114.467 78.243ZM125.188 82.182C122.653 82.182 121.197 80.609 121.197 78.425C121.197 76.137 122.809 74.616 124.811 74.616C126.644 74.616 128.139 75.877 128.139 78.282C128.139 78.542 128.126 78.776 128.087 78.984H123.186C123.459 80.011 124.356 80.544 125.448 80.544C126.241 80.544 127.008 80.271 127.697 79.829V81.532C126.956 81.961 126.111 82.182 125.188 82.182ZM123.147 77.736H126.163C126.15 76.8 125.565 76.254 124.798 76.254C124.018 76.254 123.342 76.826 123.147 77.736ZM98.9685 100V90.302H104.91V92.239H101.088V94.67H104.676V96.49H101.088V100H98.9685ZM106.391 100V92.798H108.471V100H106.391ZM106.287 90.679C106.287 90.055 106.781 89.561 107.431 89.561C108.055 89.561 108.562 90.055 108.562 90.679C108.562 91.316 108.055 91.81 107.431 91.81C106.781 91.81 106.287 91.316 106.287 90.679ZM110.225 100V89.561H112.305V100H110.225ZM117.647 100.182C115.112 100.182 113.656 98.609 113.656 96.425C113.656 94.137 115.268 92.616 117.27 92.616C119.103 92.616 120.598 93.877 120.598 96.282C120.598 96.542 120.585 96.776 120.546 96.984H115.645C115.918 98.011 116.815 98.544 117.907 98.544C118.7 98.544 119.467 98.271 120.156 97.829V99.532C119.415 99.961 118.57 100.182 117.647 100.182ZM115.606 95.736H118.622C118.609 94.8 118.024 94.254 117.257 94.254C116.477 94.254 115.801 94.826 115.606 95.736Z" fill="#2FA0AF"/>' +
+                  '<defs>' +
+                  '<linearGradient id="paint0_linear_18074_38991" x1="206.808" y1="118.241" x2="184.771" y2="61.9463" gradientUnits="userSpaceOnUse">' +
+                  '<stop stop-color="#125E99"/>' +
+                  '<stop offset="1" stop-color="#64E1D8"/>' +
+                  '</linearGradient>' +
+                  '</defs>';
+          }
+
+          if (descriptions[0]) {
+              descriptions[0].style.display = hideFirstLine ? 'none' : '';
+          }
+
+          if (descriptions[1] && isLargeFile) {
+              descriptions[1].innerHTML = 'Currently, this document <strong>cannot be edited</strong> (over the 10 MB limit).';
+          }
+
+          if (descriptions[2] && isLargeFile) {
+              descriptions[2].innerHTML = 'Large documents will be supported soon.';
+              descriptions[2].style.color = '#2FA0AF';
+          }
+
+          modal.style.display = 'flex';
+      }
+
       // Shows the outer-page modal for the case where the user tries to edit while
       // another user already holds the edit lock. The header already shows who is
       // editing, but this modal gives immediate feedback after a typing attempt.
@@ -870,6 +920,7 @@
 
           if (!modal) {
               log('showViewerModeModal: modal element not found');
+
               return;
           }
 
@@ -928,6 +979,36 @@
 
         log('user closed turn-on-edit-mode modal');
       };
+    }
+
+    function bindViewOnlyModeModal() {
+        var modal = document.getElementById('view-only-mode');
+        var closeButton = document.getElementById('vom-close-btn');
+        var confirmButton = document.getElementById('vom-сonfirm-btn');
+
+        if (!modal || !closeButton || !confirmButton) {
+            log('bindViewOnlyModeModal: modal or close button not found');
+
+            return;
+        }
+
+        if (modal.__viewOnlyModeBound) {
+            return;
+        }
+
+        modal.__viewOnlyModeBound = true;
+
+        closeButton.onclick = function () {
+            modal.style.display = 'none';
+
+            log('user closed view-only-mode modal');
+        };
+
+        confirmButton.onclick = function () {
+            modal.style.display = 'none';
+
+            log('user closed view-only-mode modal');
+        };
     }
 
       function bindViewerModeModal() {
@@ -1790,7 +1871,9 @@
               return;
           }
 
-          if (!headerEditBtn.classList.contains('is-locked')) {
+          if (!canEdit) {
+              showViewOnlyModeModal(true);
+
               return;
           }
 
@@ -1821,11 +1904,13 @@
           }
 
           if (!canEdit) {
+              showViewOnlyModeModal(true);
+
               return;   // role has no edit right — refuse (button shouldn't exist anyway)
           }
 
           if (isDesktopClosing || isDesktopLoggingOut) {
-              showDesktopClosingModal();
+              showDesktopClosingModal(true);
 
               return;
           }
@@ -2875,6 +2960,7 @@
         bindTurnOnEditModeModal();
         bindDesktopClosingModal();
         bindViewerModeModal();
+          bindViewOnlyModeModal();
         bindOnlyOfficeWelcomeScreen();
         bindSaveShortcutListeners();
         bindBlockedContentCopyListeners(document);

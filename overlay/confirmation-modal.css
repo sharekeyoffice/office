@@ -164,6 +164,18 @@
     animation-delay: 0.4s;
 }
 
+.cm-role-label {
+    margin: 0 4px;
+    border: 1px solid #E3E6E8;
+    background: #EEF0F1;
+    padding: 3px 7px;
+    border-radius: 4px;
+    color: #242B2E;
+    font-size: 10px;
+    line-height: 14px;
+    font-family: system-ui, sans-serif;
+}
+
 @keyframes dot-loader-blink {
     0% { opacity: 0.2 }
     20% { opacity: 1 }

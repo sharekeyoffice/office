@@ -326,7 +326,7 @@
       return;
     }
 
-    if (idle > 20000) {
+    if (idle > 60000) {
       showReconnecting();
       hbLog("no ping for", secs(idle), "(timeout", secs(TIMEOUT_MS) + ", visible)");
     }
