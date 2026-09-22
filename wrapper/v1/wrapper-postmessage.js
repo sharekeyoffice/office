@@ -132,6 +132,173 @@
     }
   };
 
+  WrapperPostMessage.prototype.downloadCurrentFile = function (isEditMode) {
+    var self = this;
+    var formatByEditor = {
+      word: 'docx',
+      cell: 'xlsx',
+      slide: 'pptx'
+    };
+    var ext = formatByEditor[self.editorType] || 'docx';
+
+    if (isEditMode) {
+      self.requestManualSave();
+    }
+
+    var iframe = self.findIframe();
+
+    if (!iframe || !iframe.contentWindow) {
+      var iframeError = new Error('editor iframe not available');
+
+      log('download failed: ' + iframeError.message);
+
+      return Promise.reject(iframeError);
+    }
+
+    var capture = iframe.contentWindow.__captureSave;
+
+    if (typeof capture !== 'function') {
+      var captureMissingError = new Error('__captureSave is not available');
+
+      log('download failed: ' + captureMissingError.message);
+
+      return Promise.reject(captureMissingError);
+    }
+
+    var binBytes;
+
+    try {
+      binBytes = capture();
+    } catch (e) {
+      var captureError = new Error(
+          'failed to capture current editor state: ' +
+          (e && e.message ? e.message : e)
+      );
+
+      log('download failed: ' + captureError.message);
+
+      return Promise.reject(captureError);
+    }
+
+    if (!binBytes || typeof binBytes.length !== 'number' || binBytes.length === 0) {
+      var emptyCaptureError = new Error('captured editor state is empty');
+
+      log('download failed: ' + emptyCaptureError.message);
+
+      return Promise.reject(emptyCaptureError);
+    }
+
+    var x2t;
+
+    try {
+      x2t = self.ensureX2T();
+    } catch (e) {
+      var x2tError = new Error(
+          'X2T is not available: ' +
+          (e && e.message ? e.message : e)
+      );
+
+      log('download failed: ' + x2tError.message);
+
+      return Promise.reject(x2tError);
+    }
+
+    if (typeof x2t.convertFromBin !== 'function') {
+      var conversionUnavailableError = new Error('X2T convertFromBin is not available');
+
+      log('download failed: ' + conversionUnavailableError.message);
+
+      return Promise.reject(conversionUnavailableError);
+    }
+
+    log(
+        'download current file: mode=' +
+        (isEditMode ? 'edit' : 'view') +
+        ', format=' +
+        ext
+    );
+
+    return x2t.convertFromBin(binBytes, ext).then(function (fileBytes) {
+      if (!fileBytes || typeof fileBytes.length !== 'number' || fileBytes.length === 0) {
+        throw new Error('converted file is empty');
+      }
+
+      var fileName =
+          (self._lastFileName || 'document').replace(/\.[^.]+$/, '') +
+          '.' +
+          ext;
+
+      var blob;
+
+      try {
+        blob = new Blob([fileBytes], {
+          type: 'application/octet-stream'
+        });
+      } catch (e) {
+        throw new Error(
+            'failed to create download blob: ' +
+            (e && e.message ? e.message : e)
+        );
+      }
+
+      var url;
+
+      try {
+        url = URL.createObjectURL(blob);
+      } catch (e) {
+        throw new Error(
+            'failed to create download URL: ' +
+            (e && e.message ? e.message : e)
+        );
+      }
+
+      var link = document.createElement('a');
+
+      link.href = url;
+      link.download = fileName;
+      link.style.display = 'none';
+
+      try {
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      } catch (e) {
+        link.remove();
+        URL.revokeObjectURL(url);
+
+        throw new Error(
+            'failed to start browser download: ' +
+            (e && e.message ? e.message : e)
+        );
+      }
+
+      setTimeout(function () {
+        URL.revokeObjectURL(url);
+      }, 0);
+
+      log(
+          'downloaded ' +
+          fileName +
+          ' (' +
+          fileBytes.length +
+          ' bytes)'
+      );
+
+      return {
+        fileName: fileName,
+        bytesLength: fileBytes.length
+      };
+    }).catch(function (e) {
+      var error = e instanceof Error
+          ? e
+          : new Error(String(e));
+
+      log('download failed: ' + error.message);
+
+      throw error;
+    });
+  };
+
   WrapperPostMessage.prototype.toHost = function (msg, transfer) {
     msg.v = POST_VERSION;
 
@@ -500,9 +667,11 @@
     var self = this;
     var requestId = msg.requestId || null;
     var shouldShowOnlyOfficeWelcomeScreen = msg.shouldShowOnlyOfficeWelcomeScreen === true;
+    var isExternal = msg.isExternal === true;
 
     self.requestId = requestId;
     self.shouldShowOnlyOfficeWelcomeScreen = shouldShowOnlyOfficeWelcomeScreen;
+    self.isExternal = isExternal;
 
     var ab = (msg.bytes instanceof ArrayBuffer) ? msg.bytes :
              (msg.bytes && msg.bytes.buffer instanceof ArrayBuffer) ? msg.bytes.buffer :

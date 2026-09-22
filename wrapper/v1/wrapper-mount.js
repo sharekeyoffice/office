@@ -32,7 +32,10 @@
 //   lockHolder:  null | { userId?, userName, isSelf? } — when set, the edit
 //                lock is held; `isSelf` true ⇒ held by the current user (e.g.
 //                from another tab). Drives the in-header "editing" label.
-
+/* jshint -W106 */
+/* jshint -W003 */
+/* jshint -W104 */
+/* jshint -W119 */
 (function () {
   'use strict';
 
@@ -87,9 +90,11 @@
     var pm             = null;     // WrapperPostMessage — lives for the page lifetime
     var events;                    // declared below; closed over by constructEditor
     var headerEditTooltip = null;
+    var headerDownloadTooltip = null;
     var headerEditBtn  = null;     // our Edit button injected into the iframe header
                                    // (approach B); null until mountHeaderControls runs
     var headerSaveBtn  = null;     // our Save (diskette) button, same approach
+    var headerDownloadBtn = null;
     var headerMainAppBtn = null;   // "Main App" button in the header-right area
     var headerEditingLabel = null; // our "<who> is editing the document…" label,
                                    // injected into the tab row right of the Edit button
@@ -104,6 +109,9 @@
     // remember it here so handleConflict still knows who edited.
     var lastLockHolderName = null;
     var lastLockHolderId = null;
+    var canDownload = false;
+    var isLargeFile = false;
+    var isDownloading = false;
     var canEdit        = true;     // role-gated edit capability, set by the main app's
                                    // `permissions` message (EDIT_CONTENT right). false ⇒ the
                                    // Edit button + "editing" label are never shown and
@@ -148,6 +156,7 @@
     function updateOverlayUI() {
       renderEditButton();
       renderEditingLabel();
+      renderDownloadButton();
     }
 
       // Determines the relevant DOM element for an edit attempt event.
@@ -993,7 +1002,7 @@
           // hidden for viewers below.
           if (conflictState) {
               var updatedBy = conflictState.updatedBy || 'Someone';
-              var b = doc.createElement('span');
+              const b = doc.createElement('span');
 
               b.className = 'sk-editing-label__who';
               b.textContent = updatedBy;
@@ -1034,7 +1043,7 @@
               // \u00A0 (non-breaking space) joins the bold name to the verb — a normal
               // leading space collapses at the inline-flex item boundary, gluing them.
               var rest = isSelf ? '\u00A0are editing the document' : '\u00A0is editing the document';
-              var b = doc.createElement('span');
+              const b = doc.createElement('span');
 
               b.className = 'sk-editing-label__who';
               b.textContent = who;
@@ -1103,9 +1112,7 @@
               return;
           }
 
-          // No edit right ⇒ hide the Edit button entirely (display:none on the <li>).
-          // Visibility-based so there's never a "visible-but-dead" button.
-          if (!canEdit) {
+          if (pm.isExternal) {
               if (li) {
                   li.style.display = 'none';
               }
@@ -1113,6 +1120,11 @@
               headerEditBtn.disabled = true;
 
               return;
+          }
+
+          if (!canEdit) {
+              headerEditBtn.classList.add('is-locked');
+              headerEditBtn.disabled = false;
           }
 
           if (isDesktopClosing || isDesktopLoggingOut) {
@@ -1223,6 +1235,18 @@
       renderSaveButton();
     };
 
+      function renderDownloadButton() {
+          if (!headerDownloadBtn) {
+              return;
+          }
+
+          headerDownloadBtn.disabled = !canDownload || isDownloading;
+
+          if (headerDownloadTooltip) {
+              headerDownloadTooltip.textContent = getDownloadTooltipText();
+          }
+      }
+
     // Hide the native OnlyOffice "Editing/Viewing" dropdown inside the
     // editor iframe — permanently. Same-origin, so contentDocument is
     // accessible. Idempotent — reuses a single <style id="hide-native-
@@ -1277,6 +1301,10 @@
         '<circle cx="6" cy="6" r="5.35" stroke="#355069" stroke-opacity="0.1" stroke-width="1.3"/>' +
         '<path d="M6 0.65C7.4189 0.65 8.77968 1.21365 9.783 2.21696C10.7863 3.22027 11.35 4.58105 11.35 5.99995" ' +
         'stroke="#355069" stroke-opacity="0.55" stroke-width="1.3" stroke-linecap="round"/>' +
+        '</svg>';
+
+    var DOWNLOAD_ICON_SVG = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+        '<path d="M19 14.499C19.2761 14.499 19.5 14.7229 19.5 14.999V16.999C19.5 18.3797 18.3807 19.499 17 19.499H7C5.61929 19.499 4.5 18.3797 4.5 16.999V14.999C4.5 14.7229 4.72386 14.499 5 14.499C5.27614 14.499 5.5 14.7229 5.5 14.999V16.999C5.5 17.8275 6.17157 18.499 7 18.499H17C17.8284 18.499 18.5 17.8275 18.5 16.999V14.999C18.5 14.7229 18.7239 14.499 19 14.499ZM12 4.5C12.2761 4.5 12.5 4.72386 12.5 5V12.7871L15.1455 10.126C15.3398 9.93046 15.6559 9.92899 15.8516 10.123C16.0471 10.3173 16.0485 10.6334 15.8545 10.8291L12.3535 14.3525C12.2598 14.4467 12.1319 14.499 11.999 14.499C11.8662 14.4989 11.7392 14.4458 11.6455 14.3516L8.14551 10.8291C7.95143 10.6334 7.95287 10.3173 8.14844 10.123C8.34413 9.92897 8.66021 9.93041 8.85449 10.126L11.5 12.7891V5C11.5 4.72386 11.7239 4.5 12 4.5Z" fill="currentColor"/>' +
         '</svg>';
 
     // Save (diskette) icon — Figma "Frame 3205" (node 15904:12420), 20×20.
@@ -1511,7 +1539,24 @@
       '.sk-main-app-btn__icon svg{display:block;flex-shrink:0;width:16px;height:16px;}',
       '.sk-main-app-btn:not(:disabled):hover{background:#F0F8F9;}',
       '.theme-type-dark .sk-main-app-btn{background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.8);}',
-      '.theme-type-dark .sk-main-app-btn:not(:disabled):hover{background:rgba(255,255,255,0.2);}'
+      '.theme-type-dark .sk-main-app-btn:not(:disabled):hover{background:rgba(255,255,255,0.2);}',
+      '#slot-btn-dt-quick-access{display:none !important;}',
+        '.download-slot{display:inline-flex;align-items:center;}',
+        '.download-btn{',
+        '  box-sizing:border-box;margin-top:2px;',
+        '  display:inline-flex;align-items:center;justify-content:center;',
+        '  width:28px;height:28px;padding:0;',
+        '  border:none;border-radius:5px;background:transparent;',
+        '  color:#363636;',
+        '  cursor:pointer;-webkit-appearance:none;appearance:none;',
+        '  transition:color .12s ease,background .12s ease;',
+        '}',
+        '.download-btn__icon{display:flex;width:24px;height:24px;}',
+        '.download-btn__icon svg{display:block;width:24px;height:24px;}',
+        '.download-btn:not(:disabled):hover{background:rgba(0,0,0,0.06);}',
+        '.theme-type-dark .download-btn{color:#FFFFFF;}',
+        '.theme-type-dark .download-btn:not(:disabled):hover{background:rgba(255,255,255,0.1);}',
+        '.download-btn:disabled{opacity: var(--component-disabled-opacity, 0.4);}',
     ].join('\n');
 
     function injectHeaderControlStyles(doc) {
@@ -1552,25 +1597,36 @@
           return true;
       }
 
+      function getEditTooltipText() {
+          if (isLargeFile) {
+              return 'Documents over 10 MB cannot currently be edited';
+          }
+
+          if (!canEdit) {
+              return 'You need the Editor + role or higher to edit this document';
+          }
+
+          if (isDesktopClosing) {
+              return 'Cancel closing the Main App to start editing';
+          }
+
+          if (isDesktopLoggingOut) {
+              return 'Cancel logging out of the Main App to start editing';
+          }
+
+          return 'Only one Member can edit at a time';
+      }
+
       function ensureEditTooltip(doc) {
           if (headerEditTooltip && headerEditTooltip.ownerDocument === doc) {
-              headerEditTooltip.textContent = isDesktopClosing ?
-                  'Cancel closing the Main App to start editing' :
-                  isDesktopLoggingOut ?
-                      'Cancel logging out of the Main App to start editing' :
-                      'Only one Member can edit at a time';
+              headerEditTooltip.textContent = getEditTooltipText();
 
               return headerEditTooltip;
           }
 
           headerEditTooltip = doc.createElement('div');
           headerEditTooltip.className = 'sk-edit-tooltip';
-
-          headerEditTooltip.textContent = isDesktopClosing ?
-              'Cancel closing the Main App to start editing' :
-              isDesktopLoggingOut ?
-                    'Cancel logging out of the Main App to start editing' :
-                    'Only one Member can edit at a time';
+          headerEditTooltip.textContent = getEditTooltipText();
 
           if (doc.body) {
               doc.body.appendChild(headerEditTooltip);
@@ -1659,6 +1715,74 @@
           }
 
           headerEditTooltip.style.display = 'none';
+      }
+
+      function getDownloadTooltipText() {
+          if (isDownloading) {
+              return 'Please wait until the current download is finished';
+          }
+
+          if (!canDownload) {
+              return 'Downloading is disabled in View-Only Mode';
+          }
+
+          return 'Download';
+      }
+
+      function ensureDownloadTooltip(doc) {
+          if (headerDownloadTooltip && headerDownloadTooltip.ownerDocument === doc) {
+              headerDownloadTooltip.textContent = getDownloadTooltipText();
+
+              return headerDownloadTooltip;
+          }
+
+          headerDownloadTooltip = doc.createElement('div');
+          headerDownloadTooltip.className = 'sk-edit-tooltip';
+          headerDownloadTooltip.textContent = getDownloadTooltipText();
+
+          if (doc.body) {
+              doc.body.appendChild(headerDownloadTooltip);
+          }
+
+          return headerDownloadTooltip;
+      }
+
+      function showDownloadTooltip() {
+          if (!headerDownloadBtn) {
+              return;
+          }
+
+          var doc = headerDownloadBtn.ownerDocument;
+          var tooltip = ensureDownloadTooltip(doc);
+          var TOOLTIP_SCREEN_PADDING = 8;
+          var TOOLTIP_OFFSET = 6;
+          var rect = headerDownloadBtn.getBoundingClientRect();
+
+          tooltip.style.display = 'block';
+
+          var tooltipRect = tooltip.getBoundingClientRect();
+          var left = rect.left + rect.width / 2 - tooltipRect.width / 2;
+          var top = rect.bottom + TOOLTIP_OFFSET;
+          var maxLeft = doc.documentElement.clientWidth - tooltipRect.width - TOOLTIP_SCREEN_PADDING;
+
+          if (left < TOOLTIP_SCREEN_PADDING) {
+              left = TOOLTIP_SCREEN_PADDING;
+          }
+
+          if (left > maxLeft) {
+              left = maxLeft;
+          }
+
+          tooltip.style.left = left + 'px';
+          tooltip.style.top = top + 'px';
+      }
+
+      function hideDownloadTooltip() {
+          if (!headerDownloadTooltip) {
+              return;
+          }
+
+          headerDownloadTooltip.style.display = 'none';
       }
 
       function onEditTabClick() {
@@ -1773,36 +1897,75 @@
 
     window.skGoToMainApp = skGoToMainApp;
 
-    // Approach B: inject OUR OWN Edit control into the editor's toolbar tab
-    // strip (inside the iframe), right after the "View" tab, styled from Figma
-    // — instead of the brittle outer-page overlay. Same iframe-DOM reach +
-    // <style> injection idiom as hideNativeDropdown. Idempotent. Returns true
-    // once the button is in place. The toolbar renders late (after onAppReady),
-    // so callers poll on a false return — mirrors the tryCacheApi poller.
-    function mountHeaderControls() {
-      var iframe = document.querySelector('iframe[name="frameEditor"]');
+      function mountDownloadButton(doc) {
+          var existing = doc.getElementById('download-btn');
 
-      if (!iframe || !iframe.contentDocument) {
-          return false;
+          if (existing) {
+              headerDownloadBtn = existing;
+              existing.onmouseenter = showDownloadTooltip;
+              existing.onmouseleave = hideDownloadTooltip;
+
+              renderDownloadButton();
+
+              return true;
+          }
+
+          var nativeSaveSlot = doc.getElementById('slot-btn-dt-save');
+          var parent = nativeSaveSlot && nativeSaveSlot.parentNode;
+
+          if (!parent) {
+              return false;
+          }
+
+          var slot = doc.createElement('div');
+          slot.className = 'download-slot';
+
+          var btn = doc.createElement('button');
+
+          btn.id = 'download-btn';
+          btn.className = 'download-btn';
+          btn.type = 'button';
+          btn.disabled = !canDownload;
+          btn.innerHTML =
+              '<span class="download-btn__icon">' +
+              DOWNLOAD_ICON_SVG +
+              '</span>';
+
+          btn.onmouseenter = showDownloadTooltip;
+          btn.onmouseleave = hideDownloadTooltip;
+          btn.onclick = function () {
+              if (!pm || !canDownload || isDownloading) {
+                  return;
+              }
+
+              log('user clicked Download');
+
+              isDownloading = true;
+              renderDownloadButton();
+
+              pm.downloadCurrentFile(currentMode === 'edit')
+                  .catch(function (e) {
+                      log('download failed: ' + (e && e.message ? e.message : e));
+                  })
+                  .then(function () {
+                      isDownloading = false;
+                      renderDownloadButton();
+                  });
+          };
+
+          slot.appendChild(btn);
+
+          // Put Download at the end of the quick-access controls
+          parent.appendChild(slot);
+
+          headerDownloadBtn = btn;
+
+          renderDownloadButton();
+
+          log('mountHeaderControls: Download button injected into quick-access toolbar');
+
+          return true;
       }
-      var doc = iframe.contentDocument;
-
-      // Inject (or refresh) our styles whenever the iframe doc is reachable.
-      injectHeaderControlStyles(doc);
-      bindBlockedEditAttemptListeners();
-
-      // Mount both controls; each is idempotent and anchored independently
-      // (tab strip vs quick-access toolbar render at different times), so we
-      // only report "done" once BOTH are in place — the poller keeps trying
-      // until then.
-      var editDone = mountEditButton(doc);
-      mountEditingLabel(doc);              // anchored off the Edit <li>; no-op if edit not mounted yet
-      var saveDone = mountSaveButton(doc);
-      var shouldMountMainAppButton = window.SK_DESKTOP_TRANSPORT || hasOpener;
-      var mainAppDone = !shouldMountMainAppButton || mountMainAppButton(doc);
-
-      return editDone && saveDone && mainAppDone;
-    }
 
     // Edit button → trailing <li> in the toolbar tab strip
     // (section.tabs > ul[role="tablist"], Mixtbar.js:113), right after "View".
@@ -2003,6 +2166,50 @@
 
       return true;
     }
+
+      // Approach B: inject OUR OWN Edit control into the editor's toolbar tab
+      // strip (inside the iframe), right after the "View" tab, styled from Figma
+      // — instead of the brittle outer-page overlay. Same iframe-DOM reach +
+      // <style> injection idiom as hideNativeDropdown. Idempotent. Returns true
+      // once the button is in place. The toolbar renders late (after onAppReady),
+      // so callers poll on a false return — mirrors the tryCacheApi poller.
+      function mountHeaderControls() {
+          var iframe = document.querySelector('iframe[name="frameEditor"]');
+
+          if (!iframe || !iframe.contentDocument) {
+              return false;
+          }
+          var doc = iframe.contentDocument;
+
+          // Inject (or refresh) our styles whenever the iframe doc is reachable.
+          injectHeaderControlStyles(doc);
+          bindBlockedEditAttemptListeners();
+
+          // Mount both controls; each is idempotent and anchored independently
+          // (tab strip vs quick-access toolbar render at different times), so we
+          // only report "done" once BOTH are in place — the poller keeps trying
+          // until then.
+
+          var shouldMountMainAppButton = window.SK_DESKTOP_TRANSPORT || hasOpener;
+
+          if (pm.isExternal) {
+              var undoButton = doc.getElementById('slot-btn-dt-undo');
+              var redoButton = doc.getElementById('slot-btn-dt-redo');
+
+              undoButton.style.display = 'none';
+              redoButton.style.display = 'none';
+
+              return mountDownloadButton(doc) && (!shouldMountMainAppButton || mountMainAppButton(doc));
+          }
+
+          var editDone = mountEditButton(doc);
+          mountEditingLabel(doc);              // anchored off the Edit <li>; no-op if edit not mounted yet
+          var saveDone = mountSaveButton(doc);
+          var downloadDone = mountDownloadButton(doc);
+          var mainAppDone = !shouldMountMainAppButton || mountMainAppButton(doc);
+
+          return editDone && saveDone && mainAppDone && downloadDone;
+      }
 
     function autoLoadFixture() {
       log('standalone mode — auto-loading ' + fixtureUrl);
@@ -2625,23 +2832,31 @@
     // Role / EDIT_CONTENT right). Sent before `load`, so it lands before the
     // toolbar tab-strip exists → no Edit-button flash for viewers.
     function handlePermissions(perms) {
-    var nextCanEdit = !(perms && perms.canEdit === false);
-    var nextDesktopClosing = !!(perms && perms.isDesktopClosing);
-    var nextDesktopLoggingOut = !!(perms && perms.isDesktopLoggingOut);
+        var nextCanEdit = !(perms && perms.canEdit === false);
+        var nextCanDownload = !(perms && perms.canDownload === false);
+        var nextIsLargeFile = !(perms && perms.isLargeFile === false);
+        var nextDesktopClosing = !!(perms && perms.isDesktopClosing);
+        var nextDesktopLoggingOut = !!(perms && perms.isDesktopLoggingOut);
 
-    if (nextCanEdit === canEdit && nextDesktopClosing === isDesktopClosing && nextDesktopLoggingOut === isDesktopLoggingOut) {
-        return;
-    }
+        if (nextCanEdit === canEdit && nextDesktopClosing === isDesktopClosing && nextDesktopLoggingOut === isDesktopLoggingOut && nextCanDownload === canDownload && nextIsLargeFile === isLargeFile) {
+            return;
+        }
 
-    canEdit = nextCanEdit;
-    isDesktopClosing = nextDesktopClosing;
-    isDesktopLoggingOut = nextDesktopLoggingOut;
-      log('handlePermissions: canEdit=' + canEdit);
-      // Re-render the Edit button + editing label to reflect the new capability
-      // (renderEditButton hides the button when !canEdit). The controls are
-      // mounted unconditionally by the poller, so this just flips visibility —
-      // no DOM removal/race.
-      updateOverlayUI();
+        canEdit = nextCanEdit;
+        isDesktopClosing = nextDesktopClosing;
+        isDesktopLoggingOut = nextDesktopLoggingOut;
+        canDownload = nextCanDownload;
+        isLargeFile = nextIsLargeFile;
+        log('handlePermissions: canEdit = ' + canEdit);
+        log('handlePermissions: isDesktopClosing = ' + isDesktopClosing);
+        log('handlePermissions: isDesktopLoggingOut = ' + isDesktopLoggingOut);
+        log('handlePermissions: canDownload = ' + canDownload);
+        log('handlePermissions: isLargeFile = ' + isLargeFile);
+        // Re-render the Edit button + editing label to reflect the new capability
+        // (renderEditButton hides the button when !canEdit). The controls are
+        // mounted unconditionally by the poller, so this just flips visibility —
+        // no DOM removal/race.
+        updateOverlayUI();
     }
     window.handlePermissions = handlePermissions;
 
@@ -2890,4 +3105,8 @@
   } else {
     boot();
   }
+    /* jshint +W003 */
+    /* jshint +W106 */
+    /* jshint +W104 */
+    /* jshint +W119 */
 })();
