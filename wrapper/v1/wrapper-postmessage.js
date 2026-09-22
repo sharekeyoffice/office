@@ -139,7 +139,15 @@
       cell: 'xlsx',
       slide: 'pptx'
     };
-    var ext = formatByEditor[self.editorType] || 'docx';
+    var ext = formatByEditor[self.editorType];
+
+    if (!ext) {
+      var formatError = new Error('file format is not recognized');
+
+      log('download failed: ' + formatError.message);
+
+      return Promise.reject(formatError);
+    }
 
     if (isEditMode) {
       self.requestManualSave();
