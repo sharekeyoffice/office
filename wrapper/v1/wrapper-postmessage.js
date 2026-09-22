@@ -1123,7 +1123,7 @@
       var warning = mainAppClosedModal.querySelector('div.cm-footnote');
 
       if (warning) {
-        warning.innerText = 'The latest changes made in this document could NOT be saved\nbefore the Main App tab was closed and will be lost.';
+        warning.innerText = 'The latest changes made in this document could NOT be saved\nbefore the Main Tab was closed and will be lost.';
         warning.style.color = '#FF274B';
       }
 

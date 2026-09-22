@@ -2214,9 +2214,10 @@
       btn.id = 'sk-main-app-btn';
       btn.className = 'sk-main-app-btn';
       btn.type = 'button';
+      var mainAppTitle = window.SK_DESKTOP_TRANSPORT ? 'Main App' : 'Main Tab';
       btn.innerHTML =
         '<span class="sk-main-app-btn__icon">' + SK_MAIN_APP_ICON_SVG + '</span>' +
-        '<span class="sk-main-app-btn__label">Main App</span>';
+        '<span class="sk-main-app-btn__label">' + mainAppTitle + '</span>';
 
       btn.onclick = function (e) {
         e.stopPropagation();
