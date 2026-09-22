@@ -91,6 +91,7 @@
     var events;                    // declared below; closed over by constructEditor
     var headerEditTooltip = null;
     var headerDownloadTooltip = null;
+    var headerSaveTooltip = null;
     var headerEditBtn  = null;     // our Edit button injected into the iframe header
                                    // (approach B); null until mountHeaderControls runs
     var headerSaveBtn  = null;     // our Save (diskette) button, same approach
@@ -1302,10 +1303,9 @@
                          : s === 'error' ? SK_SAVE_ICON_ERROR
                          : SK_SAVE_ICON_SVG;
       }
-      headerSaveBtn.title = ({
-        idle:'No unsaved changes', dirty:'Save (unsaved changes)', saving:'Saving…',
-        saved:'All changes saved', error:'Couldn’t save — click to retry'
-      })[s] || 'Save';
+        if (headerSaveTooltip) {
+            headerSaveTooltip.textContent = getSaveTooltipText();
+        }
     }
 
     // Called by wrapper-postmessage.js (via window.skSetSaveState) whenever the
@@ -1462,15 +1462,13 @@
          so it needs none of it. !important beats the non-important native rules. */
       '.sk-edit-tab:hover{box-shadow:none !important;background-color:transparent !important;}',
       '.sk-edit-tab::after,.sk-edit-tab::before{display:none !important;}',
-        '.sk-edit-tooltip{',
-        '  position:fixed;',
-        '  display:none;',
+        '.tooltip, .sk-edit-tooltip{',
         '  box-sizing:border-box;',
-        '  width: max-content;',
-        '  max-width: none;',
-        '  height:18px;',
-        '  padding:2px 8px;',
-        '  white-space: nowrap;',
+        '  width:max-content;',
+        '  max-width:none;',
+        '  min-height:18px;',
+        '  padding:2px 8px !important;',
+        '  white-space:nowrap;',
         '  border-radius:3px;',
         '  background:#728596;',
         '  color:#FFFFFF;',
@@ -1479,8 +1477,34 @@
         '  line-height:14px;',
         '  font-weight:400;',
         '  text-align:center;',
+        '  box-shadow:none;',
+        '}',
+
+        '.tooltip .tooltip-inner{',
+        '  padding:0;',
+        '  background:transparent;',
+        '  color:inherit;',
+        '  font:inherit;',
+        '  max-width:none;',
+        '}',
+
+        '.sk-edit-tooltip{',
+        '  position:fixed;',
+        '  display:none;',
+        '  height:18px;',
         '  z-index:100000;',
         '  pointer-events:none;',
+        '}',
+
+        '.tooltip *{',
+        '  border:none !important;',
+        '  outline:none !important;',
+        '  box-shadow:none !important;',
+        "  font-family:'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif !important;",
+        '  font-size:10px !important;',
+        '  line-height:14px !important;',
+        '  font-weight:400 !important;',
+        '  text-align:center !important;',
         '}',
       '.sk-edit-btn{',
       '  box-sizing:border-box;',
@@ -1866,6 +1890,79 @@
           headerDownloadTooltip.style.display = 'none';
       }
 
+      function getSaveTooltipText() {
+          switch (currentSaveState) {
+              case 'idle':
+                  return 'No unsaved changes';
+              case 'dirty':
+                  return 'Save';
+              case 'saving':
+                  return 'Saving…';
+              case 'saved':
+                  return 'All changes saved';
+              case 'error':
+                  return 'Couldn’t save — click to retry';
+              default:
+                  return 'Save';
+          }
+      }
+
+      function ensureSaveTooltip(doc) {
+          if (headerSaveTooltip && headerSaveTooltip.ownerDocument === doc) {
+              headerSaveTooltip.textContent = getSaveTooltipText();
+
+              return headerSaveTooltip;
+          }
+
+          headerSaveTooltip = doc.createElement('div');
+          headerSaveTooltip.className = 'sk-edit-tooltip';
+          headerSaveTooltip.textContent = getSaveTooltipText();
+
+          if (doc.body) {
+              doc.body.appendChild(headerSaveTooltip);
+          }
+
+          return headerSaveTooltip;
+      }
+
+      function showSaveTooltip() {
+          if (!headerSaveBtn) {
+              return;
+          }
+
+          var doc = headerSaveBtn.ownerDocument;
+          var tooltip = ensureSaveTooltip(doc);
+          var TOOLTIP_SCREEN_PADDING = 8;
+          var TOOLTIP_OFFSET = 6;
+          var rect = headerSaveBtn.getBoundingClientRect();
+
+          tooltip.style.display = 'block';
+
+          var tooltipRect = tooltip.getBoundingClientRect();
+          var left = rect.left + rect.width / 2 - tooltipRect.width / 2;
+          var top = rect.bottom + TOOLTIP_OFFSET;
+          var maxLeft = doc.documentElement.clientWidth - tooltipRect.width - TOOLTIP_SCREEN_PADDING;
+
+          if (left < TOOLTIP_SCREEN_PADDING) {
+              left = TOOLTIP_SCREEN_PADDING;
+          }
+
+          if (left > maxLeft) {
+              left = maxLeft;
+          }
+
+          tooltip.style.left = left + 'px';
+          tooltip.style.top = top + 'px';
+      }
+
+      function hideSaveTooltip() {
+          if (!headerSaveTooltip) {
+              return;
+          }
+
+          headerSaveTooltip.style.display = 'none';
+      }
+
       function onEditTabClick() {
           if (!headerEditBtn) {
               return;
@@ -2152,12 +2249,15 @@
     function mountSaveButton(doc) {
       var existing = doc.getElementById('sk-save-btn');
 
-      if (existing) {
-          headerSaveBtn = existing;
-          renderSaveButton();
+        if (existing) {
+            headerSaveBtn = existing;
+            existing.onmouseenter = showSaveTooltip;
+            existing.onmouseleave = hideSaveTooltip;
 
-          return true;
-      }
+            renderSaveButton();
+
+            return true;
+        }
 
       var nativeSlot = doc.getElementById('slot-btn-dt-save');
 
@@ -2173,6 +2273,8 @@
       btn.type = 'button';
       btn.innerHTML = '<span class="sk-save-btn__icon">' + SK_SAVE_ICON_SVG + '</span>';
       btn.onclick = onSaveButtonClick;
+        btn.onmouseenter = showSaveTooltip;
+        btn.onmouseleave = hideSaveTooltip;
       slot.appendChild(btn);
       // Insert where the diskette was (before the now-hidden native slot).
       nativeSlot.parentNode.insertBefore(slot, nativeSlot);
