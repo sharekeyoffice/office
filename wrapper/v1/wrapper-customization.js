@@ -77,7 +77,7 @@
           //      overlay/icons/ at /icons/sharekey-logo.svg.
           logo: {
             image:     '/icons/sharekey-logo.svg',
-            imageDark: '/icons/sharekey-logo.svg',
+            imageDark: '/icons/sharekey-logo-dark.svg',
             url:       ''
           },
 

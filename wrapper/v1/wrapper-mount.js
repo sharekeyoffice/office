@@ -2088,6 +2088,7 @@
         editorApi   = vp.getApi();
         editorApiNs = w.Asc;
         log('cacheEditorApi: editor api cached');
+        installMacControlClickContextMenu(w);
         // Hook the user-initiated restriction-change callback so dropdown
         // clicks (Editing↔Viewing) get bridged to the host.
         if (editorApi && typeof editorApi.asc_registerCallback === 'function') {
@@ -2199,6 +2200,91 @@
       };
     }
 
+      function ensurePresentationEditContextMenus(iframeWin) {
+          if (!iframeWin.PE || typeof iframeWin.PE.getController !== 'function') {
+              return;
+          }
+
+          var documentHolderController = iframeWin.PE.getController('DocumentHolder');
+          var documentHolderView = documentHolderController && documentHolderController.getView();
+
+          if (!documentHolderView || typeof documentHolderView.createDelayedElements !== 'function') {
+              return;
+          }
+
+          documentHolderView.createDelayedElements();
+
+          log('presentation edit context menus initialized');
+      }
+
+      function installMacControlClickContextMenu(iframeWin) {
+          var isUnsupportedEditorType = type === 'cell';
+          var isMacOS = !!(
+              iframeWin &&
+              iframeWin.navigator &&
+              iframeWin.navigator.platform.indexOf('Mac') === 0
+          );
+
+          if (isUnsupportedEditorType || !isMacOS) {
+              return;
+          }
+
+          var ascCommon = iframeWin.AscCommon;
+          var hasMouseEventHandlers = !!(
+              ascCommon &&
+              typeof ascCommon.check_MouseDownEvent === 'function' &&
+              typeof ascCommon.check_MouseUpEvent === 'function'
+          );
+
+          if (!hasMouseEventHandlers) {
+              return;
+          }
+
+          if (ascCommon.__customControlClickContextMenuInstalled) {
+              return;
+          }
+
+          ascCommon.__customControlClickContextMenuInstalled = true;
+
+          var originalCheckMouseDownEvent = ascCommon.check_MouseDownEvent;
+          var originalCheckMouseUpEvent = ascCommon.check_MouseUpEvent;
+
+          function normalizeControlClick(e) {
+              var isControlClick = !!(
+                  e &&
+                  e.ctrlKey &&
+                  e.button === 0 &&
+                  ascCommon.global_mouseEvent
+              );
+
+              if (!isControlClick) {
+                  return;
+              }
+
+              ascCommon.global_mouseEvent.Button = 2;
+              ascCommon.global_mouseEvent.CtrlKey = false;
+              ascCommon.global_mouseEvent.ctrlKey = false;
+          }
+
+          ascCommon.check_MouseDownEvent = function () {
+              var result = originalCheckMouseDownEvent.apply(this, arguments);
+
+              normalizeControlClick(arguments[0]);
+
+              return result;
+          };
+
+          ascCommon.check_MouseUpEvent = function () {
+              var result = originalCheckMouseUpEvent.apply(this, arguments);
+
+              normalizeControlClick(arguments[0]);
+
+              return result;
+          };
+
+          log('macOS Control + click context menu normalization installed');
+      }
+
     // Modelled on word's `disableEditing` (documenteditor/main/app/controller/
     // Main.js ~L865), with the same dynamic-per-call rationale as the cell/
     // slide builders: `viewMode` and `clear` sub-flags MUST mirror `disable`
@@ -2308,6 +2394,20 @@
           // it only affects review-related buttons.
           nc.trigger('reviewchanges:turn', false);
           editorApi.asc_setRestriction(disable ? R.View : R.None);
+
+          if (!disable) {
+              var documentHolderController = iframeWin.DE && iframeWin.DE.getController('DocumentHolder');
+              var documentHolderView = documentHolderController && documentHolderController.getView();
+              var shouldCreateDelayedElements = documentHolderView &&
+                  !documentHolderView.tableMenu &&
+                  typeof documentHolderView.createDelayedElements === 'function';
+
+              if (shouldCreateDelayedElements) {
+                  documentHolderView.createDelayedElements();
+              }
+            }
+
+            nc.trigger('doc:mode-changed', mode);
           log('applyRestriction(word): editing:disable ' + disable + ' + reviewchanges:turn false + asc_setRestriction(' + (disable ? 'View' : 'None') + ')');
         } else if (type === 'cell') {
           // Build flags per-call so `viewMode` (and `clear` sub-flags) track
@@ -2318,9 +2418,14 @@
           editorApi.asc_setRestriction(disable ? R.View : R.None);
           log('applyRestriction(cell): editing:disable ' + disable + ' + asc_setRestriction(' + (disable ? 'View' : 'None') + ')');
         } else if (type === 'slide') {
-          nc.trigger('editing:disable', disable, buildSlideDisableFlags(disable), 'view');
-          editorApi.asc_setRestriction(disable ? R.View : R.None);
-          log('applyRestriction(slide): editing:disable ' + disable + ' + asc_setRestriction(' + (disable ? 'View' : 'None') + ')');
+            nc.trigger('editing:disable', disable, buildSlideDisableFlags(disable), 'view');
+            editorApi.asc_setRestriction(disable ? R.View : R.None);
+
+            if (!disable) {
+                ensurePresentationEditContextMenus(iframeWin);
+            }
+
+            log('applyRestriction(slide): editing:disable ' + disable + ' + asc_setRestriction(' + (disable ? 'View' : 'None') + ')');
         } else {
           // Unknown type — fall back to the bare path.
           log('applyRestriction: unknown editor type "' + type + '" — falling back to bare asc_setRestriction');
