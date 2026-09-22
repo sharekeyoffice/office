@@ -1462,7 +1462,7 @@
          so it needs none of it. !important beats the non-important native rules. */
       '.sk-edit-tab:hover{box-shadow:none !important;background-color:transparent !important;}',
       '.sk-edit-tab::after,.sk-edit-tab::before{display:none !important;}',
-        '.tooltip, .sk-edit-tooltip{',
+        '.tooltip, .sk-tooltip{',
         '  box-sizing:border-box;',
         '  width:max-content;',
         '  max-width:none;',
@@ -1488,7 +1488,7 @@
         '  max-width:none;',
         '}',
 
-        '.sk-edit-tooltip{',
+        '.sk-tooltip{',
         '  position:fixed;',
         '  display:none;',
         '  height:18px;',
@@ -1730,7 +1730,7 @@
           }
 
           headerEditTooltip = doc.createElement('div');
-          headerEditTooltip.className = 'sk-edit-tooltip';
+          headerEditTooltip.className = 'sk-tooltip';
           headerEditTooltip.textContent = getEditTooltipText();
 
           if (doc.body) {
@@ -1775,45 +1775,6 @@
           log('showOnlyOfficeWelcomeScreen');
       }
 
-      function showEditTooltip() {
-          if (!headerEditBtn) {
-              return;
-          }
-
-          if (!headerEditBtn.classList.contains('is-locked')) {
-              return;
-          }
-
-          var doc = headerEditBtn.ownerDocument;
-          var tooltip = ensureEditTooltip(doc);
-
-          if (!tooltip) {
-              return;
-          }
-
-          var TOOLTIP_SCREEN_PADDING = 8;
-          var TOOLTIP_OFFSET = 6;
-          var rect = headerEditBtn.getBoundingClientRect();
-
-          tooltip.style.display = 'block';
-
-          var tooltipRect = tooltip.getBoundingClientRect();
-          var left = rect.left + rect.width / 2 - tooltipRect.width / 2;
-          var top = rect.bottom + TOOLTIP_OFFSET;
-          var maxLeft = doc.documentElement.clientWidth - tooltipRect.width - TOOLTIP_SCREEN_PADDING;
-
-          if (left < TOOLTIP_SCREEN_PADDING) {
-              left = TOOLTIP_SCREEN_PADDING;
-          }
-
-          if (left > maxLeft) {
-              left = maxLeft;
-          }
-
-          tooltip.style.left = left + 'px';
-          tooltip.style.top = top + 'px';
-      }
-
       function hideEditTooltip() {
           if (!headerEditTooltip) {
               return;
@@ -1842,7 +1803,7 @@
           }
 
           headerDownloadTooltip = doc.createElement('div');
-          headerDownloadTooltip.className = 'sk-edit-tooltip';
+          headerDownloadTooltip.className = 'sk-tooltip';
           headerDownloadTooltip.textContent = getDownloadTooltipText();
 
           if (doc.body) {
@@ -1850,36 +1811,6 @@
           }
 
           return headerDownloadTooltip;
-      }
-
-      function showDownloadTooltip() {
-          if (!headerDownloadBtn) {
-              return;
-          }
-
-          var doc = headerDownloadBtn.ownerDocument;
-          var tooltip = ensureDownloadTooltip(doc);
-          var TOOLTIP_SCREEN_PADDING = 8;
-          var TOOLTIP_OFFSET = 6;
-          var rect = headerDownloadBtn.getBoundingClientRect();
-
-          tooltip.style.display = 'block';
-
-          var tooltipRect = tooltip.getBoundingClientRect();
-          var left = rect.left + rect.width / 2 - tooltipRect.width / 2;
-          var top = rect.bottom + TOOLTIP_OFFSET;
-          var maxLeft = doc.documentElement.clientWidth - tooltipRect.width - TOOLTIP_SCREEN_PADDING;
-
-          if (left < TOOLTIP_SCREEN_PADDING) {
-              left = TOOLTIP_SCREEN_PADDING;
-          }
-
-          if (left > maxLeft) {
-              left = maxLeft;
-          }
-
-          tooltip.style.left = left + 'px';
-          tooltip.style.top = top + 'px';
       }
 
       function hideDownloadTooltip() {
@@ -1915,7 +1846,7 @@
           }
 
           headerSaveTooltip = doc.createElement('div');
-          headerSaveTooltip.className = 'sk-edit-tooltip';
+          headerSaveTooltip.className = 'sk-tooltip';
           headerSaveTooltip.textContent = getSaveTooltipText();
 
           if (doc.body) {
@@ -1925,16 +1856,25 @@
           return headerSaveTooltip;
       }
 
-      function showSaveTooltip() {
-          if (!headerSaveBtn) {
+      function showTooltip(type, button) {
+          var doc = headerSaveBtn.ownerDocument;
+          var tooltip;
+
+          if (type === 'save') {
+              tooltip = ensureSaveTooltip(doc);
+          } else if (type === 'edit') {
+              tooltip = ensureEditTooltip(doc);
+          } else if (type === 'download') {
+              tooltip = ensureDownloadTooltip(doc);
+          }
+
+          if (!tooltip) {
               return;
           }
 
-          var doc = headerSaveBtn.ownerDocument;
-          var tooltip = ensureSaveTooltip(doc);
           var TOOLTIP_SCREEN_PADDING = 8;
           var TOOLTIP_OFFSET = 6;
-          var rect = headerSaveBtn.getBoundingClientRect();
+          var rect = button.getBoundingClientRect();
 
           tooltip.style.display = 'block';
 
@@ -2084,7 +2024,11 @@
 
           if (existing) {
               headerDownloadBtn = existing;
-              existing.onmouseenter = showDownloadTooltip;
+              existing.onmouseenter = function () {
+                  if (headerDownloadBtn) {
+                      showTooltip('download', headerDownloadBtn);
+                  }
+              };
               existing.onmouseleave = hideDownloadTooltip;
 
               renderDownloadButton();
@@ -2113,7 +2057,11 @@
               DOWNLOAD_ICON_SVG +
               '</span>';
 
-          btn.onmouseenter = showDownloadTooltip;
+          btn.onmouseenter = function () {
+              if (headerDownloadBtn) {
+                  showTooltip('download', headerDownloadBtn);
+              }
+          };
           btn.onmouseleave = hideDownloadTooltip;
           btn.onclick = function () {
               if (!pm || !canDownload || isDownloading) {
@@ -2162,7 +2110,11 @@
 
           if (existing.parentNode) {
             existing.parentNode.onclick = onEditTabClick;
-            existing.parentNode.onmouseenter = showEditTooltip;
+            existing.parentNode.onmouseenter = function() {
+                if (headerEditBtn && headerEditBtn.classList.contains('is-locked')) {
+                    showTooltip('edit', headerEditBtn);
+                }
+            };
             existing.parentNode.onmouseleave = hideEditTooltip;
           }
 
@@ -2180,7 +2132,11 @@
       var slot = doc.createElement('li');
       slot.className = 'sk-edit-tab';
       slot.onclick = onEditTabClick;
-      slot.onmouseenter = showEditTooltip;
+      slot.onmouseenter = function() {
+          if (headerEditBtn && headerEditBtn.classList.contains('is-locked')) {
+              showTooltip('edit', headerEditBtn);
+          }
+      };
       slot.onmouseleave = hideEditTooltip;
       var btn = doc.createElement('button');
       btn.id = 'sk-edit-btn';
@@ -2251,7 +2207,11 @@
 
         if (existing) {
             headerSaveBtn = existing;
-            existing.onmouseenter = showSaveTooltip;
+            existing.onmouseenter = function() {
+                if (headerSaveBtn) {
+                    showTooltip('save', headerSaveBtn);
+                }
+            };
             existing.onmouseleave = hideSaveTooltip;
 
             renderSaveButton();
@@ -2273,8 +2233,12 @@
       btn.type = 'button';
       btn.innerHTML = '<span class="sk-save-btn__icon">' + SK_SAVE_ICON_SVG + '</span>';
       btn.onclick = onSaveButtonClick;
-        btn.onmouseenter = showSaveTooltip;
-        btn.onmouseleave = hideSaveTooltip;
+      btn.onmouseenter = function() {
+          if (headerSaveBtn) {
+              showTooltip('save', headerSaveBtn);
+          }
+      };
+      btn.onmouseleave = hideSaveTooltip;
       slot.appendChild(btn);
       // Insert where the diskette was (before the now-hidden native slot).
       nativeSlot.parentNode.insertBefore(slot, nativeSlot);
@@ -3041,9 +3005,8 @@
         log('handlePermissions: canDownload = ' + canDownload);
         log('handlePermissions: isLargeFile = ' + isLargeFile);
         // Re-render the Edit button + editing label to reflect the new capability
-        // (renderEditButton hides the button when !canEdit). The controls are
-        // mounted unconditionally by the poller, so this just flips visibility —
-        // no DOM removal/race.
+        // (edit button hides when pm.isExternal === true).
+        // The controls are mounted pm.isExternal === false, otherwise only download button.
         updateOverlayUI();
     }
     window.handlePermissions = handlePermissions;
@@ -3063,7 +3026,7 @@
         bindTurnOnEditModeModal();
         bindDesktopClosingModal();
         bindViewerModeModal();
-          bindViewOnlyModeModal();
+        bindViewOnlyModeModal();
         bindOnlyOfficeWelcomeScreen();
         bindSaveShortcutListeners();
         bindBlockedContentCopyListeners(document);
