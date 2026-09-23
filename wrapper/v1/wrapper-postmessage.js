@@ -71,6 +71,7 @@
     this.closeAfterSaveAck  = false;
     this.pendingSaveRequest = null;
     this.hasSaveFailedOnClose = false;
+    this.pendingDownloadPermissionResolve = null;
 
     // Chunk-diff self-check state. lastFullBytes is the OOXML we sent on
     // the previous `saved`; on the next save we run a round-trip check via
@@ -132,7 +133,32 @@
     }
   };
 
-  WrapperPostMessage.prototype.downloadCurrentFile = function (isEditMode) {
+  WrapperPostMessage.prototype.commitActiveSpreadsheetCell = function () {
+    if (this.editorType !== 'cell') {
+      return true;
+    }
+
+    var iframe = this.findIframe();
+    var iframeWindow = iframe && iframe.contentWindow;
+
+    var spreadsheetApi =
+        iframeWindow &&
+        iframeWindow.SSE &&
+        iframeWindow.SSE.controllers &&
+        iframeWindow.SSE.controllers.Main &&
+        iframeWindow.SSE.controllers.Main.api;
+
+    if (
+        !spreadsheetApi ||
+        typeof spreadsheetApi.asc_closeCellEditor !== 'function'
+    ) {
+      return true;
+    }
+
+    return spreadsheetApi.asc_closeCellEditor() !== false;
+  };
+
+  WrapperPostMessage.prototype.downloadCurrentFile = function () {
     var self = this;
     var formatByEditor = {
       word: 'docx',
@@ -149,84 +175,55 @@
       return Promise.reject(formatError);
     }
 
-    if (isEditMode) {
-      self.requestManualSave();
-    }
+    return self.requestDownloadPermission().then(function (canDownload) {
+      if (!canDownload) {
+        throw new Error('Downloading is not allowed');
+      }
 
-    var iframe = self.findIframe();
+      var iframe = self.findIframe();
 
-    if (!iframe || !iframe.contentWindow) {
-      var iframeError = new Error('editor iframe not available');
+      if (!iframe || !iframe.contentWindow) {
+        throw new Error('editor iframe not available');
+      }
 
-      log('download failed: ' + iframeError.message);
+      var capture = iframe.contentWindow.__captureSave;
 
-      return Promise.reject(iframeError);
-    }
+      if (typeof capture !== 'function') {
+        throw new Error('__captureSave is not available');
+      }
 
-    var capture = iframe.contentWindow.__captureSave;
+      var binBytes;
 
-    if (typeof capture !== 'function') {
-      var captureMissingError = new Error('__captureSave is not available');
+      try {
+        if (!self.commitActiveSpreadsheetCell()) {
+          throw new Error('Could not commit the active spreadsheet cell');
+        }
 
-      log('download failed: ' + captureMissingError.message);
+        binBytes = capture();
+      } catch (e) {
+        throw new Error('failed to capture current editor state: ' + (e && e.message ? e.message : e));
+      }
 
-      return Promise.reject(captureMissingError);
-    }
+      if (!binBytes || typeof binBytes.length !== 'number' || binBytes.length === 0) {
+        throw new Error('captured editor state is empty');
+      }
 
-    var binBytes;
+      var x2t;
 
-    try {
-      binBytes = capture();
-    } catch (e) {
-      var captureError = new Error(
-          'failed to capture current editor state: ' +
-          (e && e.message ? e.message : e)
-      );
+      try {
+        x2t = self.ensureX2T();
+      } catch (e) {
+        throw new Error('X2T is not available: ' + (e && e.message ? e.message : e));
+      }
 
-      log('download failed: ' + captureError.message);
+      if (typeof x2t.convertFromBin !== 'function') {
+        throw new Error('X2T convertFromBin is not available');
+      }
 
-      return Promise.reject(captureError);
-    }
+      log('download current file: format=' + ext);
 
-    if (!binBytes || typeof binBytes.length !== 'number' || binBytes.length === 0) {
-      var emptyCaptureError = new Error('captured editor state is empty');
-
-      log('download failed: ' + emptyCaptureError.message);
-
-      return Promise.reject(emptyCaptureError);
-    }
-
-    var x2t;
-
-    try {
-      x2t = self.ensureX2T();
-    } catch (e) {
-      var x2tError = new Error(
-          'X2T is not available: ' +
-          (e && e.message ? e.message : e)
-      );
-
-      log('download failed: ' + x2tError.message);
-
-      return Promise.reject(x2tError);
-    }
-
-    if (typeof x2t.convertFromBin !== 'function') {
-      var conversionUnavailableError = new Error('X2T convertFromBin is not available');
-
-      log('download failed: ' + conversionUnavailableError.message);
-
-      return Promise.reject(conversionUnavailableError);
-    }
-
-    log(
-        'download current file: mode=' +
-        (isEditMode ? 'edit' : 'view') +
-        ', format=' +
-        ext
-    );
-
-    return x2t.convertFromBin(binBytes, ext).then(function (fileBytes) {
+      return x2t.convertFromBin(binBytes, ext);
+    }).then(function (fileBytes) {
       if (!fileBytes || typeof fileBytes.length !== 'number' || fileBytes.length === 0) {
         throw new Error('converted file is empty');
       }
@@ -307,6 +304,34 @@
     });
   };
 
+  WrapperPostMessage.prototype.requestDownloadPermission = function () {
+    var self = this;
+
+    if (self.pendingDownloadPermissionResolve) {
+      return Promise.reject(new Error('download permission request already pending'));
+    }
+
+    return new Promise(function (resolve) {
+      self.pendingDownloadPermissionResolve = resolve;
+
+      self.toHost({
+        type: 'request-download'
+      });
+    });
+  };
+
+  WrapperPostMessage.prototype.onDownloadPermission = function (msg) {
+    if (!this.pendingDownloadPermissionResolve) {
+      return;
+    }
+
+    var resolve = this.pendingDownloadPermissionResolve;
+
+    this.pendingDownloadPermissionResolve = null;
+
+    resolve(msg.canDownload === true);
+  };
+
   WrapperPostMessage.prototype.toHost = function (msg, transfer) {
     msg.v = POST_VERSION;
 
@@ -350,6 +375,10 @@
         if (window.SK_DESKTOP_TRANSPORT) {
           window.dispatchEvent(new Event('host-ping'));
         }
+
+        return;
+      case 'download-permission':
+        this.onDownloadPermission(d);
 
         return;
       case 'load':
@@ -829,7 +858,6 @@
       this.pendingSaveRequest = {
         requestId: requestId,
         format: msg.format,
-        isDesktopAppClose: msg.isDesktopAppClose === true
       };
 
       log('save-request queued behind pending saveId=' + this.pendingSaveId);
@@ -842,48 +870,7 @@
       this.autosaveTimer = null;
     }
 
-    this.runSaveRequest(
-        requestId,
-        msg.format,
-        msg.isDesktopAppClose === true
-    );
-  };
-
-  WrapperPostMessage.prototype.runSaveRequest = function (
-      requestId,
-      format,
-      isDesktopAppClose
-  ) {
-    if (window.SK_DESKTOP_TRANSPORT && isDesktopAppClose) {
-      var iframe = this.findIframe();
-      var iframeWindow = iframe && iframe.contentWindow;
-
-      var spreadsheetApi =
-          iframeWindow &&
-          iframeWindow.SSE &&
-          iframeWindow.SSE.controllers &&
-          iframeWindow.SSE.controllers.Main &&
-          iframeWindow.SSE.controllers.Main.api;
-
-      if (
-          spreadsheetApi &&
-          typeof spreadsheetApi.asc_closeCellEditor === 'function'
-      ) {
-        log('desktop app close → committing active spreadsheet cell');
-
-        var isCellEditorClosed = spreadsheetApi.asc_closeCellEditor();
-
-        if (isCellEditorClosed === false) {
-          return this.error(
-              'CELL_EDIT_COMMIT_FAILED',
-              'Could not commit the active spreadsheet cell',
-              requestId
-          );
-        }
-      }
-    }
-
-    this.captureAndSend(requestId, format);
+    this.captureAndSend(requestId, msg.format);
   };
 
   WrapperPostMessage.prototype.runPendingSaveRequest = function () {
@@ -931,6 +918,18 @@
 
     self.toHost({ type: 'progress', stage: 'saving', requestId: saveId });
     self.setSaveState('saving');
+
+    if (!self.commitActiveSpreadsheetCell()) {
+      self.setSaveState('error');
+      self.error(
+          'CELL_EDIT_COMMIT_FAILED',
+          'Could not commit the active spreadsheet cell',
+          saveId
+      );
+      self.handleFailedSaveOnClose();
+
+      return;
+    }
 
     var binBytes;
 

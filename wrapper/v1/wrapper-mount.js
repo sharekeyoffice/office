@@ -2073,7 +2073,7 @@
               isDownloading = true;
               renderDownloadButton();
 
-              pm.downloadCurrentFile(currentMode === 'edit')
+              pm.downloadCurrentFile()
                   .catch(function (e) {
                       log('download failed: ' + (e && e.message ? e.message : e));
                   })
