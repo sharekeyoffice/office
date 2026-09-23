@@ -71,6 +71,7 @@
     this.closeAfterSaveAck  = false;
     this.pendingSaveRequest = null;
     this.hasSaveFailedOnClose = false;
+    this.pendingDownloadPermissionResolve = null;
 
     // Chunk-diff self-check state. lastFullBytes is the OOXML we sent on
     // the previous `saved`; on the next save we run a round-trip check via
@@ -132,6 +133,205 @@
     }
   };
 
+  WrapperPostMessage.prototype.commitActiveSpreadsheetCell = function () {
+    if (this.editorType !== 'cell') {
+      return true;
+    }
+
+    var iframe = this.findIframe();
+    var iframeWindow = iframe && iframe.contentWindow;
+
+    var spreadsheetApi =
+        iframeWindow &&
+        iframeWindow.SSE &&
+        iframeWindow.SSE.controllers &&
+        iframeWindow.SSE.controllers.Main &&
+        iframeWindow.SSE.controllers.Main.api;
+
+    if (
+        !spreadsheetApi ||
+        typeof spreadsheetApi.asc_closeCellEditor !== 'function'
+    ) {
+      return true;
+    }
+
+    return spreadsheetApi.asc_closeCellEditor() !== false;
+  };
+
+  WrapperPostMessage.prototype.downloadCurrentFile = function () {
+    var self = this;
+    var formatByEditor = {
+      word: 'docx',
+      cell: 'xlsx',
+      slide: 'pptx'
+    };
+    var ext = formatByEditor[self.editorType];
+
+    if (!ext) {
+      var formatError = new Error('file format is not recognized');
+
+      log('download failed: ' + formatError.message);
+
+      return Promise.reject(formatError);
+    }
+
+    return self.requestDownloadPermission().then(function (canDownload) {
+      if (!canDownload) {
+        throw new Error('Downloading is not allowed');
+      }
+
+      var iframe = self.findIframe();
+
+      if (!iframe || !iframe.contentWindow) {
+        throw new Error('editor iframe not available');
+      }
+
+      var capture = iframe.contentWindow.__captureSave;
+
+      if (typeof capture !== 'function') {
+        throw new Error('__captureSave is not available');
+      }
+
+      var binBytes;
+
+      try {
+        if (!self.commitActiveSpreadsheetCell()) {
+          throw new Error('Could not commit the active spreadsheet cell');
+        }
+
+        binBytes = capture();
+      } catch (e) {
+        throw new Error('failed to capture current editor state: ' + (e && e.message ? e.message : e));
+      }
+
+      if (!binBytes || typeof binBytes.length !== 'number' || binBytes.length === 0) {
+        throw new Error('captured editor state is empty');
+      }
+
+      var x2t;
+
+      try {
+        x2t = self.ensureX2T();
+      } catch (e) {
+        throw new Error('X2T is not available: ' + (e && e.message ? e.message : e));
+      }
+
+      if (typeof x2t.convertFromBin !== 'function') {
+        throw new Error('X2T convertFromBin is not available');
+      }
+
+      log('download current file: format=' + ext);
+
+      return x2t.convertFromBin(binBytes, ext);
+    }).then(function (fileBytes) {
+      if (!fileBytes || typeof fileBytes.length !== 'number' || fileBytes.length === 0) {
+        throw new Error('converted file is empty');
+      }
+
+      var fileName =
+          (self._lastFileName || 'document').replace(/\.[^.]+$/, '') +
+          '.' +
+          ext;
+
+      var blob;
+
+      try {
+        blob = new Blob([fileBytes], {
+          type: 'application/octet-stream'
+        });
+      } catch (e) {
+        throw new Error(
+            'failed to create download blob: ' +
+            (e && e.message ? e.message : e)
+        );
+      }
+
+      var url;
+
+      try {
+        url = URL.createObjectURL(blob);
+      } catch (e) {
+        throw new Error(
+            'failed to create download URL: ' +
+            (e && e.message ? e.message : e)
+        );
+      }
+
+      var link = document.createElement('a');
+
+      link.href = url;
+      link.download = fileName;
+      link.style.display = 'none';
+
+      try {
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      } catch (e) {
+        link.remove();
+        URL.revokeObjectURL(url);
+
+        throw new Error(
+            'failed to start browser download: ' +
+            (e && e.message ? e.message : e)
+        );
+      }
+
+      setTimeout(function () {
+        URL.revokeObjectURL(url);
+      }, 0);
+
+      log(
+          'downloaded ' +
+          fileName +
+          ' (' +
+          fileBytes.length +
+          ' bytes)'
+      );
+
+      return {
+        fileName: fileName,
+        bytesLength: fileBytes.length
+      };
+    }).catch(function (e) {
+      var error = e instanceof Error
+          ? e
+          : new Error(String(e));
+
+      log('download failed: ' + error.message);
+
+      throw error;
+    });
+  };
+
+  WrapperPostMessage.prototype.requestDownloadPermission = function () {
+    var self = this;
+
+    if (self.pendingDownloadPermissionResolve) {
+      return Promise.reject(new Error('download permission request already pending'));
+    }
+
+    return new Promise(function (resolve) {
+      self.pendingDownloadPermissionResolve = resolve;
+
+      self.toHost({
+        type: 'request-download'
+      });
+    });
+  };
+
+  WrapperPostMessage.prototype.onDownloadPermission = function (msg) {
+    if (!this.pendingDownloadPermissionResolve) {
+      return;
+    }
+
+    var resolve = this.pendingDownloadPermissionResolve;
+
+    this.pendingDownloadPermissionResolve = null;
+
+    resolve(msg.canDownload === true);
+  };
+
   WrapperPostMessage.prototype.toHost = function (msg, transfer) {
     msg.v = POST_VERSION;
 
@@ -175,6 +375,10 @@
         if (window.SK_DESKTOP_TRANSPORT) {
           window.dispatchEvent(new Event('host-ping'));
         }
+
+        return;
+      case 'download-permission':
+        this.onDownloadPermission(d);
 
         return;
       case 'load':
@@ -500,9 +704,11 @@
     var self = this;
     var requestId = msg.requestId || null;
     var shouldShowOnlyOfficeWelcomeScreen = msg.shouldShowOnlyOfficeWelcomeScreen === true;
+    var isExternal = msg.isExternal === true;
 
     self.requestId = requestId;
     self.shouldShowOnlyOfficeWelcomeScreen = shouldShowOnlyOfficeWelcomeScreen;
+    self.isExternal = isExternal;
 
     var ab = (msg.bytes instanceof ArrayBuffer) ? msg.bytes :
              (msg.bytes && msg.bytes.buffer instanceof ArrayBuffer) ? msg.bytes.buffer :
@@ -652,7 +858,6 @@
       this.pendingSaveRequest = {
         requestId: requestId,
         format: msg.format,
-        isDesktopAppClose: msg.isDesktopAppClose === true
       };
 
       log('save-request queued behind pending saveId=' + this.pendingSaveId);
@@ -665,48 +870,7 @@
       this.autosaveTimer = null;
     }
 
-    this.runSaveRequest(
-        requestId,
-        msg.format,
-        msg.isDesktopAppClose === true
-    );
-  };
-
-  WrapperPostMessage.prototype.runSaveRequest = function (
-      requestId,
-      format,
-      isDesktopAppClose
-  ) {
-    if (window.SK_DESKTOP_TRANSPORT && isDesktopAppClose) {
-      var iframe = this.findIframe();
-      var iframeWindow = iframe && iframe.contentWindow;
-
-      var spreadsheetApi =
-          iframeWindow &&
-          iframeWindow.SSE &&
-          iframeWindow.SSE.controllers &&
-          iframeWindow.SSE.controllers.Main &&
-          iframeWindow.SSE.controllers.Main.api;
-
-      if (
-          spreadsheetApi &&
-          typeof spreadsheetApi.asc_closeCellEditor === 'function'
-      ) {
-        log('desktop app close → committing active spreadsheet cell');
-
-        var isCellEditorClosed = spreadsheetApi.asc_closeCellEditor();
-
-        if (isCellEditorClosed === false) {
-          return this.error(
-              'CELL_EDIT_COMMIT_FAILED',
-              'Could not commit the active spreadsheet cell',
-              requestId
-          );
-        }
-      }
-    }
-
-    this.captureAndSend(requestId, format);
+    this.captureAndSend(requestId, msg.format);
   };
 
   WrapperPostMessage.prototype.runPendingSaveRequest = function () {
@@ -754,6 +918,18 @@
 
     self.toHost({ type: 'progress', stage: 'saving', requestId: saveId });
     self.setSaveState('saving');
+
+    if (!self.commitActiveSpreadsheetCell()) {
+      self.setSaveState('error');
+      self.error(
+          'CELL_EDIT_COMMIT_FAILED',
+          'Could not commit the active spreadsheet cell',
+          saveId
+      );
+      self.handleFailedSaveOnClose();
+
+      return;
+    }
 
     var binBytes;
 
@@ -954,7 +1130,7 @@
       var warning = mainAppClosedModal.querySelector('div.cm-footnote');
 
       if (warning) {
-        warning.innerText = 'The latest changes made in this document could NOT be saved\nbefore the Main App tab was closed and will be lost.';
+        warning.innerText = 'The latest changes made in this document could NOT be saved\nbefore the Main Tab was closed and will be lost.';
         warning.style.color = '#FF274B';
       }
 
