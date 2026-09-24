@@ -1162,7 +1162,7 @@
       window.skSetSaveState('error');
     }
 
-    mainAppClosedModal.style.display = 'flex';
+    window.modalManager.show('main-app-closed-modal');
 
     if (closeButton) {
       closeButton.onclick = function () {
@@ -1193,7 +1193,7 @@
       window.skSetSaveState('error');
     }
 
-    mainAppClosedModal.style.display = 'flex';
+    window.modalManager.show('main-app-logged-out-modal');
 
     if (closeButton) {
       closeButton.onclick = function () {

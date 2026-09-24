@@ -31,7 +31,7 @@ const ORIGIN  = process.env.ALLOWED_HOST_ORIGIN || 'http://localhost:3000';
 const GLUE = [
   'editor-stubs.js', 'wrapper-boot.js', 'wrapper-customization.js',
   'wrapper-mount.js', 'wrapper-postmessage.js', 'wrapper-heartbeat.js',
-  'x2t-bridge.js', 'edit-host-demo.html',
+  'wrapper-modal-manager.js', 'x2t-bridge.js', 'edit-host-demo.html',
 ];
 
 function cpFile(src, dst) {

@@ -27,8 +27,6 @@
 
   var cannotReconnectModal = document.getElementById("cannot-reconnect-modal");
   var reconnectingModal = document.getElementById("reconnecting-modal");
-  var closedHostModal = document.getElementById("main-app-closed-modal");
-  var loggedOutModal = document.getElementById("main-app-logged-out-modal");
 
   var cannotReconnectCloseBtn = document.getElementById("crm-close-btn");
   var reconnectingCloseBtn = document.getElementById("rm-close-btn");
@@ -131,11 +129,7 @@
   }
 
   function showConnectionLost(reason) {
-    var shouldShowModal = !isCannotReconnectModalShown &&
-        (!loggedOutModal || getComputedStyle(loggedOutModal).display === 'none') &&
-        (!closedHostModal || getComputedStyle(closedHostModal).display === 'none');
-
-    if (!shouldShowModal) {
+    if (isCannotReconnectModalShown) {
       return;
     }
 
@@ -177,7 +171,7 @@
       }
     }
 
-    cannotReconnectModal.style.display = "flex";
+    window.modalManager.show('cannot-reconnect-modal');
 
     if (isSavingFailed) {
       window.skSetSaveState("error");
@@ -215,11 +209,7 @@
   }
 
   function showReconnecting() {
-    var shouldShowModal = !isReconnectingModalShow &&
-        (!loggedOutModal || getComputedStyle(loggedOutModal).display === 'none') &&
-        (!closedHostModal || getComputedStyle(closedHostModal).display === 'none');
-
-    if (!shouldShowModal) {
+    if (isReconnectingModalShow) {
       return;
     }
 
@@ -260,7 +250,7 @@
       }
     }
 
-    reconnectingModal.style.display = "flex";
+    window.modalManager.show('reconnecting-modal');
 
     if (isSavingFailed) {
       window.skSetSaveState("error");
@@ -272,7 +262,7 @@
       return;
     }
 
-    reconnectingModal.style.display = "none";
+    window.modalManager.hide('reconnecting-modal');
     isReconnectingModalShow = false;
   }
 
@@ -451,7 +441,7 @@
 
     if (isCannotReconnectModalShown) {
       isCannotReconnectModalShown = false;
-      cannotReconnectModal.style.display = 'none';
+      window.modalManager.hide('cannot-reconnect-modal');
 
       hbLog('connection restored');
     }

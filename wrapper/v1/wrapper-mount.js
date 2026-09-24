@@ -393,12 +393,6 @@
           return true;
       }
 
-      function isTurnOnEditModeModalVisible() {
-          var modal = document.getElementById('turn-on-edit-mode');
-
-          return !!(modal && modal.style.display === 'flex');
-      }
-
       function focusTurnOnEditModeModal() {
           var modal = document.getElementById('turn-on-edit-mode');
 
@@ -411,7 +405,7 @@
       }
 
       function handleTurnOnEditModeModalKeyDown(e) {
-          if (!isTurnOnEditModeModalVisible()) {
+          if (!window.modalManager.isActive('turn-on-edit-mode')) {
               return;
           }
 
@@ -799,7 +793,7 @@
         return;
       }
 
-      modal.style.display = 'flex';
+      window.modalManager.show('turn-on-edit-mode');
 
       focusTurnOnEditModeModal();
 
@@ -835,7 +829,7 @@
 
           rememberBlockedEditAttemptFocus();
 
-          modal.style.display = 'flex';
+          window.modalManager.show('cannot-start-edit-mode');
 
           log('showDesktopClosingModal');
       }
@@ -858,12 +852,12 @@
           modal.__desktopClosingBound = true;
 
           closeButton.onclick = function () {
-              modal.style.display = 'none';
+              window.modalManager.hide('cannot-start-edit-mode');
               restoreBlockedEditAttemptFocus();
           };
 
           confirmButton.onclick = function () {
-              modal.style.display = 'none';
+              window.modalManager.hide('cannot-start-edit-mode');
               restoreBlockedEditAttemptFocus();
 
               if (pm) {
@@ -912,7 +906,7 @@
               descriptions[2].style.color = '#2FA0AF';
           }
 
-          modal.style.display = 'flex';
+          window.modalManager.show('view-only-mode');
       }
 
       // Shows the outer-page modal for the case where the user tries to edit while
@@ -939,7 +933,7 @@
               firstDescription.style.display = hideFirstDescription ? 'none' : '';
           }
 
-          modal.style.display = 'flex';
+          window.modalManager.show('viewer-mode');
 
           log('showViewerModeModal: lock held by ' + userName);
       }
@@ -966,7 +960,7 @@
       document.addEventListener('keydown', handleTurnOnEditModeModalKeyDown, true);
 
       editButton.onclick = function () {
-        modal.style.display = 'none';
+          window.modalManager.hide('turn-on-edit-mode');
 
         restoreBlockedEditAttemptFocus();
 
@@ -976,7 +970,7 @@
       };
 
       closeButton.onclick = function () {
-        modal.style.display = 'none';
+        window.modalManager.hide('turn-on-edit-mode');
 
         restoreBlockedEditAttemptFocus();
 
@@ -1002,13 +996,13 @@
         modal.__viewOnlyModeBound = true;
 
         closeButton.onclick = function () {
-            modal.style.display = 'none';
+            window.modalManager.hide('view-only-mode');
 
             log('user closed view-only-mode modal');
         };
 
         confirmButton.onclick = function () {
-            modal.style.display = 'none';
+            window.modalManager.hide('view-only-mode');
 
             log('user closed view-only-mode modal');
         };
@@ -1032,13 +1026,13 @@
           modal.__viewerModeBound = true;
 
           closeButton.onclick = function () {
-              modal.style.display = 'none';
+              window.modalManager.hide('viewer-mode');
 
               log('user closed viewer-mode modal');
           };
 
           confirmButton.onclick = function () {
-              modal.style.display = 'none';
+              window.modalManager.hide('viewer-mode');
 
               log('user closed viewer-mode modal');
           };
@@ -1774,7 +1768,7 @@
           modal.__onlyOfficeWelcomeScreenBound = true;
 
           closeButton.onclick = function () {
-              modal.style.display = 'none';
+              window.modalManager.hide('welcome-screen');
 
               log('user closed onlyoffice welcome screen');
           };
@@ -1788,7 +1782,7 @@
               return;
           }
 
-          modal.style.display = 'flex';
+          window.modalManager.show('welcome-screen');
 
           log('showOnlyOfficeWelcomeScreen');
       }
@@ -3273,13 +3267,11 @@
               return;
           }
 
-          var cannotReconnectModal = document.getElementById("cannot-reconnect-modal");
-          var closedHostModal = document.getElementById("main-app-closed-modal");
-          var loggedOutModal = document.getElementById("main-app-logged-out-modal");
-          var isNativeCloseConfirmationNeeded = window.__editorDirty &&
-              (!cannotReconnectModal || getComputedStyle(cannotReconnectModal).display === 'none') &&
-              (!loggedOutModal || getComputedStyle(loggedOutModal).display === 'none') &&
-              (!closedHostModal || getComputedStyle(closedHostModal).display === 'none');
+          var isNativeCloseConfirmationNeeded =
+              window.__editorDirty &&
+              !window.modalManager.isActive('cannot-reconnect-modal') &&
+              !window.modalManager.isActive('main-app-logged-out-modal') &&
+              !window.modalManager.isActive('main-app-closed-modal');
 
           if (isNativeCloseConfirmationNeeded) {
               e.preventDefault();
