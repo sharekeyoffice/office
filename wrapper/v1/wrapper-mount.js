@@ -113,6 +113,8 @@
     var canDownload = false;
     var isLargeFile = false;
     var isDownloading = false;
+    var editModeTransition = null; // null | 'opening' | 'exiting'
+    var isDownloadStarting = false;
     var canEdit        = true;     // role-gated edit capability, set by the main app's
                                    // `permissions` message (EDIT_CONTENT right). false ⇒ the
                                    // Edit button + "editing" label are never shown and
@@ -1236,14 +1238,21 @@
               label.textContent = 'Edit';
           }
 
-          if (currentMode === 'view' && lockHolder) {
+          if (editModeTransition !== null) {
+              headerEditBtn.classList.add('is-locked');
+              headerEditBtn.disabled = true;
+          } else if (currentMode === 'view' && lockHolder) {
               headerEditBtn.classList.add('is-locked');
               headerEditBtn.disabled = true;
           } else if (currentMode === 'edit') {
               headerEditBtn.classList.add('is-editing');
               headerEditBtn.disabled = false;
           } else {
-              headerEditBtn.disabled = false;   // free — base class only
+              headerEditBtn.disabled = false;
+          }
+
+          if (headerEditTooltip) {
+              headerEditTooltip.textContent = getEditTooltipText();
           }
       }
 
@@ -1316,17 +1325,17 @@
       renderSaveButton();
     };
 
-      function renderDownloadButton() {
-          if (!headerDownloadBtn) {
-              return;
-          }
-
-          headerDownloadBtn.disabled = !canDownload || isDownloading;
-
-          if (headerDownloadTooltip) {
-              headerDownloadTooltip.textContent = getDownloadTooltipText();
-          }
+    function renderDownloadButton() {
+      if (!headerDownloadBtn) {
+          return;
       }
+
+      headerDownloadBtn.disabled = !canDownload || isDownloadStarting || isDownloading;
+
+      if (headerDownloadTooltip) {
+          headerDownloadTooltip.textContent = getDownloadTooltipText();
+      }
+    }
 
     // Hide the native OnlyOffice "Editing/Viewing" dropdown inside the
     // editor iframe — permanently. Same-origin, so contentDocument is
@@ -1659,8 +1668,8 @@
         '.theme-type-dark .download-btn{color:#FFFFFF;}',
         '.theme-type-dark .download-btn:not(:disabled):hover{background:rgba(255,255,255,0.1);}',
         '.download-btn:disabled{opacity: var(--component-disabled-opacity, 0.4);}',
-        '.btn-header:hover:not(:disabled){background:rgba(0,0,0,0.06) !important;}',
-        '.btn-header {',
+        '.btn-header:not(.dropdown-toggle):hover:not(:disabled){background:rgba(0,0,0,0.06) !important;}',
+        '.btn-header:not(.dropdown-toggle) {',
         '  width:28px !important; height:28px !important; margin: 2px 4px 0 4px !important; display: flex !important; align-items: center !important; justify-content: center !important;',
         '}'
     ].join('\n');
@@ -1704,6 +1713,14 @@
       }
 
       function getEditTooltipText() {
+          if (editModeTransition === 'opening') {
+              return 'Opening Edit Mode...';
+          }
+
+          if (editModeTransition === 'exiting') {
+              return 'Exiting Edit Mode...';
+          }
+
           if (isLargeFile) {
               return 'Documents over 10 MB cannot currently be edited';
           }
@@ -1785,6 +1802,10 @@
       }
 
       function getDownloadTooltipText() {
+          if (isDownloadStarting) {
+              return 'Starting download...';
+          }
+
           if (isDownloading) {
               return 'Please wait until the current download is finished';
           }
@@ -1955,17 +1976,19 @@
 
           if (currentMode === 'view') {
               log('user clicked Edit → request-edit-mode');
+              editModeTransition = 'opening';
+              renderEditButton();
               pm.toHost({ type: 'request-edit-mode' });
-              headerEditBtn.disabled = true;   // pending; re-enabled on set-mode
           } else if (currentMode === 'edit') {
               // Save pending changes BEFORE releasing the edit lock, so leaving edit
               // mode never drops unsaved work. triggerAutosave is a no-op if the doc
               // isn't dirty or a save is already in flight; when it does fire, the
               // diskette reflects saving→saved via the shared state funnel.
               log('user clicked Edit (editing) → save-on-exit + mode-changed: view');
+              editModeTransition = 'exiting';
+              renderEditButton();
               pm.triggerAutosave();
               pm.toHost({ type: 'mode-changed', mode: 'view' });
-              headerEditBtn.disabled = true;
           }
       }
 
@@ -2068,20 +2091,25 @@
               '</span>';
 
           btn.onclick = function () {
-              if (!pm || !canDownload || isDownloading) {
+              if (!pm || !canDownload || isDownloadStarting || isDownloading) {
                   return;
               }
 
               log('user clicked Download');
 
-              isDownloading = true;
+              isDownloadStarting = true;
               renderDownloadButton();
 
-              pm.downloadCurrentFile()
+              pm.downloadCurrentFile(function () {
+                  isDownloadStarting = false;
+                  isDownloading = true;
+                  renderDownloadButton();
+              })
                   .catch(function (e) {
                       log('download failed: ' + (e && e.message ? e.message : e));
                   })
                   .then(function () {
+                      isDownloadStarting = false;
                       isDownloading = false;
                       renderDownloadButton();
                   });
@@ -2880,6 +2908,8 @@
 
         return;
       }
+
+      editModeTransition = null;
       // NOTE: we intentionally do NOT gate edit on canEdit here. set-mode is only
       // sent by the origin-pinned main app AFTER a rights-checked acquireEditLock,
       // so a set-mode:edit is authoritative; gating it here risked blocking a

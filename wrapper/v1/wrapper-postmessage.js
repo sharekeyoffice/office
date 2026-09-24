@@ -158,7 +158,7 @@
     return spreadsheetApi.asc_closeCellEditor() !== false;
   };
 
-  WrapperPostMessage.prototype.downloadCurrentFile = function () {
+  WrapperPostMessage.prototype.downloadCurrentFile = function (onPermissionGranted) {
     var self = this;
     var formatByEditor = {
       word: 'docx',
@@ -178,6 +178,10 @@
     return self.requestDownloadPermission().then(function (canDownload) {
       if (!canDownload) {
         throw new Error('Downloading is not allowed');
+      }
+
+      if (typeof onPermissionGranted === 'function') {
+        onPermissionGranted();
       }
 
       var iframe = self.findIframe();
