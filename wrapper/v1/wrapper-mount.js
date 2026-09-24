@@ -1978,6 +1978,11 @@
               log('user clicked Edit → request-edit-mode');
               editModeTransition = 'opening';
               renderEditButton();
+              window.dispatchEvent(new CustomEvent('host-response-start', {
+                  detail: {
+                      key: 'edit-mode'
+                  }
+              }));
               pm.toHost({ type: 'request-edit-mode' });
           } else if (currentMode === 'edit') {
               // Save pending changes BEFORE releasing the edit lock, so leaving edit
@@ -1988,6 +1993,11 @@
               editModeTransition = 'exiting';
               renderEditButton();
               pm.triggerAutosave();
+              window.dispatchEvent(new CustomEvent('host-response-start', {
+                  detail: {
+                      key: 'edit-mode'
+                  }
+              }));
               pm.toHost({ type: 'mode-changed', mode: 'view' });
           }
       }
@@ -2909,6 +2919,11 @@
         return;
       }
 
+      window.dispatchEvent(new CustomEvent('host-response-end', {
+          detail: {
+              key: 'edit-mode'
+          }
+      }));
       editModeTransition = null;
       // NOTE: we intentionally do NOT gate edit on canEdit here. set-mode is only
       // sent by the origin-pinned main app AFTER a rights-checked acquireEditLock,

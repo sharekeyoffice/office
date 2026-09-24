@@ -57,6 +57,8 @@
   // timeout vs ~60s throttled pings showed the modal for ~15s, then a ping
   // cleared it — repeatedly). 120s tolerates a throttled sender plus one fully
   // missed ping; a genuinely-closed main app still surfaces within ~3 min.
+  var HOST_RESPONSE_RECONNECTING_TIMEOUT_MS = 20000;
+  var HOST_RESPONSE_CONNECTION_LOST_TIMEOUT_MS = 140000;
   var OFFLINE_CONNECTION_LOST_TIMEOUT_MS = 120000;
   var RECONNECTING_TIMEOUT_MS = 60000;
   var CONNECTION_LOST_TIMEOUT_MS = 180000; // no ping for this long, while visible → lost
@@ -72,6 +74,7 @@
   var becameVisibleAt = Date.now(); // settle window after foregrounding
   var isOnline = true;
   var offlineSince = 0;
+  var pendingHostResponses = {};
 
   function hbLog() {
     if (window.console) {
@@ -111,7 +114,6 @@
 
       hbLog('online-status → online');
 
-      hideReconnecting();
       evaluateConnectionState();
 
       return;
@@ -191,6 +193,25 @@
           "| uptime=", secs(Date.now() - bootAt)
       );
     }
+  }
+
+  function getOldestPendingHostResponse(now) {
+    var keys = Object.keys(pendingHostResponses);
+    var oldest = null;
+
+    keys.forEach(function (key) {
+      var startedAt = pendingHostResponses[key];
+
+      if (!oldest || startedAt < oldest.startedAt) {
+        oldest = {
+          key: key,
+          startedAt: startedAt,
+          idle: now - startedAt
+        };
+      }
+    });
+
+    return oldest;
   }
 
   function showReconnecting() {
@@ -282,6 +303,32 @@
           "| sinceLastPing=", lastPing ? secs(Date.now() - lastPing) : "never");
   });
 
+  window.addEventListener('host-response-start', function (e) {
+    var key = e.detail && e.detail.key;
+
+    if (!key || pendingHostResponses[key]) {
+      return;
+    }
+
+    pendingHostResponses[key] = Date.now();
+
+    hbLog('host response pending →', key);
+  });
+
+  window.addEventListener('host-response-end', function (e) {
+    var key = e.detail && e.detail.key;
+
+    if (!key || !pendingHostResponses[key]) {
+      return;
+    }
+
+    delete pendingHostResponses[key];
+
+    hbLog('host response received →', key);
+
+    evaluateConnectionState();
+  });
+
   if (window.SK_DESKTOP_TRANSPORT) {
     window.addEventListener('host-ping', handlePing);
 
@@ -340,9 +387,14 @@
 
   function evaluateConnectionState() {
     var now = Date.now();
+    var pendingHostResponse = getOldestPendingHostResponse(now);
 
+    // Explicit offline status has the highest confidence.
     if (!isOnline) {
-      if (offlineSince && now - offlineSince > OFFLINE_CONNECTION_LOST_TIMEOUT_MS) {
+      if (
+          offlineSince &&
+          now - offlineSince > OFFLINE_CONNECTION_LOST_TIMEOUT_MS
+      ) {
         showConnectionLost('offline-timeout');
 
         return;
@@ -353,32 +405,46 @@
       return;
     }
 
-    if (lastPing === 0) {
-      hideReconnecting();
+    // A host request was sent but no corresponding response arrived.
+    if (
+        pendingHostResponse &&
+        pendingHostResponse.idle > HOST_RESPONSE_CONNECTION_LOST_TIMEOUT_MS
+    ) {
+      showConnectionLost(
+          'host-response-timeout:' + pendingHostResponse.key
+      );
 
       return;
     }
 
-    if (document.visibilityState !== 'visible') {
-      return;
-    }
-
-    if (now - becameVisibleAt < SETTLE_MS) {
-      return;
-    }
-
-    var idle = now - lastPing;
-
-    if (idle > CONNECTION_LOST_TIMEOUT_MS) {
-      showConnectionLost('heartbeat-timeout');
-
-      return;
-    }
-
-    if (idle > RECONNECTING_TIMEOUT_MS) {
+    if (
+        pendingHostResponse &&
+        pendingHostResponse.idle > HOST_RESPONSE_RECONNECTING_TIMEOUT_MS
+    ) {
       showReconnecting();
 
       return;
+    }
+
+    // Heartbeat is only trustworthy while the editor tab is visible.
+    if (
+        document.visibilityState === 'visible' &&
+        now - becameVisibleAt >= SETTLE_MS &&
+        lastPing !== 0
+    ) {
+      var idle = now - lastPing;
+
+      if (idle > CONNECTION_LOST_TIMEOUT_MS) {
+        showConnectionLost('heartbeat-timeout');
+
+        return;
+      }
+
+      if (idle > RECONNECTING_TIMEOUT_MS) {
+        showReconnecting();
+
+        return;
+      }
     }
 
     hideReconnecting();

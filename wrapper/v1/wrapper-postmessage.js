@@ -318,6 +318,11 @@
     return new Promise(function (resolve) {
       self.pendingDownloadPermissionResolve = resolve;
 
+      window.dispatchEvent(new CustomEvent('host-response-start', {
+        detail: {
+          key: 'download'
+        }
+      }));
       self.toHost({
         type: 'request-download'
       });
@@ -325,6 +330,12 @@
   };
 
   WrapperPostMessage.prototype.onDownloadPermission = function (msg) {
+    window.dispatchEvent(new CustomEvent('host-response-end', {
+      detail: {
+        key: 'download'
+      }
+    }));
+
     if (!this.pendingDownloadPermissionResolve) {
       return;
     }
