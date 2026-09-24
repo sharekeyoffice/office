@@ -1857,7 +1857,7 @@
       }
 
       function showTooltip(type, button) {
-          var doc = headerSaveBtn.ownerDocument;
+          var doc = button.ownerDocument;
           var tooltip;
 
           if (type === 'save') {
@@ -2024,12 +2024,15 @@
 
           if (existing) {
               headerDownloadBtn = existing;
-              existing.onmouseenter = function () {
-                  if (headerDownloadBtn) {
-                      showTooltip('download', headerDownloadBtn);
-                  }
-              };
-              existing.onmouseleave = hideDownloadTooltip;
+
+              if (existing.parentNode) {
+                  existing.parentNode.onmouseenter = function () {
+                      if (headerDownloadBtn) {
+                          showTooltip('download', headerDownloadBtn);
+                      }
+                  };
+                  existing.parentNode.onmouseleave = hideDownloadTooltip;
+              }
 
               renderDownloadButton();
 
@@ -2045,6 +2048,12 @@
 
           var slot = doc.createElement('div');
           slot.className = 'download-slot';
+          slot.onmouseenter = function () {
+              if (headerDownloadBtn) {
+                  showTooltip('download', headerDownloadBtn);
+              }
+          };
+          slot.onmouseleave = hideDownloadTooltip;
 
           var btn = doc.createElement('button');
 
@@ -2057,12 +2066,6 @@
               DOWNLOAD_ICON_SVG +
               '</span>';
 
-          btn.onmouseenter = function () {
-              if (headerDownloadBtn) {
-                  showTooltip('download', headerDownloadBtn);
-              }
-          };
-          btn.onmouseleave = hideDownloadTooltip;
           btn.onclick = function () {
               if (!pm || !canDownload || isDownloading) {
                   return;
