@@ -143,11 +143,14 @@
     isSavingFailed = window.__editorDirty && typeof window.skSetSaveState === "function";
     isCannotReconnectModalShown = true;
 
-    if (isSavingFailed) {
-      var warning = cannotReconnectModal.querySelector("div.cm-footnote");
+    var warning = cannotReconnectModal.querySelector("div.cm-footnote");
 
+    if (isSavingFailed) {
       warning.innerText = "The latest changes made in this document could NOT be saved\nbefore the connection was interrupted and will be lost.";
       warning.style.color = "#FF274B";
+    } else {
+      warning.innerText = "All changes were successfully saved before the connection was interrupted.";
+      warning.style.color = "#2FA0AF";
     }
 
     if (window.SK_DESKTOP_TRANSPORT) {
@@ -163,7 +166,7 @@
       }
 
       if (descriptions[1]) {
-        descriptions[1].innerHTML = "<strong>This document needs to be reopened.</strong> Please close this<br>document, then open the Main App and reopen the document<br>from there. If you are offline, reconnect to the internet first."
+        descriptions[1].innerHTML = "<strong>This document can no longer be used here.</strong> Please close this<br>document, then open the Main App and reopen the document<br>from there. If you are offline, reconnect to the internet first.";
       }
 
       if (cannotReconnectCloseBtn) {
@@ -221,16 +224,28 @@
     isSavingFailed = window.__editorDirty && typeof window.skSetSaveState === "function";
     isReconnectingModalShow = true;
 
-    if (isSavingFailed) {
-      var warning = reconnectingModal.querySelector("div.cm-footnote");
+    var warning = reconnectingModal.querySelector("#rm-warning");
 
+    if (isSavingFailed) {
       warning.classList.remove('cm-footnote');
-      warning.innerHTML = '<span class="cm-footnote" style="color: #FF274B">The latest changes made in this document could NOT be saved<br>and will be lost if you close this tab.</span> They will be saved if the<br>connection is restored.';
+      var closeTarget = window.SK_DESKTOP_TRANSPORT ? 'document' : 'tab';
+
+      warning.innerHTML =
+          '<span class="cm-footnote" style="color: #FF274B">' +
+          'The latest changes made in this document could NOT be saved<br>' +
+          'and will be lost if you close this ' + closeTarget + '.</span> ' +
+          'They will be saved if the<br>connection is restored.';
 
       if (reconnectingCloseBtn) {
         reconnectingCloseBtn.classList.remove('cm-button--positive');
         reconnectingCloseBtn.classList.add('cm-button--negative');
       }
+    } else {
+      warning.classList.add('cm-footnote');
+      warning.innerHTML = 'All changes were successfully saved before the connection was interrupted.';
+
+      reconnectingCloseBtn.classList.remove('cm-button--negative');
+      reconnectingCloseBtn.classList.add('cm-button--positive');
     }
 
     if (window.SK_DESKTOP_TRANSPORT) {
