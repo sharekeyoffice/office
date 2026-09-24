@@ -377,6 +377,16 @@
         }
 
         return;
+      case 'online-status':
+        if (window.SK_DESKTOP_TRANSPORT) {
+          window.dispatchEvent(new CustomEvent('host-online-status', {
+            detail: {
+              isOnline: d.isOnline === true
+            }
+          }));
+        }
+
+        return;
       case 'download-permission':
         this.onDownloadPermission(d);
 

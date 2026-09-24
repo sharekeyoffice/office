@@ -56,8 +56,10 @@
   // exceed that throttled cadence or the modal flickers every cycle (a 45s
   // timeout vs ~60s throttled pings showed the modal for ~15s, then a ping
   // cleared it — repeatedly). 120s tolerates a throttled sender plus one fully
-  // missed ping; a genuinely-closed main app still surfaces within ~2 min.
-  var TIMEOUT_MS = 120000; // no ping for this long, while visible → lost
+  // missed ping; a genuinely-closed main app still surfaces within ~3 min.
+  var OFFLINE_CONNECTION_LOST_TIMEOUT_MS = 120000;
+  var RECONNECTING_TIMEOUT_MS = 60000;
+  var CONNECTION_LOST_TIMEOUT_MS = 180000; // no ping for this long, while visible → lost
   var SETTLE_MS = 15000; // grace after (re)gaining visibility for a ping to land
 
   // ---- Diagnostic instrumentation (temporary) -------------------------
@@ -68,6 +70,8 @@
   var firstPingAt = 0;
   var bootAt = Date.now();
   var becameVisibleAt = Date.now(); // settle window after foregrounding
+  var isOnline = true;
+  var offlineSince = 0;
 
   function hbLog() {
     if (window.console) {
@@ -84,8 +88,6 @@
   }
 
   function handlePing() {
-    hideReconnecting();
-
     var now = Date.now();
     var gap = lastPing ? now - lastPing : 0;
 
@@ -99,12 +101,31 @@
     }
 
     lastPing = now;
+    evaluateConnectionState();
+  }
 
-    if (isCannotReconnectModalShown) {
-      isCannotReconnectModalShown = false;
-      cannotReconnectModal.style.display = 'none';
-      hbLog('connection restored (ping resumed) — hiding modal');
+  function handleOnlineStatus(isOnlineNow) {
+    if (isOnlineNow) {
+      isOnline = true;
+      offlineSince = 0;
+
+      hbLog('online-status → online');
+
+      hideReconnecting();
+      evaluateConnectionState();
+
+      return;
     }
+
+    if (isOnline) {
+      offlineSince = Date.now();
+    }
+
+    isOnline = false;
+
+    hbLog('online-status → offline');
+
+    showReconnecting();
   }
 
   function showConnectionLost(reason) {
@@ -240,8 +261,17 @@
   // is alive. False positives are worse than slower detection — the
   // heartbeat-timeout below is the reliable signal.
 
-  hbLog("heartbeat armed; HOST_ORIGIN=", window.HOST_ORIGIN,
-        "timeout=", secs(TIMEOUT_MS), "(visible-only)", "visibility=", vis());
+  hbLog(
+      "heartbeat armed; HOST_ORIGIN=",
+      window.HOST_ORIGIN,
+      "reconnecting=",
+      secs(RECONNECTING_TIMEOUT_MS),
+      "connectionLost=",
+      secs(CONNECTION_LOST_TIMEOUT_MS),
+      "(visible-only)",
+      "visibility=",
+      vis()
+  );
 
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "visible") {
@@ -254,6 +284,10 @@
 
   if (window.SK_DESKTOP_TRANSPORT) {
     window.addEventListener('host-ping', handlePing);
+
+    window.addEventListener('host-online-status', function (e) {
+      handleOnlineStatus(e.detail && e.detail.isOnline === true);
+    });
   }
 
   // Reject anything not from the baked-in allowed origin. This is the security
@@ -288,6 +322,12 @@
       return;
     }
 
+    if (ev.data.type === 'online-status' && typeof ev.data.isOnline === 'boolean') {
+      handleOnlineStatus(ev.data.isOnline);
+
+      return;
+    }
+
     if (ev.data.type === "ping") {
       handlePing();
 
@@ -298,6 +338,59 @@
     }
   });
 
+  function evaluateConnectionState() {
+    var now = Date.now();
+
+    if (!isOnline) {
+      if (offlineSince && now - offlineSince > OFFLINE_CONNECTION_LOST_TIMEOUT_MS) {
+        showConnectionLost('offline-timeout');
+
+        return;
+      }
+
+      showReconnecting();
+
+      return;
+    }
+
+    if (lastPing === 0) {
+      hideReconnecting();
+
+      return;
+    }
+
+    if (document.visibilityState !== 'visible') {
+      return;
+    }
+
+    if (now - becameVisibleAt < SETTLE_MS) {
+      return;
+    }
+
+    var idle = now - lastPing;
+
+    if (idle > CONNECTION_LOST_TIMEOUT_MS) {
+      showConnectionLost('heartbeat-timeout');
+
+      return;
+    }
+
+    if (idle > RECONNECTING_TIMEOUT_MS) {
+      showReconnecting();
+
+      return;
+    }
+
+    hideReconnecting();
+
+    if (isCannotReconnectModalShown) {
+      isCannotReconnectModalShown = false;
+      cannotReconnectModal.style.display = 'none';
+
+      hbLog('connection restored');
+    }
+  }
+
   // Timeout watcher. Notes:
   //  • Don't fire until at least one ping has arrived — slow cold-cache bundle
   //    loads (~20 MB) can exceed the window before the main app's heartbeat
@@ -305,32 +398,7 @@
   //  • Only judge while visible, with a SETTLE_MS grace after foregrounding so a
   //    live main app's resumed ping clears a stale lastPing from the throttled
   //    hidden period.
-  setInterval(function () {
-    if (lastPing === 0) {
-      return; // no pings yet, no timeout
-    }
-
-    if (document.visibilityState !== "visible") {
-      return;
-    }
-
-    var idle = Date.now() - lastPing;
-
-    if (idle > TIMEOUT_MS) {
-      showConnectionLost("heartbeat-timeout");
-
-      return;
-    }
-
-    if (Date.now() - becameVisibleAt < SETTLE_MS) {
-      return;
-    }
-
-    if (idle > 60000) {
-      showReconnecting();
-      hbLog("no ping for", secs(idle), "(timeout", secs(TIMEOUT_MS) + ", visible)");
-    }
-  }, 5000);
+  setInterval(evaluateConnectionState, 5000);
 
   function closeWindow() {
     if (window.SK_DESKTOP_TRANSPORT) {
