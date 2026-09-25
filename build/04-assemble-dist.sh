@@ -25,7 +25,7 @@ done
 rm -rf "$DIST"; mkdir -p "$DIST"
 
 echo "→ wrapper sources at root"
-cp "$V1"/{edit.html,edit-host-demo.html,editor-stubs.js,wrapper-boot.js,wrapper-customization.js,wrapper-mount.js,wrapper-postmessage.js,wrapper-heartbeat.js,x2t-bridge.js} "$DIST/"
+cp "$V1"/{edit.html,edit-host-demo.html,editor-stubs.js,wrapper-boot.js,wrapper-customization.js,wrapper-mount.js,wrapper-postmessage.js,wrapper-heartbeat.js,wrapper-modal-manager.js,x2t-bridge.js} "$DIST/"
 echo "→ service-worker stub"
 echo "// stub — wrapper does not use a service worker" > "$DIST/document_editor_service_worker.js"
 echo "→ x2t/ + fonts/"
