@@ -856,12 +856,16 @@
       //   slide → this.document         (set in PE.controllers.Main.loadDocument)
       //   cell  → this.appOptions.spreadsheet (set in SSE.controllers.Main.loadDocument)
       //
-      // onEditorPermissions then reads `<descriptor>.info.favorite`,
-      // `.fileType`, `.title`, etc. We populate the minimum keys those
-      // call sites need so the synthetic permissions flow doesn't crash
-      // before it reaches the appOptions.isEdit assignment (line 1493 in
-      // cell's Main.js — anything that bails earlier leaves controllers
-      // half-initialized).
+      // onEditorPermissions then reads `<descriptor>.info` (and optionally
+      // `.info.favorite`), `.fileType`, `.title`, etc. We populate the
+      // minimum keys those call sites need so the synthetic permissions
+      // flow doesn't crash before it reaches the appOptions.isEdit
+      // assignment (line 1493 in cell's Main.js — anything that bails
+      // earlier leaves controllers half-initialized).
+      //
+      // Do not set info.favorite to false: Header.js treats a boolean
+      // (even false) as "show the star"; only undefined/null hides
+      // #slot-btn-favorite. The object itself must still exist.
       var fileTypeByEditor = {
         word: 'docx', slide: 'pptx', cell: 'xlsx'
       };
@@ -876,12 +880,12 @@
         token:      '',
         options:    {},
         permissions: this.permissions,
-        info:       { favorite: false }
+        info:       {}
       };
       this.document = this.document || docDescriptor;
       this.appOptions = this.appOptions || {};
       // Cell-specific: appOptions.spreadsheet is the descriptor anchor
-      // for SSE's onEditorPermissions (line 1471 reads .info.favorite).
+      // for SSE's onEditorPermissions (line 1471 reads .info).
       // Setting it here mirrors what SSE.controllers.Main.loadDocument
       // would normally populate from the postMessage `opendocument` payload.
       if (window.SSE && !this.appOptions.spreadsheet) {

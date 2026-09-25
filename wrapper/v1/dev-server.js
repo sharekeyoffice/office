@@ -91,6 +91,7 @@ const SELF_FILES = new Set([
   '/wrapper-mount.js',
   '/wrapper-customization.js',
   '/wrapper-postmessage.js',
+  '/wrapper-modal-manager.js',
   '/editor-stubs.js',
   '/x2t-bridge.js',
   '/stubs.js'

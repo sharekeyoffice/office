@@ -32,7 +32,10 @@
 //   lockHolder:  null | { userId?, userName, isSelf? } — when set, the edit
 //                lock is held; `isSelf` true ⇒ held by the current user (e.g.
 //                from another tab). Drives the in-header "editing" label.
-
+/* jshint -W106 */
+/* jshint -W003 */
+/* jshint -W104 */
+/* jshint -W119 */
 (function () {
   'use strict';
 
@@ -74,7 +77,7 @@
     // its `load` postMessage.
     var hasOpener = !!(window.opener && window.opener !== window);
     var hasParent = !!(window.parent && window.parent !== window);
-    var isStandalone = !hasOpener && !hasParent;
+    var isStandalone = !hasOpener && !hasParent && !window.SK_DESKTOP_TRANSPORT;
     // Pick the fixture matching the editor type so the standalone smoke test
     // exercises the cascade for the right document family.
     var fixtureExt = type === 'cell' ? 'xlsx' : (type === 'slide' ? 'pptx' : 'docx');
@@ -86,10 +89,15 @@
     var editorInstance = null;
     var pm             = null;     // WrapperPostMessage — lives for the page lifetime
     var events;                    // declared below; closed over by constructEditor
+    var headerLogoTooltip = null;
     var headerEditTooltip = null;
+    var headerDownloadTooltip = null;
+    var headerSaveTooltip = null;
     var headerEditBtn  = null;     // our Edit button injected into the iframe header
                                    // (approach B); null until mountHeaderControls runs
     var headerSaveBtn  = null;     // our Save (diskette) button, same approach
+    var headerDownloadBtn = null;
+    var headerMainAppBtn = null;   // "Main App" button in the header-right area
     var headerEditingLabel = null; // our "<who> is editing the document…" label,
                                    // injected into the tab row right of the Edit button
     var currentSaveState = 'idle'; // 'idle'|'dirty'|'saving'|'saved'|'error' — drives
@@ -103,6 +111,11 @@
     // remember it here so handleConflict still knows who edited.
     var lastLockHolderName = null;
     var lastLockHolderId = null;
+    var canDownload = false;
+    var isLargeFile = false;
+    var isDownloading = false;
+    var editModeTransition = null; // null | 'opening' | 'exiting'
+    var isDownloadStarting = false;
     var canEdit        = true;     // role-gated edit capability, set by the main app's
                                    // `permissions` message (EDIT_CONTENT right). false ⇒ the
                                    // Edit button + "editing" label are never shown and
@@ -113,6 +126,8 @@
     var lastPresentationPointerDownAt = 0;
     var lastPresentationEditModalAt = 0;
     var lastBlockedEditAttemptFocus = null;
+    var isDesktopClosing = false;
+    var isDesktopLoggingOut = false;
 
     // ── Restriction-API state (hot view↔edit toggle, no destroy) ────────
     var editorApi      = null;     // iframe-internal api, cached after onAppReady
@@ -145,23 +160,27 @@
     function updateOverlayUI() {
       renderEditButton();
       renderEditingLabel();
+      renderDownloadButton();
     }
 
       // Determines the relevant DOM element for an edit attempt event.
       function getEditAttemptTarget(e) {
-          if (!e || !e.target)
+          if (!e || !e.target) {
               return null;
+          }
 
-          if (e.target.nodeType === 1)
+          if (e.target.nodeType === 1) {
               return e.target;
+          }
 
           return e.target.parentElement || null;
       }
 
       // Checks if an element is a native editable element (input, textarea, select, or contentEditable).
       function isNativeEditableElement(element) {
-          if (!element)
+          if (!element) {
               return false;
+          }
 
           var tagName = element.tagName ? element.tagName.toLowerCase() : '';
 
@@ -172,47 +191,55 @@
       }
 
       function handleBlockedContentCopy(e) {
-          if (canEdit)
+          if (canEdit) {
               return;
+          }
 
           e.preventDefault();
           e.stopPropagation();
 
-          if (typeof e.stopImmediatePropagation === 'function')
+          if (typeof e.stopImmediatePropagation === 'function') {
               e.stopImmediatePropagation();
+          }
 
-          if (e.clipboardData && typeof e.clipboardData.setData === 'function')
+          if (e.clipboardData && typeof e.clipboardData.setData === 'function') {
               e.clipboardData.setData('text/plain', '');
+          }
       }
 
       function handleBlockedContentCopyEvent(e) {
-          if (canEdit)
+          if (canEdit) {
               return;
+          }
 
           const shouldBlockContentCopy = e.type !== 'pointerdown' &&
               e.type !== 'mousedown' &&
               e.type !== 'mouseup' ||
               e.button === 2;
 
-          if (shouldBlockContentCopy)
+          if (shouldBlockContentCopy) {
               handleBlockedContentCopy(e);
+          }
       }
 
       function handleBlockedContentCopyKeyDown(e) {
-          if (canEdit)
+          if (canEdit) {
               return;
+          }
 
           const key = e.key ? e.key.toLowerCase() : '';
           const isCopyShortcut = (e.metaKey || e.ctrlKey) && (key === 'c' || key === 'x');
           const isContextMenuShortcut = e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10');
 
-          if (isCopyShortcut || isContextMenuShortcut)
+          if (isCopyShortcut || isContextMenuShortcut) {
               handleBlockedContentCopy(e);
+          }
       }
 
       function bindBlockedContentCopyListeners(targetDocument) {
-          if (!targetDocument || targetDocument.__blockedContentCopyListenersBound)
+          if (!targetDocument || targetDocument.__blockedContentCopyListenersBound) {
               return;
+          }
 
           targetDocument.__blockedContentCopyListenersBound = true;
 
@@ -223,8 +250,9 @@
       }
 
       function showNeedEditModeModalFromCellEditor() {
-          if (currentMode === 'edit' || !canEdit)
+          if (currentMode === 'edit' || !canEdit) {
               return false;
+          }
 
           showNeedEditModeModal();
 
@@ -234,16 +262,19 @@
       }
 
       function bindCellEditorEditAttemptListener() {
-          if (type !== 'cell')
+          if (type !== 'cell') {
               return;
+          }
 
           var iframe = document.querySelector('iframe[name="frameEditor"]');
 
-          if (!iframe || !iframe.contentDocument)
+          if (!iframe || !iframe.contentDocument) {
               return;
+          }
 
-          if (iframe.contentDocument.__cellEditorEditAttemptListenerBound)
+          if (iframe.contentDocument.__cellEditorEditAttemptListenerBound) {
               return;
+          }
 
           iframe.contentDocument.__cellEditorEditAttemptListenerBound = true;
 
@@ -251,8 +282,9 @@
               const target = getEditAttemptTarget(e);
               const isCellEditorInput = !!(target && target.id === 'ce-cell-content');
 
-              if (!isCellEditorInput || !showNeedEditModeModalFromCellEditor())
+              if (!isCellEditorInput || !showNeedEditModeModalFromCellEditor()) {
                   return;
+              }
 
               e.preventDefault();
               e.stopPropagation();
@@ -260,40 +292,47 @@
       }
 
       function bindSheetTabEditAttemptListener() {
-          if (type !== 'cell')
+          if (type !== 'cell') {
               return;
+          }
 
           var iframe = document.querySelector('iframe[name="frameEditor"]');
 
-          if (!iframe || !iframe.contentDocument)
+          if (!iframe || !iframe.contentDocument) {
               return;
+          }
 
-          if (iframe.contentDocument.__sheetTabEditAttemptListenerBound)
+          if (iframe.contentDocument.__sheetTabEditAttemptListenerBound) {
               return;
+          }
 
           iframe.contentDocument.__sheetTabEditAttemptListenerBound = true;
 
           iframe.contentDocument.addEventListener('dblclick', function (e) {
               var target = getEditAttemptTarget(e);
 
-              if (!target || !target.closest || !target.closest('.statusbar .list-item'))
+              if (!target || !target.closest || !target.closest('.statusbar .list-item')) {
                   return;
+              }
 
-              if (!showBlockedEditAttempt('SheetTab.rename'))
+              if (!showBlockedEditAttempt('SheetTab.rename')) {
                   return;
+              }
 
               e.preventDefault();
               e.stopPropagation();
 
-              if (typeof e.stopImmediatePropagation === 'function')
+              if (typeof e.stopImmediatePropagation === 'function') {
                   e.stopImmediatePropagation();
+              }
           }, true);
       }
 
       function getPresentationController(name, editorWindow) {
           try {
-              if (!editorWindow || !editorWindow.PE || typeof editorWindow.PE.getController !== 'function')
+              if (!editorWindow || !editorWindow.PE || typeof editorWindow.PE.getController !== 'function') {
                   return null;
+              }
 
               return editorWindow.PE.getController(name);
           } catch (e) {
@@ -302,18 +341,23 @@
       }
 
       function handlePresentationCanvasClick(e) {
-          if (type !== 'slide' || !isPresentationCanvasElement(getEditAttemptTarget(e)))
+          if (type !== 'slide' || !isPresentationCanvasElement(getEditAttemptTarget(e))) {
               return;
+          }
 
-          if (hasRecentPresentationPointerDown() && isPresentationEmptySlidePlaceholderFocused())
+          if (hasRecentPresentationPointerDown() && isPresentationEmptySlidePlaceholderFocused()) {
               showBlockedPresentationEditAttemptOnce('Canvas.emptySlidePlaceholder');
+          }
       }
 
       function showBlockedEditAttempt(label) {
-          if (currentMode === 'edit' || !canEdit)
+          if (currentMode === 'edit') {
               return false;
+          }
 
-          if (lockHolder && !lockHolder.isSelf) {
+          if (!canEdit) {
+              showViewOnlyModeModal(false);
+          } else if (lockHolder && !lockHolder.isSelf) {
               showViewerModeModal(false);
 
               log('blocked edit attempt: ' + label + ', lock held by ' + (lockHolder.userName || 'Someone'));
@@ -350,55 +394,57 @@
           return true;
       }
 
-      function isTurnOnEditModeModalVisible() {
-          var modal = document.getElementById('turn-on-edit-mode');
-
-          return !!(modal && modal.style.display === 'flex');
-      }
-
       function focusTurnOnEditModeModal() {
           var modal = document.getElementById('turn-on-edit-mode');
 
-          if (!modal)
+          if (!modal) {
               return;
+          }
 
           modal.setAttribute('tabindex', '-1');
           modal.focus();
       }
 
       function handleTurnOnEditModeModalKeyDown(e) {
-          if (!isTurnOnEditModeModalVisible())
+          if (!window.modalManager.isActive('turn-on-edit-mode')) {
               return;
+          }
 
-          if (!e || e.key !== 'Enter')
+          if (!e || e.key !== 'Enter') {
               return;
+          }
 
           e.preventDefault();
           e.stopPropagation();
 
-          if (typeof e.stopImmediatePropagation === 'function')
+          if (typeof e.stopImmediatePropagation === 'function') {
               e.stopImmediatePropagation();
+          }
 
           var editButton = document.getElementById('toem-edit-btn');
 
-          if (editButton)
+          if (editButton) {
               editButton.click();
+          }
       }
 
       function wrapPresentationFocusObjectMethod(object) {
-          if (!object || typeof object.onFocusObject !== 'function')
+          if (!object || typeof object.onFocusObject !== 'function') {
               return false;
+          }
 
-          if (object.onFocusObject.__sharekeyFocusObjectEditAttemptWrapped)
+          if (object.onFocusObject.__sharekeyFocusObjectEditAttemptWrapped) {
               return true;
+          }
 
           var originalMethod = object.onFocusObject;
 
           object.onFocusObject = function () {
               var result = originalMethod.apply(this, arguments);
 
-              if (hasRecentPresentationPointerDown() && isPresentationObjectOrPlaceholderFocused())
+              if (hasRecentPresentationPointerDown() && isPresentationObjectOrPlaceholderFocused()) {
                   showBlockedPresentationEditAttemptOnce('Main.onFocusObject');
+              }
 
               return result;
           };
@@ -409,8 +455,9 @@
       }
 
       function bindPresentationEditAttemptMethods() {
-          if (type !== 'slide')
+          if (type !== 'slide') {
               return;
+          }
 
           var iframe = document.querySelector('iframe[name="frameEditor"]');
           var editorWindow = iframe && iframe.contentWindow;
@@ -429,8 +476,9 @@
               'onDuplicateSlide',
               'onDeleteSlide'
           ].forEach(function (methodName) {
-              if (wrapPresentationEditAttemptMethod(documentHolder, methodName, 'DocumentHolder'))
+              if (wrapPresentationEditAttemptMethod(documentHolder, methodName, 'DocumentHolder')) {
                   wrappedCount += 1;
+              }
           });
 
           [
@@ -445,12 +493,14 @@
               'onInsertEquationClick',
               'onInsertSymbolClick'
           ].forEach(function (methodName) {
-              if (wrapPresentationEditAttemptMethod(toolbar, methodName, 'Toolbar'))
+              if (wrapPresentationEditAttemptMethod(toolbar, methodName, 'Toolbar')) {
                   wrappedCount += 1;
+              }
           });
 
-          if (wrapPresentationFocusObjectMethod(main))
+          if (wrapPresentationFocusObjectMethod(main)) {
               wrappedCount += 1;
+          }
       }
 
       function rememberBlockedEditAttemptFocus() {
@@ -467,8 +517,9 @@
       function restoreBlockedEditAttemptFocus() {
           var focusState = lastBlockedEditAttemptFocus;
 
-          if (!focusState)
+          if (!focusState) {
               return;
+          }
 
           setTimeout(function () {
               var iframe = focusState.iframe;
@@ -509,16 +560,17 @@
       }
 
       function markPresentationPointerDown(e) {
-          const isNotPresentationCanvasClick = type !== 'slide'
-              || !e
-              || e.button !== 0
-              || e.metaKey
-              || e.ctrlKey
-              || e.altKey
-              || !isPresentationCanvasElement(getEditAttemptTarget(e));
+          const isNotPresentationCanvasClick = type !== 'slide' ||
+              !e ||
+              e.button !== 0 ||
+              e.metaKey ||
+              e.ctrlKey ||
+              e.altKey ||
+              !isPresentationCanvasElement(getEditAttemptTarget(e));
 
-          if (isNotPresentationCanvasClick)
+          if (isNotPresentationCanvasClick) {
               return;
+          }
 
           lastPresentationPointerDownAt = Date.now();
       }
@@ -532,14 +584,16 @@
       }
 
       function getPresentationSelectedElementsCount() {
-          if (!editorApi || typeof editorApi.getSelectedElements !== 'function')
+          if (!editorApi || typeof editorApi.getSelectedElements !== 'function') {
               return 0;
+          }
 
           try {
               var selectedElements = editorApi.getSelectedElements();
 
-              if (!selectedElements || typeof selectedElements.length !== 'number')
+              if (!selectedElements || typeof selectedElements.length !== 'number') {
                   return 0;
+              }
 
               return selectedElements.length;
           } catch (e) {
@@ -556,8 +610,9 @@
       }
 
       function showBlockedPresentationEditAttemptOnce(methodName) {
-          if (hasRecentPresentationEditModal() || !showBlockedEditAttempt(methodName))
+          if (hasRecentPresentationEditModal() || !showBlockedEditAttempt(methodName)) {
               return false;
+          }
 
           lastPresentationEditModalAt = Date.now();
 
@@ -569,25 +624,30 @@
     // common navigation / system shortcuts so simple scrolling, copying, finding
     // or selecting text doesn't show a modal.
     function isEditAttemptEvent(e) {
-        if (!e)
+        if (!e) {
             return false;
+        }
 
         var target = getEditAttemptTarget(e);
         var isOnlyOfficeDocumentInput = !!(target && target.id === 'area_id');
 
-        if (isNativeEditableElement(target) && !isOnlyOfficeDocumentInput)
+        if (isNativeEditableElement(target) && !isOnlyOfficeDocumentInput) {
             return false;
+        }
 
-        if (e.type === 'paste' || e.type === 'cut' || e.type === 'drop')
+        if (e.type === 'paste' || e.type === 'cut' || e.type === 'drop') {
             return true;
+        }
 
-        if (e.type !== 'keydown')
+        if (e.type !== 'keydown') {
             return false;
+        }
 
         var key = e.key;
 
-        if (!key)
+        if (!key) {
             return false;
+        }
 
         if (e.metaKey || e.ctrlKey) {
             return key.toLowerCase() === 'b' ||
@@ -595,8 +655,9 @@
                 key.toLowerCase() === 'u';
         }
 
-        if (e.altKey)
+        if (e.altKey) {
             return false;
+        }
 
       return key.length === 1 ||
           key === 'Backspace' ||
@@ -605,15 +666,17 @@
     }
 
       function isSaveShortcut(e) {
-          if (!e || e.code !== 'KeyS')
+          if (!e || e.code !== 'KeyS') {
               return false;
+          }
 
           return e.metaKey || e.ctrlKey;
       }
 
       function handleSaveShortcut(e) {
-          if (!isSaveShortcut(e))
+          if (!isSaveShortcut(e)) {
               return;
+          }
 
           e.preventDefault();
           e.stopPropagation();
@@ -635,8 +698,33 @@
     // If another user already holds the edit lock, we do nothing here: the header
     // already explains that someone is editing, and the Edit button is disabled.
     function handleBlockedEditAttempt(e) {
-      if (currentMode === 'edit' || !canEdit || !isEditAttemptEvent(e))
-          return;
+        if (
+            !isEditAttemptEvent(e) ||
+            (currentMode === 'edit' && !isDesktopClosing && !isDesktopLoggingOut)
+        ) {
+            return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (typeof e.stopImmediatePropagation === 'function') {
+            e.stopImmediatePropagation();
+        }
+
+        if (isDesktopClosing || isDesktopLoggingOut) {
+            showDesktopClosingModal(false);
+
+            log('blocked edit attempt: desktop closing');
+
+            return;
+        }
+
+        if (!canEdit) {
+            showViewOnlyModeModal(false);
+
+            return;
+        }
 
       if (lockHolder && !lockHolder.isSelf) {
         showViewerModeModal(false);
@@ -661,8 +749,13 @@
     function bindBlockedEditAttemptListeners() {
       var iframe = document.querySelector('iframe[name="frameEditor"]');
 
-      if (!iframe || !iframe.contentDocument) return false;
-      if (iframe.contentDocument.__blockedEditAttemptListenersBound) return true;
+      if (!iframe || !iframe.contentDocument) {
+          return false;
+      }
+
+      if (iframe.contentDocument.__blockedEditAttemptListenersBound) {
+          return true;
+      }
 
       iframe.contentDocument.__blockedEditAttemptListenersBound = true;
       bindBlockedContentCopyListeners(iframe.contentDocument);
@@ -701,12 +794,121 @@
         return;
       }
 
-      modal.style.display = 'flex';
+      window.modalManager.show('turn-on-edit-mode');
 
       focusTurnOnEditModeModal();
 
       log('showNeedEditModeModal');
     }
+
+      function showDesktopClosingModal(shouldHideFirstLine) {
+          var modal = document.getElementById('cannot-start-edit-mode');
+          var descriptions = modal.querySelectorAll('.cm-description');
+
+          if (descriptions[0] && shouldHideFirstLine) {
+              descriptions[0].style.display = 'none';
+          } else if (descriptions[0]) {
+              descriptions[0].style.display = 'block';
+          }
+
+          if (descriptions[1] && isDesktopLoggingOut) {
+              descriptions[1].innerHTML = 'The <strong>Log Out of Sharekey Main App</strong> window is open.';
+          } else if (descriptions[1]) {
+              descriptions[1].innerHTML = 'The <strong>Close Sharekey Main App</strong> window is open.';
+          }
+
+          if (descriptions[2] && isDesktopLoggingOut) {
+              descriptions[2].innerText = 'To edit this document, go to the Main App and cancel logging out.';
+          } else if (descriptions[2]) {
+              descriptions[2].innerText = 'To edit this document, go to the Main App and cancel closing.';
+          }
+
+          if (!modal) {
+              log('showDesktopClosingModal: modal element not found');
+              return;
+          }
+
+          rememberBlockedEditAttemptFocus();
+
+          window.modalManager.show('cannot-start-edit-mode');
+
+          log('showDesktopClosingModal');
+      }
+
+      function bindDesktopClosingModal() {
+          var modal = document.getElementById('cannot-start-edit-mode');
+          var closeButton = document.getElementById('csem-close-btn');
+          var confirmButton = document.getElementById('csem-сonfirm-btn');
+
+          if (!modal || !closeButton || !confirmButton) {
+              log('bindDesktopClosingModal: modal or close button not found');
+
+              return;
+          }
+
+          if (modal.__desktopClosingBound) {
+              return;
+          }
+
+          modal.__desktopClosingBound = true;
+
+          closeButton.onclick = function () {
+              window.modalManager.hide('cannot-start-edit-mode');
+              restoreBlockedEditAttemptFocus();
+          };
+
+          confirmButton.onclick = function () {
+              window.modalManager.hide('cannot-start-edit-mode');
+              restoreBlockedEditAttemptFocus();
+
+              if (pm) {
+                  pm.toHost({ type: 'focus' });
+              }
+          };
+      }
+
+      function showViewOnlyModeModal(hideFirstLine) {
+          var modal = document.getElementById('view-only-mode');
+
+          if (!modal) {
+              log('showViewOnlyModeModal: modal element not found');
+
+              return;
+          }
+
+          var descriptions = modal.querySelectorAll('.cm-description');
+          var illustration = modal.querySelector('.cm-icon');
+
+          if (illustration && isLargeFile) {
+              illustration.innerHTML = '<rect width="250" height="150" fill="white"/>\n' +
+                  '<path d="M138.284 13.7021C139.638 13.7022 140.941 14.2071 141.939 15.1123L142.136 15.2988L174.908 48.1064C175.928 49.127 176.5 50.5107 176.5 51.9531V64.0869C176.398 64.086 176.295 64.085 176.192 64.085C163.323 64.0851 152.12 71.1935 146.284 81.6768C144.751 84.4314 144.751 87.7824 146.284 90.5371C152.12 101.02 163.323 108.129 176.192 108.129C176.295 108.129 176.398 108.127 176.5 108.126V114.107C176.5 126.171 166.873 135.987 154.882 136.291C154.692 136.296 154.501 136.298 154.31 136.298H95.6914L95.1182 136.291C94.1665 136.267 93.2298 136.182 92.3115 136.042C91.9442 135.986 91.5799 135.921 91.2188 135.847C88.8714 135.366 86.6591 134.515 84.6455 133.357C84.0258 133.001 83.4249 132.616 82.8447 132.203C82.4744 131.94 82.1137 131.664 81.7607 131.379C81.2845 130.994 80.8234 130.592 80.3809 130.17C79.4816 129.313 78.6537 128.381 77.9082 127.384C77.7502 127.173 77.5978 126.957 77.4473 126.74C76.4817 125.349 75.6693 123.842 75.0391 122.244C74.774 121.572 74.5412 120.884 74.3418 120.182C74.292 120.006 74.2438 119.83 74.1982 119.653C74.149 119.462 74.1028 119.269 74.0586 119.076C73.6931 117.479 73.5001 115.816 73.5 114.107V35.8936C73.5 34.3614 73.6555 32.8656 73.9512 31.4209C74.099 30.6985 74.2819 29.9889 74.498 29.2939C74.7141 28.5993 74.9635 27.9194 75.2441 27.2559C75.8056 25.9284 76.4925 24.6669 77.29 23.4863C78.3868 21.8629 79.6925 20.3922 81.1689 19.1133C81.4373 18.8808 81.7108 18.6541 81.9902 18.4346C82.4094 18.1051 82.8414 17.7913 83.2842 17.4922C84.1695 16.8941 85.1003 16.3581 86.0703 15.8906C86.3939 15.7347 86.7216 15.5858 87.0537 15.4453C87.3855 15.305 87.7217 15.1732 88.0615 15.0488C88.4015 14.9243 88.7452 14.8073 89.0928 14.6992C89.4401 14.5912 89.7911 14.4916 90.1455 14.4004C91.0319 14.1723 91.9397 13.9975 92.8652 13.8799C93.4206 13.8093 93.9824 13.7592 94.5498 13.7305C94.7386 13.7209 94.9281 13.7138 95.1182 13.709C95.3086 13.7042 95.4998 13.7021 95.6914 13.7021H138.284ZM166.809 85.6221C166.816 85.4782 166.828 85.3354 166.842 85.1934C166.828 85.3354 166.816 85.4783 166.809 85.6221ZM167.074 83.8359C167.081 83.81 167.085 83.7836 167.092 83.7578L167.107 83.7021C167.096 83.7465 167.085 83.7913 167.074 83.8359ZM167.483 82.5781C167.497 82.5453 167.509 82.5121 167.522 82.4795C167.509 82.5121 167.497 82.5453 167.483 82.5781ZM172.208 77.5977C172.276 77.566 172.344 77.5349 172.412 77.5049C172.344 77.535 172.276 77.566 172.208 77.5977ZM138.206 35.2197C138.206 44.4691 145.705 51.9678 154.954 51.9678H169.298L138.206 20.8438V35.2197Z" fill="#D5ECEF"/>' +
+                  '<path d="M176.193 68.3369C187.458 68.3371 197.27 74.5548 202.386 83.7451C203.204 85.214 203.204 86.9999 202.386 88.4688C197.27 97.6591 187.458 103.877 176.193 103.877C164.928 103.877 155.115 97.6592 149.999 88.4688C149.181 86.9999 149.181 85.2139 149.999 83.7451C155.115 74.5546 164.928 68.3369 176.193 68.3369ZM176.189 76.7119C171.001 76.7123 166.796 80.9177 166.796 86.1055C166.796 91.293 171.002 95.4996 176.189 95.5C181.377 95.5 185.582 91.2932 185.583 86.1055C185.583 80.9175 181.377 76.7119 176.189 76.7119ZM176.189 81.7119C178.616 81.7119 180.583 83.6789 180.583 86.1055C180.582 88.533 178.614 90.5 176.189 90.5C173.764 90.4996 171.796 88.5328 171.796 86.1055C171.796 83.6791 173.763 81.7123 176.189 81.7119Z" fill="url(#paint0_linear_18074_38991)"/>\n' +
+                  '<path d="M8.6 91V84.019L6.455 84.89V82.797L10.524 81.211H10.68V91H8.6ZM16.7852 83.031C15.7452 83.031 14.9262 84.175 14.9262 86.164C14.9262 88.127 15.7452 89.271 16.7852 89.271C17.8252 89.271 18.6962 88.127 18.6962 86.164C18.6962 84.175 17.8252 83.031 16.7852 83.031ZM12.8202 86.164C12.8202 83.031 14.5752 81.081 16.7852 81.081C18.9822 81.081 20.7632 83.031 20.7632 86.164C20.7632 89.271 18.9822 91.221 16.7852 91.221C14.5752 91.221 12.8202 89.271 12.8202 86.164ZM28.0031 84.24L27.1581 91H25.1431L26.5341 81.302H29.0431L31.0841 87.789H31.1101L33.1121 81.302H35.5561L36.9471 91H34.9191L34.1001 84.214H34.0481L31.9421 91H30.1351L28.0421 84.24H28.0031ZM38.4993 91V81.302H42.1263C44.3233 81.302 45.4803 82.459 45.4803 83.902C45.4803 84.981 44.8693 85.67 44.0633 86.021C45.1553 86.385 45.7403 87.217 45.7403 88.283C45.7403 89.739 44.6223 91 42.2823 91H38.4993ZM40.6053 89.206H42.1263C43.1403 89.206 43.6733 88.699 43.6733 88.01C43.6733 87.295 43.0753 86.827 42.1653 86.827H40.6053V89.206ZM40.6053 85.332H42.0483C42.9973 85.332 43.4783 84.825 43.4783 84.201C43.4783 83.564 42.9843 83.096 42.0873 83.096H40.6053V85.332Z" fill="#2FA0AF"/>' +
+                  '<path d="M62.592 84.344L57.964 86.164L62.592 87.971V89.947L55.559 87.126V85.202L62.592 82.368V84.344Z" fill="#2FA0AF"/>' +
+                  '<path opacity="0.55" d="M91.4275 82V72.302H93.5465V80.076H97.5635V82H91.4275ZM101.404 82.182C99.7791 82.182 98.2061 80.674 98.2061 78.425C98.2061 76.124 99.7791 74.616 101.404 74.616C102.483 74.616 103.289 75.162 103.757 75.903H103.77L103.978 74.798H105.733V82H103.978L103.77 80.895H103.757C103.289 81.649 102.483 82.182 101.404 82.182ZM100.299 78.399C100.299 79.504 101.027 80.31 102.015 80.31C102.977 80.31 103.692 79.517 103.692 78.399C103.692 77.281 102.977 76.488 102.015 76.488C101.027 76.488 100.299 77.307 100.299 78.399ZM107.457 82V74.798H109.108L109.316 75.877H109.342C109.823 75.006 110.655 74.72 111.292 74.72C111.513 74.72 111.682 74.733 111.838 74.772V76.722C111.643 76.67 111.435 76.657 111.24 76.657C110.369 76.657 109.537 77.125 109.537 78.477V82H107.457ZM115.598 74.629C116.625 74.629 117.444 75.175 117.899 75.877L118.107 74.798H119.862V81.09C119.862 83.521 118.172 84.912 115.819 84.912C114.818 84.912 113.843 84.613 113.089 84.093V82.117C113.804 82.715 114.792 83.105 115.624 83.105C116.898 83.105 117.782 82.377 117.782 81.324V80.661C117.34 81.324 116.573 81.857 115.572 81.857C113.895 81.857 112.374 80.388 112.374 78.23C112.374 76.137 113.934 74.629 115.598 74.629ZM114.467 78.243C114.467 79.244 115.182 80.024 116.144 80.024C117.106 80.024 117.808 79.231 117.808 78.23C117.808 77.242 117.106 76.462 116.144 76.462C115.182 76.462 114.467 77.268 114.467 78.243ZM125.188 82.182C122.653 82.182 121.197 80.609 121.197 78.425C121.197 76.137 122.809 74.616 124.811 74.616C126.644 74.616 128.139 75.877 128.139 78.282C128.139 78.542 128.126 78.776 128.087 78.984H123.186C123.459 80.011 124.356 80.544 125.448 80.544C126.241 80.544 127.008 80.271 127.697 79.829V81.532C126.956 81.961 126.111 82.182 125.188 82.182ZM123.147 77.736H126.163C126.15 76.8 125.565 76.254 124.798 76.254C124.018 76.254 123.342 76.826 123.147 77.736ZM98.9685 100V90.302H104.91V92.239H101.088V94.67H104.676V96.49H101.088V100H98.9685ZM106.391 100V92.798H108.471V100H106.391ZM106.287 90.679C106.287 90.055 106.781 89.561 107.431 89.561C108.055 89.561 108.562 90.055 108.562 90.679C108.562 91.316 108.055 91.81 107.431 91.81C106.781 91.81 106.287 91.316 106.287 90.679ZM110.225 100V89.561H112.305V100H110.225ZM117.647 100.182C115.112 100.182 113.656 98.609 113.656 96.425C113.656 94.137 115.268 92.616 117.27 92.616C119.103 92.616 120.598 93.877 120.598 96.282C120.598 96.542 120.585 96.776 120.546 96.984H115.645C115.918 98.011 116.815 98.544 117.907 98.544C118.7 98.544 119.467 98.271 120.156 97.829V99.532C119.415 99.961 118.57 100.182 117.647 100.182ZM115.606 95.736H118.622C118.609 94.8 118.024 94.254 117.257 94.254C116.477 94.254 115.801 94.826 115.606 95.736Z" fill="#2FA0AF"/>' +
+                  '<defs>' +
+                  '<linearGradient id="paint0_linear_18074_38991" x1="206.808" y1="118.241" x2="184.771" y2="61.9463" gradientUnits="userSpaceOnUse">' +
+                  '<stop stop-color="#125E99"/>' +
+                  '<stop offset="1" stop-color="#64E1D8"/>' +
+                  '</linearGradient>' +
+                  '</defs>';
+          }
+
+          if (descriptions[0]) {
+              descriptions[0].style.display = hideFirstLine ? 'none' : '';
+          }
+
+          if (descriptions[1] && isLargeFile) {
+              descriptions[1].innerHTML = 'Currently, this document <strong>cannot be edited</strong> (over the 10 MB limit).';
+          }
+
+          if (descriptions[2] && isLargeFile) {
+              descriptions[2].innerHTML = 'Large documents will be supported soon.';
+              descriptions[2].style.color = '#2FA0AF';
+          }
+
+          window.modalManager.show('view-only-mode');
+      }
 
       // Shows the outer-page modal for the case where the user tries to edit while
       // another user already holds the edit lock. The header already shows who is
@@ -716,12 +918,13 @@
 
           if (!modal) {
               log('showViewerModeModal: modal element not found');
+
               return;
           }
 
           var userName = (lockHolder && lockHolder.userName) || 'Someone';
           var userNameElement = document.getElementById('vm-username');
-          var firstDescription = modal.querySelector('.vm-dialog-description');
+          var firstDescription = modal.querySelector('.cm-description');
 
           if (userNameElement) {
               userNameElement.textContent = userName;
@@ -731,7 +934,7 @@
               firstDescription.style.display = hideFirstDescription ? 'none' : '';
           }
 
-          modal.style.display = 'flex';
+          window.modalManager.show('viewer-mode');
 
           log('showViewerModeModal: lock held by ' + userName);
       }
@@ -749,14 +952,16 @@
         return;
       }
 
-      if (modal.__turnOnEditModeBound) return;
+      if (modal.__turnOnEditModeBound) {
+          return;
+      }
 
       modal.__turnOnEditModeBound = true;
 
       document.addEventListener('keydown', handleTurnOnEditModeModalKeyDown, true);
 
       editButton.onclick = function () {
-        modal.style.display = 'none';
+          window.modalManager.hide('turn-on-edit-mode');
 
         restoreBlockedEditAttemptFocus();
 
@@ -766,12 +971,42 @@
       };
 
       closeButton.onclick = function () {
-        modal.style.display = 'none';
+        window.modalManager.hide('turn-on-edit-mode');
 
         restoreBlockedEditAttemptFocus();
 
         log('user closed turn-on-edit-mode modal');
       };
+    }
+
+    function bindViewOnlyModeModal() {
+        var modal = document.getElementById('view-only-mode');
+        var closeButton = document.getElementById('vom-close-btn');
+        var confirmButton = document.getElementById('vom-сonfirm-btn');
+
+        if (!modal || !closeButton || !confirmButton) {
+            log('bindViewOnlyModeModal: modal or close button not found');
+
+            return;
+        }
+
+        if (modal.__viewOnlyModeBound) {
+            return;
+        }
+
+        modal.__viewOnlyModeBound = true;
+
+        closeButton.onclick = function () {
+            window.modalManager.hide('view-only-mode');
+
+            log('user closed view-only-mode modal');
+        };
+
+        confirmButton.onclick = function () {
+            window.modalManager.hide('view-only-mode');
+
+            log('user closed view-only-mode modal');
+        };
     }
 
       function bindViewerModeModal() {
@@ -781,21 +1016,24 @@
 
           if (!modal || !closeButton || !confirmButton) {
               log('bindViewerModeModal: modal or close button not found');
+
               return;
           }
 
-          if (modal.__viewerModeBound) return;
+          if (modal.__viewerModeBound) {
+              return;
+          }
 
           modal.__viewerModeBound = true;
 
           closeButton.onclick = function () {
-              modal.style.display = 'none';
+              window.modalManager.hide('viewer-mode');
 
               log('user closed viewer-mode modal');
           };
 
           confirmButton.onclick = function () {
-              modal.style.display = 'none';
+              window.modalManager.hide('viewer-mode');
 
               log('user closed viewer-mode modal');
           };
@@ -831,7 +1069,9 @@
       // a newer version, the important action is reload/refresh, not edit-lock status.
       // In this state the label explains who changed the document.
       function renderEditingLabel() {
-          if (!headerEditingLabel) return;
+          if (!headerEditingLabel) {
+              return;
+          }
 
           var li = headerEditingLabel.parentNode;
           var doc = headerEditingLabel.ownerDocument;
@@ -841,7 +1081,7 @@
           // hidden for viewers below.
           if (conflictState) {
               var updatedBy = conflictState.updatedBy || 'Someone';
-              var b = doc.createElement('span');
+              const b = doc.createElement('span');
 
               b.className = 'sk-editing-label__who';
               b.textContent = updatedBy;
@@ -853,17 +1093,21 @@
               headerEditingLabel.classList.remove('sk-editing-label--self', 'sk-editing-label--other');
               headerEditingLabel.classList.add('sk-editing-label--conflict');
 
-              if (li) li.style.display = '';
+              if (li) {
+                  li.style.display = '';
+              }
 
               return;
           }
 
           // No edit right ⇒ never surface normal "who is editing" status.
-          if (!canEdit) {
+          if (!canEdit || isDesktopClosing || isDesktopLoggingOut) {
               headerEditingLabel.classList.remove('sk-editing-label--conflict', 'sk-editing-label--self', 'sk-editing-label--other');
               headerEditingLabel.textContent = '';
 
-              if (li) li.style.display = 'none';
+              if (li) {
+                  li.style.display = 'none';
+              }
 
               return;
           }
@@ -878,7 +1122,7 @@
               // \u00A0 (non-breaking space) joins the bold name to the verb — a normal
               // leading space collapses at the inline-flex item boundary, gluing them.
               var rest = isSelf ? '\u00A0are editing the document' : '\u00A0is editing the document';
-              var b = doc.createElement('span');
+              const b = doc.createElement('span');
 
               b.className = 'sk-editing-label__who';
               b.textContent = who;
@@ -893,7 +1137,9 @@
           headerEditingLabel.classList.toggle('sk-editing-label--self', isSelf);
           headerEditingLabel.classList.toggle('sk-editing-label--other', show && !isSelf);
 
-          if (li) li.style.display = show ? '' : 'none';
+          if (li) {
+              li.style.display = show ? '' : 'none';
+          }
       }
 
       // Reflect currentMode/lockHolder/conflictState onto the in-header Edit button.
@@ -911,7 +1157,9 @@
       // control: layout stays stable, and the only visual differences from Edit are
       // icon, text and background colour.
       function renderEditButton() {
-          if (!headerEditBtn) return;
+          if (!headerEditBtn) {
+              return;
+          }
 
           var li = headerEditBtn.parentNode;   // the .sk-edit-tab <li>
           var icon = headerEditBtn.querySelector('.sk-edit-btn__icon');
@@ -925,7 +1173,9 @@
           // because it only reloads the document and does not request edit mode.
           // It becomes available only after the edit lock is released.
           if (conflictState) {
-              if (li) li.style.display = '';
+              if (li) {
+                  li.style.display = '';
+              }
 
               headerEditBtn.classList.add('is-refresh');
               headerEditBtn.disabled = false;
@@ -941,17 +1191,39 @@
               return;
           }
 
-          // No edit right ⇒ hide the Edit button entirely (display:none on the <li>).
-          // Visibility-based so there's never a "visible-but-dead" button.
-          if (!canEdit) {
-              if (li) li.style.display = 'none';
+          if (pm.isExternal) {
+              if (li) {
+                  li.style.display = 'none';
+              }
 
               headerEditBtn.disabled = true;
 
               return;
           }
 
-          if (li) li.style.display = '';
+          if (!canEdit) {
+              headerEditBtn.classList.add('is-locked');
+              headerEditBtn.disabled = false;
+          }
+
+          if (isDesktopClosing || isDesktopLoggingOut) {
+              if (li) {
+                  li.style.display = '';
+              }
+
+              headerEditBtn.classList.add('is-locked');
+              headerEditBtn.disabled = false;
+
+              if (label) {
+                  label.textContent = 'Edit';
+              }
+
+              return;
+          }
+
+          if (li) {
+              li.style.display = '';
+          }
 
           if (icon) {
               icon.innerHTML = SK_EDIT_ICON_SVG;
@@ -961,14 +1233,21 @@
               label.textContent = 'Edit';
           }
 
-          if (currentMode === 'view' && lockHolder) {
+          if (editModeTransition !== null) {
+              headerEditBtn.classList.add('is-locked');
+              headerEditBtn.disabled = true;
+          } else if (currentMode === 'view' && lockHolder) {
               headerEditBtn.classList.add('is-locked');
               headerEditBtn.disabled = true;
           } else if (currentMode === 'edit') {
               headerEditBtn.classList.add('is-editing');
               headerEditBtn.disabled = false;
           } else {
-              headerEditBtn.disabled = false;   // free — base class only
+              headerEditBtn.disabled = false;
+          }
+
+          if (headerEditTooltip) {
+              headerEditTooltip.textContent = getEditTooltipText();
           }
       }
 
@@ -978,8 +1257,9 @@
       // in a disabled visual state, the spinner icon rotates, and the text shows
       // animated dots.
       function renderRefreshingButton() {
-          if (!headerEditBtn)
+          if (!headerEditBtn) {
               return;
+          }
 
           var icon = headerEditBtn.querySelector('.sk-edit-btn__icon');
           var label = headerEditBtn.querySelector('.sk-edit-btn__label');
@@ -1010,7 +1290,10 @@
     // now) or 'error' (retry). 'idle'/'saving'/'saved' are disabled — nothing to
     // save, or a save is already in flight. No-op until the button is injected.
     function renderSaveButton() {
-      if (!headerSaveBtn) return;
+      if (!headerSaveBtn) {
+          return;
+      }
+
       var s = currentSaveState;
       var clickable = (s === 'dirty' || s === 'error');
       headerSaveBtn.className = 'sk-save-btn sk-save-btn--' + s;
@@ -1024,10 +1307,9 @@
                          : s === 'error' ? SK_SAVE_ICON_ERROR
                          : SK_SAVE_ICON_SVG;
       }
-      headerSaveBtn.title = ({
-        idle:'No unsaved changes', dirty:'Save (unsaved changes)', saving:'Saving…',
-        saved:'All changes saved', error:'Couldn’t save — click to retry'
-      })[s] || 'Save';
+        if (headerSaveTooltip) {
+            headerSaveTooltip.textContent = getSaveTooltipText();
+        }
     }
 
     // Called by wrapper-postmessage.js (via window.skSetSaveState) whenever the
@@ -1038,19 +1320,38 @@
       renderSaveButton();
     };
 
+    function renderDownloadButton() {
+      if (!headerDownloadBtn) {
+          return;
+      }
+
+      headerDownloadBtn.disabled = !canDownload || isDownloadStarting || isDownloading;
+
+      if (headerDownloadTooltip) {
+          headerDownloadTooltip.textContent = getDownloadTooltipText();
+      }
+    }
+
     // Hide the native OnlyOffice "Editing/Viewing" dropdown inside the
     // editor iframe — permanently. Same-origin, so contentDocument is
     // accessible. Idempotent — reuses a single <style id="hide-native-
     // dropdown"> element.
     function hideNativeDropdown() {
       var iframe = document.querySelector('iframe[name="frameEditor"]');
-      if (!iframe || !iframe.contentDocument) return;
+
+      if (!iframe || !iframe.contentDocument) {
+          return;
+      }
       var doc = iframe.contentDocument;
       var style = doc.getElementById('hide-native-dropdown');
+
       if (!style) {
         style = doc.createElement('style');
         style.id = 'hide-native-dropdown';
-        if (doc.head) doc.head.appendChild(style);
+
+        if (doc.head) {
+            doc.head.appendChild(style);
+        }
       }
       // Hide both the dropdown AND the canRequestEditRights button (if any
       // legacy config flips it back on by accident).
@@ -1087,6 +1388,10 @@
         'stroke="#355069" stroke-opacity="0.55" stroke-width="1.3" stroke-linecap="round"/>' +
         '</svg>';
 
+    var DOWNLOAD_ICON_SVG = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+        '<path d="M19.3506 14.4995C19.7095 14.4996 20 14.791 20 15.1499V17.3071C20 18.7943 18.7948 19.9995 17.3076 19.9995H6.69336C5.20616 19.9995 4.00005 18.7943 4 17.3071V15.1499C4 14.7909 4.29141 14.4995 4.65039 14.4995C5.00938 14.4995 5.30078 14.7909 5.30078 15.1499V17.3071C5.30083 18.0763 5.92413 18.6997 6.69336 18.6997H17.3076C18.0768 18.6997 18.7001 18.0763 18.7002 17.3071V15.1499C18.7002 14.7909 18.9916 14.4995 19.3506 14.4995ZM12.001 4.00049C12.3594 4.00094 12.6502 4.29137 12.6504 4.6499V12.1519L15.0039 9.78467C15.2762 9.511 15.7192 9.50973 15.9932 9.78174C16.2668 10.054 16.2681 10.497 15.9961 10.771L12.4961 14.2935C12.3649 14.4254 12.1851 14.4994 11.999 14.4995C11.8131 14.4993 11.634 14.4253 11.5029 14.2935L8.00391 10.771C7.73196 10.497 7.73321 10.054 8.00684 9.78174C8.28083 9.50979 8.72382 9.51104 8.99609 9.78467L11.3506 12.1538V4.6499C11.3508 4.2911 11.6421 4.00049 12.001 4.00049Z" fill="currentColor"/>' +
+        '</svg>';
+
     // Save (diskette) icon — Figma "Frame 3205" (node 15904:12420), 20×20.
     // The diskette is ONE path recoloured via currentColor: per design it has
     // only TWO colours — grey (#A8A8A8, idle/saved/rest) and black (#363636,
@@ -1106,23 +1411,26 @@
         'width="24" height="24" aria-hidden="true" focusable="false">' + inner + '</svg>';
     }
     // idle / dirty / saving — bare diskette, colour from currentColor.
-    var SK_SAVE_ICON_SVG = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M14.3 5.25H8.2M14.3 5.25V9.2H8.2V5.25M14.3 5.25L14.8 5.25L18.749 9.2V16.75C18.749 17.8546 17.8536 18.75 16.749 18.75H15.8M15.8 18.75H8.2M15.8 18.75V13.15H8.2V18.75M8.2 5.25H7.25098C6.14641 5.25 5.25098 6.14543 5.25098 7.25V16.75C5.25098 17.8546 6.14641 18.75 7.25098 18.75H8.2" stroke="currentColor" stroke-linejoin="round"/>
-    </svg>`;
+    var SK_SAVE_ICON_SVG = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+        '<path d="M15.1768 4.01123C15.3019 4.03616 15.4182 4.09742 15.5098 4.18896L19.8105 8.49072C19.9324 8.61261 20 8.77835 20 8.95068V17.3511C20 18.8145 18.814 20.0014 17.3506 20.0015H6.65039C5.18685 20.0015 4.00002 18.8146 4 17.3511V6.64893C4 5.18537 5.18684 3.99854 6.65039 3.99854H15.0498L15.1768 4.01123ZM6.65039 5.29932C5.90481 5.29932 5.30078 5.90334 5.30078 6.64893V17.3511C5.3008 18.0966 5.90482 18.7007 6.65039 18.7007H7.21191V13.2524C7.21191 12.8935 7.50332 12.6021 7.8623 12.6021H16.1387C16.4977 12.6021 16.7891 12.8935 16.7891 13.2524V18.7007H17.3506C18.0961 18.7006 18.7002 18.0966 18.7002 17.3511V9.21924L15.1768 5.6958V8.95068C15.1767 9.30956 14.8862 9.60092 14.5273 9.60107H7.8623C7.50333 9.60107 7.21193 9.30966 7.21191 8.95068V5.29932H6.65039ZM8.51172 18.7007H15.4883V13.9028H8.51172V18.7007ZM8.51172 8.30029H13.877V5.29932H8.51172V8.30029Z" fill="currentColor"/>' +
+        '</svg>';
     // saved — diskette + teal check badge (#3FC0C4, matches the Edit button;
     // bottom-right, white halo cuts it out of the diskette).
-    var SK_SAVE_ICON_ERROR = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path fill-rule="evenodd" clip-rule="evenodd" d="M14.7998 4.75C14.9324 4.75 15.0596 4.80278 15.1533 4.89648L19.1025 8.84668C19.1963 8.94044 19.249 9.06763 19.249 9.2002V13.25C19.249 13.5261 19.0252 13.75 18.749 13.75C18.4729 13.75 18.249 13.5261 18.249 13.25V9.40625L14.7998 5.95703V9.2002C14.7997 9.47625 14.5759 9.7002 14.2998 9.7002H8.2002C7.92412 9.7002 7.7003 9.47625 7.7002 9.2002V5.75H7.25098C6.42255 5.75 5.75098 6.42157 5.75098 7.25V16.75C5.75098 17.5784 6.42255 18.25 7.25098 18.25H7.7002V13.1504C7.7002 12.8742 7.92405 12.6504 8.2002 12.6504H15.7998C16.0759 12.6504 16.2998 12.8742 16.2998 13.1504V13.9209C16.2998 14.197 16.0759 14.4209 15.7998 14.4209C15.5237 14.4209 15.2998 14.197 15.2998 13.9209V13.6504H8.7002V18.25H13.252C13.5281 18.25 13.752 18.4739 13.752 18.75C13.752 19.0261 13.5281 19.25 13.252 19.25H7.25098C5.87027 19.25 4.75098 18.1307 4.75098 16.75V7.25C4.75098 5.86929 5.87027 4.75 7.25098 4.75H14.7998ZM8.7002 8.7002H13.7998V5.75H8.7002V8.7002Z" fill="currentColor" />
-    <path d="M18.75 14.7495C20.9596 14.7495 22.751 16.5402 22.751 18.7495C22.7509 20.9587 20.9595 22.7495 18.75 22.7495C16.5407 22.7493 14.7501 20.9586 14.75 18.7495C14.75 16.5403 16.5406 14.7497 18.75 14.7495ZM20.4043 17.0962C20.209 16.9009 19.8925 16.9009 19.6973 17.0962L18.751 18.0425L17.8047 17.0962C17.6094 16.9009 17.2929 16.9009 17.0977 17.0962C16.9025 17.2915 16.9024 17.608 17.0977 17.8032L18.0439 18.7495L17.0977 19.6958C16.9025 19.8911 16.9024 20.2076 17.0977 20.4028C17.2929 20.5979 17.6095 20.5979 17.8047 20.4028L18.751 19.4565L19.6973 20.4028C19.8925 20.5979 20.2091 20.5979 20.4043 20.4028C20.5995 20.2076 20.5994 19.8911 20.4043 19.6958L19.458 18.7495L20.4043 17.8032C20.5995 17.608 20.5994 17.2915 20.4043 17.0962Z" fill="#FF274B"/>
-    </svg>
-      `;
+    var SK_SAVE_ICON_ERROR = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+        '<path d="M19.3496 15.0991C21.6969 15.0991 23.5996 17.0021 23.5996 19.3491C23.5996 21.6961 21.6969 23.5991 19.3496 23.5991C17.0024 23.5991 15.0996 21.6961 15.0996 19.3491C15.0996 17.0022 17.0024 15.0992 19.3496 15.0991ZM21.1914 17.5093C20.9376 17.2554 20.5253 17.2554 20.2715 17.5093L19.3506 18.4302L18.4297 17.5093C18.1758 17.2554 17.7636 17.2554 17.5098 17.5093C17.256 17.7631 17.2559 18.1754 17.5098 18.4292L18.4307 19.3501L17.5098 20.272C17.2561 20.5258 17.256 20.9371 17.5098 21.1909C17.7635 21.4446 18.1749 21.4445 18.4287 21.1909L19.3506 20.269L20.2725 21.1909C20.5263 21.4445 20.9376 21.4446 21.1914 21.1909C21.4452 20.9371 21.445 20.5258 21.1914 20.272L20.2695 19.3501L21.1914 18.4292C21.4452 18.1754 21.4452 17.7631 21.1914 17.5093Z" fill="#FF274B"/>' +
+        '<path fill-rule="evenodd" clip-rule="evenodd" d="M15.1768 4.01172C15.3018 4.03666 15.4183 4.09793 15.5098 4.18945L19.8105 8.49121C19.9322 8.61308 20 8.77895 20 8.95117V13.1499C20 13.5088 19.709 13.7998 19.3501 13.7998C18.9912 13.7998 18.7002 13.5088 18.7002 13.1499V9.21973L15.1768 5.69629V8.95117C15.1765 9.30982 14.886 9.60141 14.5273 9.60156H7.8623C7.50349 9.60156 7.21219 9.30992 7.21191 8.95117V5.2998H6.65039C5.90481 5.29981 5.30078 5.90383 5.30078 6.64941V17.3516C5.30106 18.0969 5.90498 18.7012 6.65039 18.7012H7.21191V13.2529C7.21191 12.8939 7.50332 12.6025 7.8623 12.6025H16.1387C16.4977 12.6025 16.7891 12.8939 16.7891 13.2529V14.0098C16.7891 14.369 16.4979 14.6602 16.1387 14.6602C15.7795 14.6602 15.4883 14.369 15.4883 14.0098V13.9033H8.51172V18.7012H13.145C13.504 18.7012 13.7951 18.9921 13.7954 19.3511C13.7957 19.7105 13.5044 20.002 13.145 20.002H6.65039C5.18701 20.002 4.00028 18.8149 4 17.3516V6.64941C4 5.18586 5.18684 3.99902 6.65039 3.99902H15.0498L15.1768 4.01172ZM8.51172 8.30078H13.877V5.2998H8.51172V8.30078Z" fill="currentColor"/>' +
+        '</svg>';
     // error — diskette + red cross badge (bottom-right).
-    var SK_SAVE_ICON_SAVED = `
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path fill-rule="evenodd" clip-rule="evenodd" d="M14.7998 4.75C14.9324 4.75 15.0596 4.80278 15.1533 4.89648L19.1025 8.84668C19.1963 8.94044 19.249 9.06763 19.249 9.2002V13.25C19.249 13.5261 19.0252 13.75 18.749 13.75C18.4729 13.75 18.249 13.5261 18.249 13.25V9.40625L14.7998 5.95703V9.2002C14.7997 9.47625 14.5759 9.7002 14.2998 9.7002H8.2002C7.92412 9.7002 7.7003 9.47625 7.7002 9.2002V5.75H7.25098C6.42255 5.75 5.75098 6.42157 5.75098 7.25V16.75C5.75098 17.5784 6.42255 18.25 7.25098 18.25H7.7002V13.1504C7.7002 12.8742 7.92405 12.6504 8.2002 12.6504H15.7998C16.0759 12.6504 16.2998 12.8742 16.2998 13.1504V13.9209C16.2998 14.197 16.0759 14.4209 15.7998 14.4209C15.5237 14.4209 15.2998 14.197 15.2998 13.9209V13.6504H8.7002V18.25H13.252C13.5281 18.25 13.752 18.4739 13.752 18.75C13.752 19.0261 13.5281 19.25 13.252 19.25H7.25098C5.87027 19.25 4.75098 18.1307 4.75098 16.75V7.25C4.75098 5.86929 5.87027 4.75 7.25098 4.75H14.7998ZM8.7002 8.7002H13.7998V5.75H8.7002V8.7002Z" fill="currentColor"/>
-      <path d="M18.75 14.749C20.9594 14.749 22.7508 16.5399 22.751 18.749C22.751 20.9583 20.9596 22.75 18.75 22.75C16.5406 22.7498 14.75 20.9582 14.75 18.749C14.7502 16.54 16.5408 14.7493 18.75 14.749ZM21.0547 17.0957C20.8595 16.9005 20.5429 16.9007 20.3477 17.0957L18.1006 19.3418L17.1543 18.3955C16.9591 18.2004 16.6425 18.2004 16.4473 18.3955C16.252 18.5907 16.2521 18.9073 16.4473 19.1025L17.7471 20.4023C17.8408 20.496 17.9681 20.5488 18.1006 20.5488C18.2331 20.5488 18.3604 20.4961 18.4541 20.4023L21.0547 17.8027C21.2496 17.6075 21.2496 17.2909 21.0547 17.0957Z" fill="#2FA0AF"/>
-      </svg>
-      `
+    var SK_SAVE_ICON_SAVED = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+        '<path d="M19.3506 15.0981C21.6977 15.0983 23.6006 17.0017 23.6006 19.3491C23.6004 21.6964 21.6976 23.5989 19.3506 23.5991C17.0034 23.5991 15.1008 21.6965 15.1006 19.3491C15.1006 17.0016 17.0033 15.0981 19.3506 15.0981ZM21.8818 17.5073C21.628 17.254 21.2166 17.2539 20.9629 17.5073L18.6592 19.8101L17.7383 18.8892C17.4844 18.6355 17.0721 18.6354 16.8184 18.8892C16.5651 19.1429 16.5651 19.5544 16.8184 19.8081L18.2002 21.1899C18.322 21.3116 18.488 21.3803 18.6602 21.3804C18.8322 21.3802 18.9974 21.3115 19.1191 21.1899L21.8818 18.4272C22.1357 18.1734 22.1357 17.7612 21.8818 17.5073Z" fill="#2FA0AF"/>' +
+        '<path fill-rule="evenodd" clip-rule="evenodd" d="M15.1768 4.01172C15.3018 4.03666 15.4183 4.09793 15.5098 4.18945L19.8105 8.49121C19.9322 8.61308 20 8.77895 20 8.95117V13.1499C20 13.5088 19.709 13.7998 19.3501 13.7998C18.9912 13.7998 18.7002 13.5088 18.7002 13.1499V9.21973L15.1768 5.69629V8.95117C15.1765 9.30982 14.886 9.60141 14.5273 9.60156H7.8623C7.50349 9.60156 7.21219 9.30992 7.21191 8.95117V5.2998H6.65039C5.90481 5.29981 5.30078 5.90383 5.30078 6.64941V17.3516C5.30106 18.0969 5.90498 18.7012 6.65039 18.7012H7.21191V13.2529C7.21191 12.8939 7.50332 12.6025 7.8623 12.6025H16.1387C16.4977 12.6025 16.7891 12.8939 16.7891 13.2529V14.0098C16.7891 14.369 16.4979 14.6602 16.1387 14.6602C15.7795 14.6602 15.4883 14.369 15.4883 14.0098V13.9033H8.51172V18.7012H13.145C13.504 18.7012 13.7951 18.9921 13.7954 19.3511C13.7957 19.7105 13.5044 20.002 13.145 20.002H6.65039C5.18701 20.002 4.00028 18.8149 4 17.3516V6.64941C4 5.18586 5.18684 3.99902 6.65039 3.99902H15.0498L15.1768 4.01172ZM8.51172 8.30078H13.877V5.2998H8.51172V8.30078Z" fill="currentColor"/>' +
+        '</svg>';
+
+    // Main App — arrow-into-box icon (16×16), recoloured via currentColor.
+    var SK_MAIN_APP_ICON_SVG =
+      `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M11.5967 2.15039C12.8387 2.15039 13.8457 3.15742 13.8457 4.39941V11.6006C13.8457 12.8426 12.8387 13.8496 11.5967 13.8496H4.39551C3.15361 13.8495 2.14648 12.8425 2.14648 11.6006V10.3389C2.14648 9.98081 2.43689 9.69054 2.79492 9.69043C3.15304 9.69043 3.44336 9.98074 3.44336 10.3389V11.6006C3.44336 12.1261 3.87 12.5526 4.39551 12.5527H11.5967C12.1223 12.5527 12.5488 12.1262 12.5488 11.6006V4.39941C12.5488 3.87382 12.1223 3.44727 11.5967 3.44727H4.39551C3.87003 3.44742 3.44341 3.87391 3.44336 4.39941V5.66504C3.44336 6.02316 3.15304 6.31348 2.79492 6.31348C2.43689 6.31337 2.14648 6.0231 2.14648 5.66504V4.39941C2.14653 3.15752 3.15364 2.15054 4.39551 2.15039H11.5967ZM6.52539 5.54297C6.77775 5.28919 7.18838 5.28795 7.44238 5.54004L9.45703 7.54199C9.57946 7.66372 9.64845 7.83028 9.64844 8.00293C9.64824 8.17539 9.57939 8.34133 9.45703 8.46289L7.44238 10.4639C7.18835 10.716 6.77774 10.7148 6.52539 10.4609C6.27316 10.2069 6.27454 9.79634 6.52832 9.54395L7.42773 8.65039H0.698242C0.340375 8.65016 0.0499313 8.35984 0.0498047 8.00195C0.0498204 7.64397 0.340307 7.35374 0.698242 7.35352H7.42773L6.52832 6.45996C6.2746 6.20756 6.27324 5.79694 6.52539 5.54297Z" fill="currentColor"/>
+      </svg>`;
 
     // Figma-derived styles for our header controls. Injected into the iframe
     // <head> (same mechanism as hideNativeDropdown). Unique sk-* class names
@@ -1155,13 +1463,13 @@
          so it needs none of it. !important beats the non-important native rules. */
       '.sk-edit-tab:hover{box-shadow:none !important;background-color:transparent !important;}',
       '.sk-edit-tab::after,.sk-edit-tab::before{display:none !important;}',
-        '.sk-edit-tooltip{',
-        '  position:fixed;',
-        '  display:none;',
+        '.tooltip, .sk-tooltip{',
         '  box-sizing:border-box;',
-        '  width:192px;',
-        '  height:18px;',
-        '  padding:2px 8px;',
+        '  width:max-content;',
+        '  max-width:none;',
+        '  min-height:18px;',
+        '  padding:2px 8px !important;',
+        '  white-space:nowrap;',
         '  border-radius:3px;',
         '  background:#728596;',
         '  color:#FFFFFF;',
@@ -1170,8 +1478,34 @@
         '  line-height:14px;',
         '  font-weight:400;',
         '  text-align:center;',
+        '  box-shadow:none;',
+        '}',
+
+        '.tooltip .tooltip-inner{',
+        '  padding:0;',
+        '  background:transparent;',
+        '  color:inherit;',
+        '  font:inherit;',
+        '  max-width:none;',
+        '}',
+
+        '.sk-tooltip{',
+        '  position:fixed;',
+        '  display:none;',
+        '  height:18px;',
         '  z-index:100000;',
         '  pointer-events:none;',
+        '}',
+
+        '.tooltip *{',
+        '  border:none !important;',
+        '  outline:none !important;',
+        '  box-shadow:none !important;',
+        "  font-family:'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif !important;",
+        '  font-size:10px !important;',
+        '  line-height:14px !important;',
+        '  font-weight:400 !important;',
+        '  text-align:center !important;',
         '}',
       '.sk-edit-btn{',
       '  box-sizing:border-box;',
@@ -1180,21 +1514,26 @@
       '  border:1px solid transparent;border-radius:5px;',          /* keeps box size stable across bordered/unbordered states */
       '  background:#3fc0c4;color:#FFFFFF;',                         /* free state; color drives icon (currentColor) + label */
       "  font-family:'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
-      '  font-size:12px;line-height:1;font-weight:500;',
+      '  font-size:12px;line-height:16px;font-weight:500;',
       '  white-space:nowrap;cursor:pointer;',
-      '  -webkit-appearance:none;appearance:none;margin:0 0 6px;',  /* margin-bottom lifts the button within the row */
+      '  -webkit-appearance:none;appearance:none;margin-bottom:5px;',  /* margin-bottom lifts the button within the row */
       '  transition:background .12s ease,border-color .12s ease,color .12s ease;',
       '}',
+      '.theme-type-dark .sk-edit-btn {background:#2FA0AF;}',
       '.sk-edit-btn__icon{display:flex;flex:0 0 auto;width:16px;height:16px;margin-right:4px}',
       '.sk-edit-btn__icon svg{display:block;width:16px;height:16px;}',
       '.sk-edit-btn__label{display:block;}',
       /* free (default) hover — not while pending/disabled */
       '.sk-edit-btn:not(.is-editing):not(.is-locked):not(.is-refresh):not(:disabled):hover{background:#41D1C9;}',
+      '.theme-type-dark .sk-edit-btn:not(.is-editing):not(.is-locked):not(.is-refresh):not(:disabled):hover{background:#3FC0C4;}',
       /* editing — you hold the lock */
-      '.sk-edit-btn.is-editing{background:#FFFFFF;color:#2FA0AF;border-color:#2FA0AF;}',
-      '.sk-edit-btn.is-editing:hover{background:#F0F8F9;}',
+      '.sk-edit-btn.is-editing{background:#E2F5F6;color:#2FA0AF;border-color:#2FA0AF;}',
+      '.sk-edit-btn.is-editing:hover{background:#CFEDEF;}',
+      '.theme-type-dark .sk-edit-btn.is-editing{background:#2B434D;color:#3FC0C4;border-color:#3FC0C4;}',
+      '.theme-type-dark .sk-edit-btn.is-editing:hover{background:#2C4F59;}',
       /* locked — someone else is editing (disabled) */
       '.sk-edit-btn.is-locked{background:rgba(53,80,105,0.15);color:#FFFFFF;border-color:transparent;cursor:default;}',
+      '.theme-type-dark .sk-edit-btn.is-locked{background:rgba(255, 255, 255, 0.12);color:rgba(255, 255, 255, 0.5);border-color:transparent;cursor:default;}',
       '.sk-edit-btn:disabled{cursor:default;pointer-events:none;}',
 
       /* refresh — conflict state. Same button shape/spacing as Edit, but with
@@ -1237,7 +1576,7 @@
       // more-specific `.toolbar .tabs li` (our `.sk-editing-tab{align-items:center}`
       // loses on specificity), so the row is bottom-aligned. This bottom margin
       // lifts the label to baseline-align with the Edit button. Don't remove it.
-      '  margin-bottom:6px;',
+      '  margin-bottom:5px;',
       '}',
       '.sk-editing-label__who{font-weight:600;}',                   /* #4: the editing user (or "You") — semibold */
       '.theme-type-dark .sk-editing-label{color:rgba(255,255,255,0.7);}', /* dark theme: #355069 would vanish */
@@ -1291,16 +1630,63 @@
       '.theme-type-dark .sk-save-btn--saving{color:#FFFFFF;opacity:.5;}',
       '.theme-type-dark .sk-save-btn--saved{color:rgba(168, 168, 168, 1);}',
       '.theme-type-dark .sk-save-btn--error{color:#FFFFFF;}',
-      '.theme-type-dark .sk-save-btn:not(:disabled):hover{background:rgba(255,255,255,0.1);}'
+      '.theme-type-dark .sk-save-btn:not(:disabled):hover{background:rgba(255,255,255,0.1);}',
+		/* This is the slot for the buttons in the header. We need to add a margin to the bottom of the slot to make the buttons align correctly. */
+	  '#slot-btn-search{margin-bottom:5px}',
+      /* ── Main App button — header-right, before the search slot. */
+      '.sk-main-app-slot{display:inline-flex;align-items:center;margin-right:8px;vertical-align:middle;}',
+      '.sk-main-app-btn{',
+      '  box-sizing:border-box;',
+      '  display:inline-flex;align-items:center;gap:4px;',
+      '  height:24px;padding:0 8px 0 4px;',
+      '  border:1px solid #2FA0AF;border-radius:5px;',
+      '  background:white;color:#2FA0AF;',
+      "  font-family:'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
+      '  font-size:12px;line-height:16px;font-weight:500;white-space:nowrap;',
+      '  cursor:pointer;-webkit-appearance:none;appearance:none;margin-bottom: 5px;',
+      '  transition:background .12s ease;',
+      '}',
+      '.sk-main-app-btn__icon{display:flex;flex:0 0 auto;flex-shrink:0;width:16px;height:16px;}',
+      '.sk-main-app-btn__icon svg{display:block;flex-shrink:0;width:16px;height:16px;}',
+      '.sk-main-app-btn:not(:disabled):hover{background:#F0F8F9;}',
+      '.theme-type-dark .sk-main-app-btn{background:#242B2E;color:#3FC0C4;border-radius:#3FC0C4;}',
+      '.theme-type-dark .sk-main-app-btn:not(:disabled):hover{background:#253A3F;}',
+      '#slot-btn-dt-quick-access{display:none !important;}',
+        '.download-slot{display:inline-flex;align-items:center;}',
+        '.download-btn{',
+        '  box-sizing:border-box;margin-top:2px;',
+        '  display:inline-flex;align-items:center;justify-content:center;',
+        '  width:28px;height:28px;padding:0;',
+        '  border:none;border-radius:5px;background:transparent;',
+        '  color:#363636;',
+        '  cursor:pointer;-webkit-appearance:none;appearance:none;',
+        '  transition:color .12s ease,background .12s ease;',
+        '}',
+        '.download-btn__icon{display:flex;width:24px;height:24px;}',
+        '.download-btn__icon svg{display:block;width:24px;height:24px;}',
+        '.download-btn:not(:disabled):hover{background:rgba(0,0,0,0.06);}',
+        '.theme-type-dark .download-btn{color:#FFFFFF;}',
+        '.theme-type-dark .download-btn:not(:disabled):hover{background:rgba(255,255,255,0.1);}',
+        '.download-btn:disabled{opacity: var(--component-disabled-opacity, 0.4);}',
+        '.btn-header:not(.dropdown-toggle):hover:not(:disabled){background:rgba(0,0,0,0.06) !important;}',
+        '.btn-header:not(.dropdown-toggle) {',
+        '  width:28px !important; height:28px !important; margin: 2px 4px 0 4px !important; display: flex !important; align-items: center !important; justify-content: center !important;',
+        '}',
+        '.theme-type-dark .btn-header:not(.dropdown-toggle):disabled {color: #A8A8A8 !important; opacity: unset !important;}}'
     ].join('\n');
 
     function injectHeaderControlStyles(doc) {
       var style = doc.getElementById('sk-header-controls');
+
       if (!style) {
         style = doc.createElement('style');
         style.id = 'sk-header-controls';
-        if (doc.head) doc.head.appendChild(style);
+
+        if (doc.head) {
+            doc.head.appendChild(style);
+        }
       }
+
       style.textContent = SK_HEADER_CONTROLS_CSS;
       bindHeaderLogoClick(doc);
     }
@@ -1324,23 +1710,81 @@
               log('user clicked header logo → show welcome screen');
           };
 
+          headerLogo.onmouseenter = function () {
+              showTooltip('logo', headerLogo);
+          };
+
+          headerLogo.onmouseleave = hideHeaderLogoTooltip;
+
           return true;
+      }
+
+      function getEditTooltipText() {
+          if (editModeTransition === 'opening') {
+              return 'Opening Edit Mode...';
+          }
+
+          if (editModeTransition === 'exiting') {
+              return 'Exiting Edit Mode...';
+          }
+
+          if (isLargeFile) {
+              return 'Documents over 10 MB cannot currently be edited';
+          }
+
+          if (!canEdit) {
+              return 'You need the Editor + role or higher to edit this document';
+          }
+
+          if (isDesktopClosing) {
+              return 'Cancel closing the Main App to start editing';
+          }
+
+          if (isDesktopLoggingOut) {
+              return 'Cancel logging out of the Main App to start editing';
+          }
+
+          return 'Only one Member can edit at a time';
       }
 
       function ensureEditTooltip(doc) {
           if (headerEditTooltip && headerEditTooltip.ownerDocument === doc) {
+              headerEditTooltip.textContent = getEditTooltipText();
+
               return headerEditTooltip;
           }
 
           headerEditTooltip = doc.createElement('div');
-          headerEditTooltip.className = 'sk-edit-tooltip';
-          headerEditTooltip.textContent = 'Only one Member can edit at a time';
+          headerEditTooltip.className = 'sk-tooltip';
+          headerEditTooltip.textContent = getEditTooltipText();
 
           if (doc.body) {
               doc.body.appendChild(headerEditTooltip);
           }
 
           return headerEditTooltip;
+      }
+
+      function ensureHeaderLogoTooltip(doc) {
+          if (headerLogoTooltip && headerLogoTooltip.ownerDocument === doc) {
+              return headerLogoTooltip;
+          }
+
+          headerLogoTooltip = doc.createElement('div');
+          headerLogoTooltip.className = 'sk-tooltip';
+          headerLogoTooltip.textContent = 'Discover Sharekey Office';
+
+          if (doc.body) {
+              doc.body.appendChild(headerLogoTooltip);
+          }
+
+          return headerLogoTooltip;
+      }
+
+      function hideHeaderLogoTooltip() {
+          if (headerLogoTooltip) {
+              headerLogoTooltip.style.display = 'none';
+          }
       }
 
       function bindOnlyOfficeWelcomeScreen() {
@@ -1359,7 +1803,7 @@
           modal.__onlyOfficeWelcomeScreenBound = true;
 
           closeButton.onclick = function () {
-              modal.style.display = 'none';
+              window.modalManager.hide('welcome-screen');
 
               log('user closed onlyoffice welcome screen');
           };
@@ -1373,22 +1817,109 @@
               return;
           }
 
-          modal.style.display = 'flex';
+          window.modalManager.show('welcome-screen');
 
           log('showOnlyOfficeWelcomeScreen');
       }
 
-      function showEditTooltip() {
-          if (!headerEditBtn) {
+      function hideEditTooltip() {
+          if (!headerEditTooltip) {
               return;
           }
 
-          if (!headerEditBtn.classList.contains('is-locked')) {
+          headerEditTooltip.style.display = 'none';
+      }
+
+      function getDownloadTooltipText() {
+          if (isDownloadStarting) {
+              return 'Starting download...';
+          }
+
+          if (isDownloading) {
+              return 'Please wait until the current download is finished';
+          }
+
+          if (!canDownload) {
+              return 'Download is disabled for this document';
+          }
+
+          return 'Download';
+      }
+
+      function ensureDownloadTooltip(doc) {
+          if (headerDownloadTooltip && headerDownloadTooltip.ownerDocument === doc) {
+              headerDownloadTooltip.textContent = getDownloadTooltipText();
+
+              return headerDownloadTooltip;
+          }
+
+          headerDownloadTooltip = doc.createElement('div');
+          headerDownloadTooltip.className = 'sk-tooltip';
+          headerDownloadTooltip.textContent = getDownloadTooltipText();
+
+          if (doc.body) {
+              doc.body.appendChild(headerDownloadTooltip);
+          }
+
+          return headerDownloadTooltip;
+      }
+
+      function hideDownloadTooltip() {
+          if (!headerDownloadTooltip) {
               return;
           }
 
-          var doc = headerEditBtn.ownerDocument;
-          var tooltip = ensureEditTooltip(doc);
+          headerDownloadTooltip.style.display = 'none';
+      }
+
+      function getSaveTooltipText() {
+          switch (currentSaveState) {
+              case 'idle':
+                  return 'No unsaved changes';
+              case 'dirty':
+                  return 'Save';
+              case 'saving':
+                  return 'Saving…';
+              case 'saved':
+                  return 'All changes saved';
+              case 'error':
+                  return 'Couldn’t save — click to retry';
+              default:
+                  return 'Save';
+          }
+      }
+
+      function ensureSaveTooltip(doc) {
+          if (headerSaveTooltip && headerSaveTooltip.ownerDocument === doc) {
+              headerSaveTooltip.textContent = getSaveTooltipText();
+
+              return headerSaveTooltip;
+          }
+
+          headerSaveTooltip = doc.createElement('div');
+          headerSaveTooltip.className = 'sk-tooltip';
+          headerSaveTooltip.textContent = getSaveTooltipText();
+
+          if (doc.body) {
+              doc.body.appendChild(headerSaveTooltip);
+          }
+
+          return headerSaveTooltip;
+      }
+
+      function showTooltip(type, button) {
+          var doc = button.ownerDocument;
+          var tooltip;
+
+          if (type === 'save') {
+              tooltip = ensureSaveTooltip(doc);
+          } else if (type === 'edit') {
+              tooltip = ensureEditTooltip(doc);
+          } else if (type === 'download') {
+              tooltip = ensureDownloadTooltip(doc);
+          } else if (type === 'logo') {
+              tooltip = ensureHeaderLogoTooltip(doc);
+          }
 
           if (!tooltip) {
               return;
@@ -1396,7 +1927,7 @@
 
           var TOOLTIP_SCREEN_PADDING = 8;
           var TOOLTIP_OFFSET = 6;
-          var rect = headerEditBtn.getBoundingClientRect();
+          var rect = button.getBoundingClientRect();
 
           tooltip.style.display = 'block';
 
@@ -1417,12 +1948,12 @@
           tooltip.style.top = top + 'px';
       }
 
-      function hideEditTooltip() {
-          if (!headerEditTooltip) {
+      function hideSaveTooltip() {
+          if (!headerSaveTooltip) {
               return;
           }
 
-          headerEditTooltip.style.display = 'none';
+          headerSaveTooltip.style.display = 'none';
       }
 
       function onEditTabClick() {
@@ -1430,7 +1961,9 @@
               return;
           }
 
-          if (!headerEditBtn.classList.contains('is-locked')) {
+          if (!canEdit) {
+              showViewOnlyModeModal(true);
+
               return;
           }
 
@@ -1446,8 +1979,9 @@
       // host drives the actual mode flip back via set-mode → handleSetMode, which
       // re-renders the button.
       function onEditButtonClick() {
-          if (!pm || !headerEditBtn || headerEditBtn.disabled)
+          if (!pm || !headerEditBtn || headerEditBtn.disabled) {
               return;
+          }
 
           // Refresh is not an edit-right action: it only asks the host to reload the
           // fresh document bytes. Allow it even when canEdit=false, but only once the
@@ -1460,22 +1994,42 @@
           }
 
           if (!canEdit) {
+              showViewOnlyModeModal(true);
+
               return;   // role has no edit right — refuse (button shouldn't exist anyway)
+          }
+
+          if (isDesktopClosing || isDesktopLoggingOut) {
+              showDesktopClosingModal(true);
+
+              return;
           }
 
           if (currentMode === 'view') {
               log('user clicked Edit → request-edit-mode');
+              editModeTransition = 'opening';
+              renderEditButton();
+              window.dispatchEvent(new CustomEvent('host-response-start', {
+                  detail: {
+                      key: 'edit-mode'
+                  }
+              }));
               pm.toHost({ type: 'request-edit-mode' });
-              headerEditBtn.disabled = true;   // pending; re-enabled on set-mode
           } else if (currentMode === 'edit') {
               // Save pending changes BEFORE releasing the edit lock, so leaving edit
               // mode never drops unsaved work. triggerAutosave is a no-op if the doc
               // isn't dirty or a save is already in flight; when it does fire, the
               // diskette reflects saving→saved via the shared state funnel.
               log('user clicked Edit (editing) → save-on-exit + mode-changed: view');
+              editModeTransition = 'exiting';
+              renderEditButton();
               pm.triggerAutosave();
+              window.dispatchEvent(new CustomEvent('host-response-start', {
+                  detail: {
+                      key: 'edit-mode'
+                  }
+              }));
               pm.toHost({ type: 'mode-changed', mode: 'view' });
-              headerEditBtn.disabled = true;
           }
       }
 
@@ -1486,35 +2040,135 @@
     // capture → x2t → `saved` path as autosave and drives the state back via
     // skSetSaveState.
     function onSaveButtonClick() {
-      if (!pm || (currentSaveState !== 'dirty' && currentSaveState !== 'error')) return;
+      if (!pm || (currentSaveState !== 'dirty' && currentSaveState !== 'error')) {
+          return;
+      }
+
       log('user clicked Save (' + currentSaveState + ') → requestManualSave');
       pm.requestManualSave();
     }
 
-    // Approach B: inject OUR OWN Edit control into the editor's toolbar tab
-    // strip (inside the iframe), right after the "View" tab, styled from Figma
-    // — instead of the brittle outer-page overlay. Same iframe-DOM reach +
-    // <style> injection idiom as hideNativeDropdown. Idempotent. Returns true
-    // once the button is in place. The toolbar renders late (after onAppReady),
-    // so callers poll on a false return — mirrors the tryCacheApi poller.
-    function mountHeaderControls() {
-      var iframe = document.querySelector('iframe[name="frameEditor"]');
-      if (!iframe || !iframe.contentDocument) return false;
-      var doc = iframe.contentDocument;
+    function focusMainAppWindow() {
+      // Tab focus MUST run synchronously inside the click turn — browsers do
+      // not grant cross-tab focus from async postMessage handlers (so the
+      // host calling window.focus() on `focus-request` is a no-op).
+      // window.open('', name) is the reliable primitive when the host tab was
+      // given window.name before opening the editor (PROTOCOL.md).
+      //
+      // Never read cross-origin opener properties (name, closed, location …)
+      // — the editor (office.origin) and host (app.origin) are different
+      // origins; use the agreed window name directly.
+      var MAIN_APP_WINDOW_NAME = 'main-app';
 
-      // Inject (or refresh) our styles whenever the iframe doc is reachable.
-      injectHeaderControlStyles(doc);
-      bindBlockedEditAttemptListeners();
+        if (!window.opener || window.opener.closed) {
+            window.open(window.HOST_ORIGIN, '_blank');
 
-      // Mount both controls; each is idempotent and anchored independently
-      // (tab strip vs quick-access toolbar render at different times), so we
-      // only report "done" once BOTH are in place — the poller keeps trying
-      // until then.
-      var editDone = mountEditButton(doc);
-      mountEditingLabel(doc);              // anchored off the Edit <li>; no-op if edit not mounted yet
-      var saveDone = mountSaveButton(doc);
-      return editDone && saveDone;
+            return;
+        }
+
+      try {
+        var target = window.open('', MAIN_APP_WINDOW_NAME);
+
+        if (target && target !== window) {
+          log('Main App → window.open("", "' + MAIN_APP_WINDOW_NAME + '")');
+        }
+      } catch (e) {
+        log('Main App window.open failed: ' + e.message);
+      }
     }
+
+    function skGoToMainApp() {
+      log('user clicked Main App');
+      focusMainAppWindow();
+    }
+
+    window.skGoToMainApp = skGoToMainApp;
+
+      function mountDownloadButton(doc) {
+          var existing = doc.getElementById('download-btn');
+
+          if (existing) {
+              headerDownloadBtn = existing;
+
+              if (existing.parentNode) {
+                  existing.parentNode.onmouseenter = function () {
+                      if (headerDownloadBtn) {
+                          showTooltip('download', headerDownloadBtn);
+                      }
+                  };
+                  existing.parentNode.onmouseleave = hideDownloadTooltip;
+              }
+
+              renderDownloadButton();
+
+              return true;
+          }
+
+          var nativeSaveSlot = doc.getElementById('slot-btn-dt-save');
+          var parent = nativeSaveSlot && nativeSaveSlot.parentNode;
+
+          if (!parent) {
+              return false;
+          }
+
+          var slot = doc.createElement('div');
+          slot.className = 'download-slot';
+          slot.onmouseenter = function () {
+              if (headerDownloadBtn) {
+                  showTooltip('download', headerDownloadBtn);
+              }
+          };
+          slot.onmouseleave = hideDownloadTooltip;
+
+          var btn = doc.createElement('button');
+
+          btn.id = 'download-btn';
+          btn.className = 'download-btn';
+          btn.type = 'button';
+          btn.disabled = !canDownload;
+          btn.innerHTML =
+              '<span class="download-btn__icon">' +
+              DOWNLOAD_ICON_SVG +
+              '</span>';
+
+          btn.onclick = function () {
+              if (!pm || !canDownload || isDownloadStarting || isDownloading) {
+                  return;
+              }
+
+              log('user clicked Download');
+
+              isDownloadStarting = true;
+              renderDownloadButton();
+
+              pm.downloadCurrentFile(function () {
+                  isDownloadStarting = false;
+                  isDownloading = true;
+                  renderDownloadButton();
+              })
+                  .catch(function (e) {
+                      log('download failed: ' + (e && e.message ? e.message : e));
+                  })
+                  .then(function () {
+                      isDownloadStarting = false;
+                      isDownloading = false;
+                      renderDownloadButton();
+                  });
+          };
+
+          slot.appendChild(btn);
+
+          // Put Download at the end of the quick-access controls
+          parent.appendChild(slot);
+
+          headerDownloadBtn = btn;
+
+          renderDownloadButton();
+
+          log('mountHeaderControls: Download button injected into quick-access toolbar');
+
+          return true;
+      }
 
     // Edit button → trailing <li> in the toolbar tab strip
     // (section.tabs > ul[role="tablist"], Mixtbar.js:113), right after "View".
@@ -1523,12 +2177,17 @@
       // false — visibility-based, not DOM removal, so a permissions/iframe
       // timing race can never leave a "visible-but-dead" button.
       var existing = doc.getElementById('sk-edit-btn');
+
       if (existing) {
           headerEditBtn = existing;
 
           if (existing.parentNode) {
             existing.parentNode.onclick = onEditTabClick;
-            existing.parentNode.onmouseenter = showEditTooltip;
+            existing.parentNode.onmouseenter = function() {
+                if (headerEditBtn && headerEditBtn.classList.contains('is-locked')) {
+                    showTooltip('edit', headerEditBtn);
+                }
+            };
             existing.parentNode.onmouseleave = hideEditTooltip;
           }
 
@@ -1538,12 +2197,19 @@
         }
       var anchor = doc.querySelector('.tabs ul[role="tablist"]') ||
                    doc.querySelector('ul[role="tablist"]');
-      if (!anchor) return false;
+
+      if (!anchor) {
+          return false;
+      }
 
       var slot = doc.createElement('li');
       slot.className = 'sk-edit-tab';
       slot.onclick = onEditTabClick;
-      slot.onmouseenter = showEditTooltip;
+      slot.onmouseenter = function() {
+          if (headerEditBtn && headerEditBtn.classList.contains('is-locked')) {
+              showTooltip('edit', headerEditBtn);
+          }
+      };
       slot.onmouseleave = hideEditTooltip;
       var btn = doc.createElement('button');
       btn.id = 'sk-edit-btn';
@@ -1563,6 +2229,7 @@
       headerEditBtn = btn;
       renderEditButton();
       log('mountHeaderControls: Edit button injected into toolbar tab strip');
+
       return true;
     }
 
@@ -1573,10 +2240,22 @@
     function mountEditingLabel(doc) {
       // Always mount; renderEditingLabel keeps it hidden when canEdit is false.
       var existing = doc.getElementById('sk-editing-label');
-      if (existing) { headerEditingLabel = existing; renderEditingLabel(); return true; }
-      if (!headerEditBtn) return false;                 // mount the Edit button first
+
+      if (existing) {
+          headerEditingLabel = existing;
+          renderEditingLabel();
+          return true;
+      }
+
+      if (!headerEditBtn) {
+          return false;                 // mount the Edit button first
+      }
+
       var editLi = headerEditBtn.parentNode;            // the .sk-edit-tab <li>
-      if (!editLi || !editLi.parentNode) return false;
+
+      if (!editLi || !editLi.parentNode) {
+          return false;
+      }
 
       var slot = doc.createElement('li');
       slot.className = 'sk-editing-tab';
@@ -1590,6 +2269,7 @@
       headerEditingLabel = span;
       renderEditingLabel();
       log('mountHeaderControls: editing label injected into toolbar tab strip');
+
       return true;
     }
 
@@ -1597,9 +2277,26 @@
     // Save slot (#slot-btn-dt-save, Header.js:149), which we hide via CSS.
     function mountSaveButton(doc) {
       var existing = doc.getElementById('sk-save-btn');
-      if (existing) { headerSaveBtn = existing; renderSaveButton(); return true; }
+
+        if (existing) {
+            headerSaveBtn = existing;
+            existing.onmouseenter = function() {
+                if (headerSaveBtn) {
+                    showTooltip('save', headerSaveBtn);
+                }
+            };
+            existing.onmouseleave = hideSaveTooltip;
+
+            renderSaveButton();
+
+            return true;
+        }
+
       var nativeSlot = doc.getElementById('slot-btn-dt-save');
-      if (!nativeSlot || !nativeSlot.parentNode) return false;
+
+      if (!nativeSlot || !nativeSlot.parentNode) {
+          return false;
+      }
 
       var slot = doc.createElement('div');
       slot.className = 'sk-save-slot';
@@ -1609,6 +2306,12 @@
       btn.type = 'button';
       btn.innerHTML = '<span class="sk-save-btn__icon">' + SK_SAVE_ICON_SVG + '</span>';
       btn.onclick = onSaveButtonClick;
+      btn.onmouseenter = function() {
+          if (headerSaveBtn) {
+              showTooltip('save', headerSaveBtn);
+          }
+      };
+      btn.onmouseleave = hideSaveTooltip;
       slot.appendChild(btn);
       // Insert where the diskette was (before the now-hidden native slot).
       nativeSlot.parentNode.insertBefore(slot, nativeSlot);
@@ -1616,16 +2319,157 @@
       headerSaveBtn = btn;
       renderSaveButton();
       log('mountHeaderControls: Save button injected into quick-access toolbar');
+
       return true;
     }
+
+    // Main App button → header-right, immediately before the search slot
+    // (#slot-btn-search, Header.js). Skipped in standalone mode (no opener).
+    function mountMainAppButton(doc) {
+      var existing = doc.getElementById('sk-main-app-btn');
+
+      if (existing) {
+        headerMainAppBtn = existing;
+        return true;
+      }
+
+      var searchSlot = doc.getElementById('slot-btn-search') ||
+        doc.querySelector('[data-layout-name="header-search"]');
+      var parent = searchSlot && searchSlot.parentNode;
+
+      if (!parent) {
+        parent = doc.querySelector('#box-tools') ||
+          doc.querySelector('.extra-right') ||
+          doc.querySelector('.box-tools');
+      }
+
+      if (!parent) {
+          return false;
+      }
+
+      var slot = doc.createElement('div');
+      slot.className = 'sk-main-app-slot';
+      var btn = doc.createElement('button');
+      btn.id = 'sk-main-app-btn';
+      btn.className = 'sk-main-app-btn';
+      btn.type = 'button';
+      var mainAppTitle = window.SK_DESKTOP_TRANSPORT ? 'Main App' : 'Main Tab';
+      btn.innerHTML =
+        '<span class="sk-main-app-btn__icon">' + SK_MAIN_APP_ICON_SVG + '</span>' +
+        '<span class="sk-main-app-btn__label">' + mainAppTitle + '</span>';
+
+      btn.onclick = function (e) {
+        e.stopPropagation();
+
+          if (window.SK_DESKTOP_TRANSPORT) {
+              if (pm) {
+                  pm.toHost({ type: 'focus' });
+              }
+
+              return;
+          }
+
+        // Click lands in the OnlyOffice iframe — call the editor root
+        // (edit.html) synchronously so user activation reaches window.open().
+        var topWin = doc.defaultView && doc.defaultView.top;
+
+        if (topWin && typeof topWin.skGoToMainApp === 'function') {
+          topWin.skGoToMainApp();
+        }
+      };
+
+      slot.appendChild(btn);
+
+      if (searchSlot && searchSlot.parentNode) {
+          searchSlot.parentNode.insertBefore(slot, searchSlot);
+      } else {
+          parent.appendChild(slot);
+      }
+
+      headerMainAppBtn = btn;
+      log('mountHeaderControls: Main App button injected into header-right');
+
+      return true;
+    }
+
+      // Approach B: inject OUR OWN Edit control into the editor's toolbar tab
+      // strip (inside the iframe), right after the "View" tab, styled from Figma
+      // — instead of the brittle outer-page overlay. Same iframe-DOM reach +
+      // <style> injection idiom as hideNativeDropdown. Idempotent. Returns true
+      // once the button is in place. The toolbar renders late (after onAppReady),
+      // so callers poll on a false return — mirrors the tryCacheApi poller.
+      function mountHeaderControls() {
+          var iframe = document.querySelector('iframe[name="frameEditor"]');
+
+          if (!iframe || !iframe.contentDocument) {
+              return false;
+          }
+          var doc = iframe.contentDocument;
+
+          // Inject (or refresh) our styles whenever the iframe doc is reachable.
+          injectHeaderControlStyles(doc);
+          bindBlockedEditAttemptListeners();
+
+          // Mount both controls; each is idempotent and anchored independently
+          // (tab strip vs quick-access toolbar render at different times), so we
+          // only report "done" once BOTH are in place — the poller keeps trying
+          // until then.
+
+          var shouldMountMainAppButton = window.SK_DESKTOP_TRANSPORT || hasOpener;
+          var undoButton = doc.getElementById('slot-btn-dt-undo');
+          var redoButton = doc.getElementById('slot-btn-dt-redo');
+          var slideshowButton = doc.getElementById('slot-btn-dt-start-over');
+          var slideshowInnerButton = slideshowButton.querySelector('button');
+
+          if (pm.isExternal) {
+              undoButton.style.display = 'none';
+              redoButton.style.display = 'none';
+              slideshowButton.style.display = 'none';
+
+              var externalEditDone = mountEditButton(doc);
+
+              mountEditingLabel(doc);
+
+              var externalDownloadDone = mountDownloadButton(doc);
+              var externalMainAppDone = !shouldMountMainAppButton || mountMainAppButton(doc);
+
+              return externalEditDone && externalDownloadDone && externalMainAppDone;
+          }
+
+          undoButton.querySelector('button').innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+              '<path d="M7.71484 4.67893C7.96945 4.42621 8.38083 4.4275 8.63379 4.68186C8.88671 4.93644 8.88528 5.34777 8.63086 5.6008L6.21582 8.00021H13.75C16.6494 8.00021 18.9998 10.3509 19 13.2502C18.9999 16.1496 16.6495 18.5002 13.75 18.5002H11.5C11.1413 18.5 10.8508 18.2095 10.8506 17.8508C10.8506 17.4919 11.1412 17.2006 11.5 17.2004H13.75C15.9315 17.2004 17.7001 15.4317 17.7002 13.2502C17.7 11.0689 15.9314 9.301 13.75 9.301H6.23926L8.63086 11.6789C8.88541 11.9319 8.8866 12.3432 8.63379 12.5979C8.38075 12.8525 7.96948 12.8538 7.71484 12.6008L4.25684 9.16428C4.1019 9.04538 4.00004 8.86082 4 8.65061V8.63889C4.00023 8.46607 4.06977 8.29976 4.19238 8.17795L7.71484 4.67893Z" fill="currentColor"/>' +
+              '</svg>';
+          redoButton.querySelector('button').innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+              '<path d="M15.3662 4.68145C15.6192 4.42699 16.0305 4.42569 16.2852 4.67852L19.8076 8.17754C19.9303 8.29939 19.9998 8.4656 20 8.63848C20 8.64035 19.999 8.64247 19.999 8.64434C19.999 8.64621 20 8.64832 20 8.6502C19.9999 8.86067 19.8975 9.04502 19.7422 9.16387L16.2852 12.6004C16.0305 12.8534 15.6192 12.8521 15.3662 12.5975C15.1133 12.3428 15.1146 11.9315 15.3691 11.6785L17.7607 9.30059H10.25C8.06861 9.30059 6.30002 11.0685 6.2998 13.2498C6.29993 15.4312 8.06855 17.2 10.25 17.2H12.5C12.8588 17.2002 13.1494 17.4915 13.1494 17.8504C13.1492 18.209 12.8587 18.4996 12.5 18.4998H10.25C7.35058 18.4998 5.00013 16.1492 5 13.2498C5.00021 10.3505 7.35063 7.99981 10.25 7.99981H17.7842L15.3691 5.60039C15.1146 5.34737 15.1133 4.93606 15.3662 4.68145Z" fill="currentColor"/>' +
+              '</svg>';
+          if (slideshowInnerButton) {
+              slideshowInnerButton.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+                  '<path d="M17.8506 4.99951C19.3141 4.99962 20.5 6.18739 20.5 7.65088V16.3511C20.4996 17.8143 19.3138 19.0004 17.8506 19.0005H6.15039C4.68706 19.0005 3.50037 17.8143 3.5 16.3511V7.65088C3.5 6.18732 4.68684 4.99951 6.15039 4.99951H17.8506ZM6.15039 6.30127C5.40481 6.30127 4.80078 6.9053 4.80078 7.65088V16.3511C4.80115 17.0963 5.40504 17.7007 6.15039 17.7007H17.8506C18.5959 17.7006 19.1998 17.0963 19.2002 16.3511V7.65088C19.2002 6.90536 18.5961 6.30137 17.8506 6.30127H6.15039Z" fill="currentColor"/>' +
+                  '<path d="M14.7587 11.5704C15.0843 11.7642 15.0843 12.2358 14.7587 12.4296L10.7762 14.8002C10.4429 14.9985 10.0205 14.7584 10.0205 14.3705L10.0205 9.62949C10.0205 9.24163 10.4429 9.00146 10.7762 9.19985L14.7587 11.5704Z" fill="#0F8CC9"/>' +
+                  '</svg>';
+          }
+          var editDone = mountEditButton(doc);
+          mountEditingLabel(doc);              // anchored off the Edit <li>; no-op if edit not mounted yet
+          var saveDone = mountSaveButton(doc);
+          var downloadDone = mountDownloadButton(doc);
+          var mainAppDone = !shouldMountMainAppButton || mountMainAppButton(doc);
+
+          return editDone && saveDone && mainAppDone && downloadDone;
+      }
 
     function autoLoadFixture() {
       log('standalone mode — auto-loading ' + fixtureUrl);
       fetch(fixtureUrl).then(function (r) {
-        if (!r.ok) throw new Error('fixture fetch ' + r.status);
+        if (!r.ok) {
+            throw new Error('fixture fetch ' + r.status);
+        }
+
         return r.arrayBuffer();
       }).then(function (buf) {
-        if (!window.X2TBridge) throw new Error('X2TBridge not available');
+        if (!window.X2TBridge) {
+            throw new Error('X2TBridge not available');
+        }
+
         return window.X2TBridge.convertToBin(new Uint8Array(buf), 'sample.' + fixtureExt);
       }).then(function (bin) {
         log('fixture converted, bin=' + bin.length + ' bytes — calling editor.openDocument');
@@ -1673,24 +2517,31 @@
     function cacheEditorApi() {
       try {
         var iframe = document.querySelector('iframe[name="frameEditor"]');
+
         if (!iframe || !iframe.contentWindow) {
           log('cacheEditorApi: iframe not yet present');
           return false;
         }
+
         var w = iframe.contentWindow;
         var ns = w.DE || w.SSE || w.PE;
+
         if (!ns || typeof ns.getController !== 'function') {
           log('cacheEditorApi: editor namespace not yet exposed');
           return false;
         }
+
         var vp = ns.getController('Viewport');
+
         if (!vp || typeof vp.getApi !== 'function') {
           log('cacheEditorApi: Viewport controller not yet available');
           return false;
         }
+
         editorApi   = vp.getApi();
         editorApiNs = w.Asc;
         log('cacheEditorApi: editor api cached');
+        installMacControlClickContextMenu(w);
         // Hook the user-initiated restriction-change callback so dropdown
         // clicks (Editing↔Viewing) get bridged to the host.
         if (editorApi && typeof editorApi.asc_registerCallback === 'function') {
@@ -1718,6 +2569,7 @@
         // the polled block long since finished.
         try {
           var nc = w.Common && w.Common.NotificationCenter;
+
           if (type === 'word' && nc && typeof nc.on === 'function' && !nc.__wrapperDocReadyBound) {
             nc.__wrapperDocReadyBound = true;
             nc.on('document:ready', function () {
@@ -1733,15 +2585,17 @@
         } catch (e) {
           log('cacheEditorApi: document:ready bind error: ' + (e && e.message ? e.message : e));
         }
+
         return true;
       } catch (e) {
         log('cacheEditorApi error:', e && e.message ? e.message : e);
+
         return false;
       }
     }
 
     // ── Flag objects for editing:disable dispatched on cell/slide ──────
-    // Modelled on the editor controllers' `disableEditing` methods
+    // Modeled on the editor controllers' `disableEditing` methods
     // (disconnect path), but constructed *dynamically* per call because
     // some sub-handlers ignore the outer `disable` arg and key off the
     // flag-object instead. Most notably, Toolbar.DisableToolbar reads
@@ -1798,6 +2652,91 @@
         documentPreview: { draw: false }
       };
     }
+
+      function ensurePresentationEditContextMenus(iframeWin) {
+          if (!iframeWin.PE || typeof iframeWin.PE.getController !== 'function') {
+              return;
+          }
+
+          var documentHolderController = iframeWin.PE.getController('DocumentHolder');
+          var documentHolderView = documentHolderController && documentHolderController.getView();
+
+          if (!documentHolderView || typeof documentHolderView.createDelayedElements !== 'function') {
+              return;
+          }
+
+          documentHolderView.createDelayedElements();
+
+          log('presentation edit context menus initialized');
+      }
+
+      function installMacControlClickContextMenu(iframeWin) {
+          var isUnsupportedEditorType = type === 'cell';
+          var isMacOS = !!(
+              iframeWin &&
+              iframeWin.navigator &&
+              iframeWin.navigator.platform.indexOf('Mac') === 0
+          );
+
+          if (isUnsupportedEditorType || !isMacOS) {
+              return;
+          }
+
+          var ascCommon = iframeWin.AscCommon;
+          var hasMouseEventHandlers = !!(
+              ascCommon &&
+              typeof ascCommon.check_MouseDownEvent === 'function' &&
+              typeof ascCommon.check_MouseUpEvent === 'function'
+          );
+
+          if (!hasMouseEventHandlers) {
+              return;
+          }
+
+          if (ascCommon.__customControlClickContextMenuInstalled) {
+              return;
+          }
+
+          ascCommon.__customControlClickContextMenuInstalled = true;
+
+          var originalCheckMouseDownEvent = ascCommon.check_MouseDownEvent;
+          var originalCheckMouseUpEvent = ascCommon.check_MouseUpEvent;
+
+          function normalizeControlClick(e) {
+              var isControlClick = !!(
+                  e &&
+                  e.ctrlKey &&
+                  e.button === 0 &&
+                  ascCommon.global_mouseEvent
+              );
+
+              if (!isControlClick) {
+                  return;
+              }
+
+              ascCommon.global_mouseEvent.Button = 2;
+              ascCommon.global_mouseEvent.CtrlKey = false;
+              ascCommon.global_mouseEvent.ctrlKey = false;
+          }
+
+          ascCommon.check_MouseDownEvent = function () {
+              var result = originalCheckMouseDownEvent.apply(this, arguments);
+
+              normalizeControlClick(arguments[0]);
+
+              return result;
+          };
+
+          ascCommon.check_MouseUpEvent = function () {
+              var result = originalCheckMouseUpEvent.apply(this, arguments);
+
+              normalizeControlClick(arguments[0]);
+
+              return result;
+          };
+
+          log('macOS Control + click context menu normalization installed');
+      }
 
     // Modelled on word's `disableEditing` (documenteditor/main/app/controller/
     // Main.js ~L865), with the same dynamic-per-call rationale as the cell/
@@ -1858,23 +2797,32 @@
       // host-driven set-mode that arrived during the appReady→documentReady
       // window.
       pendingRestrict = mode;
+
       if (!editorApi || !editorApiNs) {
         log('applyRestriction: api not yet cached, queuing ' + mode);
+
         return;
       }
+
       var iframe = document.querySelector('iframe[name="frameEditor"]');
+
       if (!iframe || !iframe.contentWindow) {
         log('applyRestriction: iframe gone, queuing ' + mode);
         pendingRestrict = mode;
+
         return;
       }
+
       var iframeWin = iframe.contentWindow;
       var nc        = iframeWin.Common && iframeWin.Common.NotificationCenter;
+
       if (!nc || typeof nc.trigger !== 'function') {
         log('applyRestriction: NotificationCenter not ready, falling back to bare asc_setRestriction');
         bareSetRestriction(mode);
+
         return;
       }
+
       var R = editorApiNs.c_oAscRestrictionType;
       var disable = (mode === 'view');
 
@@ -1899,6 +2847,20 @@
           // it only affects review-related buttons.
           nc.trigger('reviewchanges:turn', false);
           editorApi.asc_setRestriction(disable ? R.View : R.None);
+
+          if (!disable) {
+              var documentHolderController = iframeWin.DE && iframeWin.DE.getController('DocumentHolder');
+              var documentHolderView = documentHolderController && documentHolderController.getView();
+              var shouldCreateDelayedElements = documentHolderView &&
+                  !documentHolderView.tableMenu &&
+                  typeof documentHolderView.createDelayedElements === 'function';
+
+              if (shouldCreateDelayedElements) {
+                  documentHolderView.createDelayedElements();
+              }
+            }
+
+            nc.trigger('doc:mode-changed', mode);
           log('applyRestriction(word): editing:disable ' + disable + ' + reviewchanges:turn false + asc_setRestriction(' + (disable ? 'View' : 'None') + ')');
         } else if (type === 'cell') {
           // Build flags per-call so `viewMode` (and `clear` sub-flags) track
@@ -1909,9 +2871,14 @@
           editorApi.asc_setRestriction(disable ? R.View : R.None);
           log('applyRestriction(cell): editing:disable ' + disable + ' + asc_setRestriction(' + (disable ? 'View' : 'None') + ')');
         } else if (type === 'slide') {
-          nc.trigger('editing:disable', disable, buildSlideDisableFlags(disable), 'view');
-          editorApi.asc_setRestriction(disable ? R.View : R.None);
-          log('applyRestriction(slide): editing:disable ' + disable + ' + asc_setRestriction(' + (disable ? 'View' : 'None') + ')');
+            nc.trigger('editing:disable', disable, buildSlideDisableFlags(disable), 'view');
+            editorApi.asc_setRestriction(disable ? R.View : R.None);
+
+            if (!disable) {
+                ensurePresentationEditContextMenus(iframeWin);
+            }
+
+            log('applyRestriction(slide): editing:disable ' + disable + ' + asc_setRestriction(' + (disable ? 'View' : 'None') + ')');
         } else {
           // Unknown type — fall back to the bare path.
           log('applyRestriction: unknown editor type "' + type + '" — falling back to bare asc_setRestriction');
@@ -1925,10 +2892,14 @@
     }
 
     function bareSetRestriction(mode) {
-      if (!editorApi || !editorApiNs) return;
+      if (!editorApi || !editorApiNs) {
+          return;
+      }
+
       var R = editorApiNs.c_oAscRestrictionType;
       var target = (mode === 'view') ? R.View : R.None;
       lastAppliedRestriction = target;
+
       try {
         editorApi.asc_setRestriction(target);
       } catch (e) {
@@ -1964,9 +2935,14 @@
     function onRestrictionsChanged(r) {
       if (r === lastAppliedRestriction) {
         lastAppliedRestriction = null;
+
         return;
       }
-      if (!editorApi || !editorApiNs) return;
+
+      if (!editorApi || !editorApiNs) {
+          return;
+      }
+
       log('asc_onChangeRestrictions: SDK-internal change (raw=' + r + ') — re-asserting ' + pendingRestrict);
       bareSetRestriction(pendingRestrict);
     }
@@ -1977,8 +2953,16 @@
     function handleSetMode(newMode, newLockHolder) {
       if (newMode !== 'view' && newMode !== 'edit') {
         log('handleSetMode: invalid mode "' + newMode + '" — ignoring');
+
         return;
       }
+
+      window.dispatchEvent(new CustomEvent('host-response-end', {
+          detail: {
+              key: 'edit-mode'
+          }
+      }));
+      editModeTransition = null;
       // NOTE: we intentionally do NOT gate edit on canEdit here. set-mode is only
       // sent by the origin-pinned main app AFTER a rights-checked acquireEditLock,
       // so a set-mode:edit is authoritative; gating it here risked blocking a
@@ -1990,18 +2974,21 @@
       // arrives right after the lock is released (cleared above) can still name
       // who edited. Not cleared on release — it's always overwritten by the next
       // real holder before another conflict can occur.
-      if (newLockHolder && newLockHolder.userName)
-        lastLockHolderName = newLockHolder.isSelf ? 'You' : newLockHolder.userName;
+      if (newLockHolder && newLockHolder.userName) {
+          lastLockHolderName = newLockHolder.isSelf ? 'You' : newLockHolder.userName;
+      }
       // Remember the OTHER user's id too (not our own — isSelf never needs a
       // lookup). Survives the lock release the same way lastLockHolderName does,
       // so a post-release conflict can still ask the host to name who edited by
       // id — even after the host's editLock (and its reactive watcher) forgot them.
-      if (newLockHolder && newLockHolder.userId)
-        lastLockHolderId = newLockHolder.userId;
+      if (newLockHolder && newLockHolder.userId) {
+          lastLockHolderId = newLockHolder.userId;
+      }
       // Live "Someone is editing…" (lock held, name unresolved) — ask the host to
       // resolve it by id too, same path as the conflict banner below.
-      if (newLockHolder && (!newLockHolder.userName || newLockHolder.userName === 'Someone'))
-        maybeRequestEditorName('Someone', newLockHolder.userId);
+      if (newLockHolder && (!newLockHolder.userName || newLockHolder.userName === 'Someone')) {
+          maybeRequestEditorName('Someone', newLockHolder.userId);
+      }
 
       currentMode = newMode;
       updateOverlayUI();
@@ -2018,26 +3005,28 @@
     // beat as its save: the set-mode:view that clears `lockHolder` can be
     // processed just before this conflict, so we fall back to the last holder
     // name we remembered (lastLockHolderName) before finally landing on "Someone".
-    function handleConflict() {
-      conflictState = {
-        updatedBy: (lockHolder && lockHolder.userName) || lastLockHolderName || 'Someone',
-        userId:    (lockHolder && lockHolder.userId)   || lastLockHolderId   || null
-      };
+      function handleConflict(userId, userName) {
+          conflictState = {
+              updatedBy: userName || 'Someone',
+              userId: userId || null
+          };
 
-      updateOverlayUI();
+          updateOverlayUI();
 
-      log('handleConflict: document updated by ' + conflictState.updatedBy);
+          log('handleConflict: document updated by ' + conflictState.updatedBy);
 
-      maybeRequestEditorName(conflictState.updatedBy, conflictState.userId);
-    }
+          maybeRequestEditorName(conflictState.updatedBy, conflictState.userId);
+      }
     window.handleConflict = handleConflict;
 
     function maybeRequestEditorName(displayName, userId) {
-      if (displayName !== 'Someone' || !pm)
+      if (displayName !== 'Someone' || !pm) {
           return;
+      }
 
-      if (editorNameRequestedFor === userId)
+      if (editorNameRequestedFor === userId) {
           return;
+      }
 
       editorNameRequestedFor = userId;
       log('holder name unresolved → request-editor-name for ' + userId);
@@ -2049,13 +3038,15 @@
       log(userId);
       log(userName);
 
-      if (!userId || !userName || userName === 'Someone')
+      if (!userId || !userName || userName === 'Someone') {
           return;
+      }
 
       let changed = false;
 
-      if (lastLockHolderId === userId)
+      if (lastLockHolderId === userId) {
           lastLockHolderName = userName;
+      }
 
       if (conflictState && conflictState.userId === userId && conflictState.updatedBy === 'Someone') {
         conflictState.updatedBy = userName;
@@ -2094,15 +3085,30 @@
     // Role / EDIT_CONTENT right). Sent before `load`, so it lands before the
     // toolbar tab-strip exists → no Edit-button flash for viewers.
     function handlePermissions(perms) {
-      var next = !(perms && perms.canEdit === false);   // default true unless explicitly false
-      if (next === canEdit) return;
-      canEdit = next;
-      log('handlePermissions: canEdit=' + canEdit);
-      // Re-render the Edit button + editing label to reflect the new capability
-      // (renderEditButton hides the button when !canEdit). The controls are
-      // mounted unconditionally by the poller, so this just flips visibility —
-      // no DOM removal/race.
-      updateOverlayUI();
+        var nextCanEdit = !(perms && perms.canEdit === false);
+        var nextCanDownload = !(perms && perms.canDownload === false);
+        var nextIsLargeFile = !(perms && perms.isLargeFile === false);
+        var nextDesktopClosing = !!(perms && perms.isDesktopClosing);
+        var nextDesktopLoggingOut = !!(perms && perms.isDesktopLoggingOut);
+
+        if (nextCanEdit === canEdit && nextDesktopClosing === isDesktopClosing && nextDesktopLoggingOut === isDesktopLoggingOut && nextCanDownload === canDownload && nextIsLargeFile === isLargeFile) {
+            return;
+        }
+
+        canEdit = nextCanEdit;
+        isDesktopClosing = nextDesktopClosing;
+        isDesktopLoggingOut = nextDesktopLoggingOut;
+        canDownload = nextCanDownload;
+        isLargeFile = nextIsLargeFile;
+        log('handlePermissions: canEdit = ' + canEdit);
+        log('handlePermissions: isDesktopClosing = ' + isDesktopClosing);
+        log('handlePermissions: isDesktopLoggingOut = ' + isDesktopLoggingOut);
+        log('handlePermissions: canDownload = ' + canDownload);
+        log('handlePermissions: isLargeFile = ' + isLargeFile);
+        // Re-render the Edit button + editing label to reflect the new capability
+        // (edit button hides when pm.isExternal === true).
+        // The controls are mounted pm.isExternal === false, otherwise only download button.
+        updateOverlayUI();
     }
     window.handlePermissions = handlePermissions;
 
@@ -2112,10 +3118,16 @@
         log('onAppReady — initialising postmessage bridge mode=' + currentMode);
         pm = new window.WrapperPostMessage({ editor: editorInstance, editorType: type });
         pm.signalReady();
-        if (isStandalone) autoLoadFixture();
+
+        if (isStandalone) {
+            autoLoadFixture();
+        }
+
         updateOverlayUI();
         bindTurnOnEditModeModal();
+        bindDesktopClosingModal();
         bindViewerModeModal();
+        bindViewOnlyModeModal();
         bindOnlyOfficeWelcomeScreen();
         bindSaveShortcutListeners();
         bindBlockedContentCopyListeners(document);
@@ -2156,8 +3168,11 @@
             hideNativeDropdown();
             return;
           }
-          if (++attempts < 20) setTimeout(tryCacheApi, 50);   // up to ~1 s of polling
-          else log('tryCacheApi: gave up after ' + attempts + ' attempts');
+          if (++attempts < 20) {
+              setTimeout(tryCacheApi, 50);   // up to ~1 s of polling
+          } else {
+              log('tryCacheApi: gave up after ' + attempts + ' attempts');
+          }
         }
         tryCacheApi();
 
@@ -2165,10 +3180,17 @@
         // renders late and independently of the Viewport api, so poll on its
         // own clock (~3 s). Idempotent, so a later onDocumentReady call is safe.
         var mountAttempts = 0;
+
         (function tryMountHeader() {
-          if (mountHeaderControls()) return;
-          if (++mountAttempts < 60) setTimeout(tryMountHeader, 50);
-          else log('tryMountHeader: header anchor never appeared');
+          if (mountHeaderControls()) {
+              return;
+          }
+
+          if (++mountAttempts < 60) {
+              setTimeout(tryMountHeader, 50);
+          } else {
+              log('tryMountHeader: header anchor never appeared');
+          }
         })();
       },
       onDocumentReady: function () {
@@ -2222,7 +3244,9 @@
       },
       onError: function (e) {
         log('onError', e && e.data);
-        if (pm) pm.error('SDK_ERROR', JSON.stringify(e && e.data || {}), pm.requestId);
+        if (pm) {
+            pm.error('SDK_ERROR', JSON.stringify(e && e.data || {}), pm.requestId);
+        }
       },
       onWarning: function (e) {
         log('onWarning', e && e.data);
@@ -2239,28 +3263,64 @@
         window.__editorDirty = dirty;
         // pm.onDirtyChanged relays to host (`dirty` postMessage) AND drives
         // the editor-side autosave debounce.
-        if (pm) pm.onDirtyChanged(dirty);
+        if (pm) {
+            pm.onDirtyChanged(dirty);
+        }
       },
       onRequestClose: function () {
         log('onRequestClose');
-        if (pm) pm.toHost({ type: 'close-request' });
+
+        if (pm) {
+            pm.toHost({type: 'close-request'});
+        }
       }
     };
+
+      function notifyHostAboutPageClosing() {
+          if (!pm || window.__skPageClosingNotified) {
+              return;
+          }
+
+          window.__skPageClosingNotified = true;
+
+          if (window.__editorDirty) {
+              pm.triggerAutosave();
+          }
+
+          pm.toHost({
+              type: 'page-closing',
+              dirty: !!window.__editorDirty,
+          });
+      }
 
     // Browser-level guard: if the user closes the editor tab with unsaved
     // edits, prompt before discarding. The host main app should ALSO show
     // a confirmation in its own UI on `close-request`, but this is the
     // last line of defence for direct tab-close (Cmd-W, X button) where no
     // host event ever fires.
-    window.addEventListener('beforeunload', function (e) {
-      if (window.__editorDirty) {
-        // Modern browsers ignore the custom message and show their own,
-        // but `returnValue` must be set for the prompt to appear at all.
-        e.preventDefault();
-        e.returnValue = 'You have unsaved edits. Close anyway?';
-        return e.returnValue;
-      }
-    });
+      window.addEventListener('beforeunload', function (e) {
+          if (window.SK_DESKTOP_TRANSPORT && pm) {
+              if (!window.__editorDirty) {
+                  return;
+              }
+
+              e.preventDefault();
+              log('desktop beforeunload + dirty → saveAndClose');
+              pm.saveAndClose();
+
+              return;
+          }
+
+          var isNativeCloseConfirmationNeeded =
+              window.__editorDirty &&
+              !window.modalManager.isActive('cannot-reconnect-modal') &&
+              !window.modalManager.isActive('main-app-logged-out-modal') &&
+              !window.modalManager.isActive('main-app-closed-modal');
+
+          if (isNativeCloseConfirmationNeeded) {
+              e.preventDefault();
+          }
+      });
 
     // Autosave: also fire when the tab is backgrounded. visibilitychange
     // fires while the page is still alive (unlike beforeunload), so the
@@ -2272,6 +3332,8 @@
         pm.triggerAutosave();
       }
     });
+
+    window.addEventListener('pagehide', notifyHostAboutPageClosing);
 
     // The Edit button is injected into the iframe header after onAppReady
     // (mountHeaderControls); its click handler is wired there. Nothing to
@@ -2294,4 +3356,8 @@
   } else {
     boot();
   }
+    /* jshint +W003 */
+    /* jshint +W106 */
+    /* jshint +W104 */
+    /* jshint +W119 */
 })();

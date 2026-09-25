@@ -6,10 +6,8 @@
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="stylesheet" href="/fonts.css" />
         <link rel="stylesheet" href="/edit.css" />
-        <link rel="stylesheet" href="/connection-lost.css" />
-        <link rel="stylesheet" href="/turn-on-edit-mode.css" />
-        <link rel="stylesheet" href="/viewer-mode.css" />
         <link rel="stylesheet" href="/welcome-screen.css" />
+        <link rel="stylesheet" href="/confirmation-modal.css" />
 
         <!-- Tab favicon from ?type= so users can recognise document tabs at a
        glance. Title gets replaced with the filename later, once the host
@@ -55,9 +53,14 @@
                     return;
                 }
 
+                var params = new URLSearchParams(window.location.search);
+                var isDesktopTransport = params.get("transport") === "desktop";
+
                 // No opener → direct visit → refuse to mount.
+                // Desktop Electron windows intentionally have no opener; they communicate via MessagePort.
                 var hasOpener = !!(window.opener && window.opener !== window);
-                if (!hasOpener) {
+
+                if (!hasOpener && !isDesktopTransport) {
                     document.body.innerHTML =
                         '<div class="startup-error">' +
                         "<h1>Open a document from your main app</h1>" +
@@ -78,7 +81,8 @@
                 // for "is this inbound origin allowed?" — used by both
                 // wrapper-postmessage.js and wrapper-heartbeat.js. Exact origins
                 // stay exact (prod is unchanged); only a `*.` rule is permissive.
-                window.HOST_ORIGIN = ALLOWED_HOST_ORIGIN; // the rule (may be a pattern)
+                window.SK_DESKTOP_TRANSPORT = isDesktopTransport;
+                window.HOST_ORIGIN = isDesktopTransport ? "" : ALLOWED_HOST_ORIGIN; // the rule (may be a pattern)
                 window.matchHostOrigin = (function (rule) {
                     var rules = String(rule)
                         .split(",")
@@ -128,6 +132,7 @@
                     "/wrapper-customization.js",
                     "/wrapper-postmessage.js",
                     "/wrapper-mount.js",
+                    "/wrapper-modal-manager.js",
                 ].forEach(function (src) {
                     var s = document.createElement("script");
                     s.src = src;
@@ -151,37 +156,115 @@
        Empty text in idle state (data-state="idle"). -->
         <div id="save-state" data-state="idle"></div>
 
-        <!-- Connection-lost modal (hidden by default; shown on disconnection) -->
-        <div id="connection-lost-modal">
-            <div class="cl-backdrop"></div>
+        <div id="main-app-closed-modal" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
             <div
-                class="cl-dialog"
+                class="cm-content"
                 role="alertdialog"
                 aria-labelledby="cl-title"
                 aria-describedby="cl-desc"
             >
-                <div id="cl-title">Sharekey Main App Closed</div>
-                <div class="cl-dialog-description">The Sharekey Main App needs to be always open to access Office Documents.</div>
-                <div class="cl-dialog-description">Please reopen the Main App and this document.</div>
-                <div class="cl-dialog-warning">The latest changes made in this document could NOT be saved.</div>
-                <button id="cl-close-btn" type="button">Close Document</button>
+                <div class="cm-title">Sharekey Main Tab Closed</div>
+                <div class="cm-description">The Main Tab you opened this document from needs to remain open while you work with Office Documents.</div>
+                <div class="cm-description"><strong>This document can no longer be used here.</strong> Please close this tab, then open the Main Tab and reopen the document from there.</div>
+                <div class="cm-description cm-footnote">All changes were successfully saved before the Main Tab was closed.</div>
+                <button id="macm-close-btn" class="cm-button cm-button--auto-size" type="button">Close Tab</button>
             </div>
         </div>
 
-        <div id="turn-on-edit-mode">
-            <div class="toem-backdrop"></div>
+        <div id="main-app-logged-out-modal" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
             <div
-                class="toem-dialog"
+                class="cm-content"
                 role="alertdialog"
                 aria-labelledby="cl-title"
                 aria-describedby="cl-desc"
             >
-                <svg id="toem-close-btn" width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <div class="cm-title">Logged Out of Sharekey Main App</div>
+                <div class="cm-description">You are logged out in the Main Tab you opened this document from. You need to remain signed in while you work with Office Documents.</div>
+                <div class="cm-description"><strong>This document can no longer be used here.</strong> Please close this tab, then sign back in on the Main Tab and reopen the document from there.</div>
+                <div class="cm-description cm-footnote">All changes were successfully saved before you logged out.</div>
+                <button id="malom-close-btn" class="cm-button cm-button--auto-size" type="button">Close Tab</button>
+            </div>
+        </div>
+
+        <div id="cannot-reconnect-modal" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
+            <div
+                class="cm-content"
+                role="alertdialog"
+                aria-labelledby="cl-title"
+                aria-describedby="cl-desc"
+            >
+                <div class="cm-title">Could Not Reconnect to Sharekey Main Tab</div>
+                <div class="cm-description">The connection to the Main Tab you opened this document from could not be restored.</div>
+                <div class="cm-description"><strong>This document can no longer be used here.</strong> Please close this tab, then open the Main Tab and reopen the document from there. If you are offline, reconnect to the internet first.</div>
+                <div class="cm-description cm-footnote">All changes were successfully saved before the connection was interrupted.</div>
+                <button id="crm-close-btn" class="cm-button cm-button--auto-size" type="button">Close Tab</button>
+            </div>
+        </div>
+
+        <div id="reconnecting-modal" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
+            <div
+                class="cm-content"
+                role="alertdialog"
+                aria-labelledby="cl-title"
+                aria-describedby="cl-desc"
+            >
+                <div class="cm-title">Connection to Sharekey Main Tab Interrupted</div>
+                <div class="cm-description">The connection to the Main Tab you opened this document from was interrupted.</div>
+                <div class="cm-description">All actions in this document are temporarily unavailable. Please keep this tab open while we try to reconnect.</div>
+                <div id="rm-warning" class="cm-description cm-footnote">All changes were successfully saved before the connection was interrupted.</div>
+                <div class="cm-divider"></div>
+                <div class="cm-loader">
+                    <svg
+                        class='cm-round-loader'
+                        xmlns='http://www.w3.org/2000/svg'
+                        width='12'
+                        height='12'
+                        viewBox='0 0 12 12'
+                        fill='none'
+                    >
+                        <circle cx='6' cy='6' r='5.35' stroke='#355069' stroke-opacity='0.1' stroke-width='1.3'/>
+                        <path
+                            d='M6 0.65C7.4189 0.65 8.77968 1.21365 9.783 2.21696C10.7863 3.22027 11.35 4.58105 11.35 5.99995'
+                            stroke='#355069'
+                            stroke-opacity='0.55'
+                            stroke-width='1.3'
+                            stroke-linecap='round'
+                        />
+                    </svg>
+                    <div class="cm-loader-description">
+                        Reconnecting to Sharekey<span class="cm-dot-loader">.</span><span class="cm-dot-loader">.</span><span class="cm-dot-loader">.</span> This may take up to 2 minutes.
+                    </div>
+                </div>
+                <button id="rm-close-btn" class="cm-button cm-button--auto-size cm-button--positive" type="button">Close Tab</button>
+            </div>
+        </div>
+
+        <div id="turn-on-edit-mode" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
+            <div
+                class="cm-content"
+                role="alertdialog"
+                aria-labelledby="cl-title"
+                aria-describedby="cl-desc"
+            >
+                <svg
+                    id="toem-close-btn"
+                    class="cm-close-button"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                >
                     <rect width="20" height="20" rx="10" fill="#355069" fill-opacity="0.15"/>
                     <path d="M12.8769 6.20356C13.1307 5.94972 13.543 5.94972 13.7968 6.20356C14.0505 6.45733 14.0504 6.86869 13.7968 7.12251L10.9189 10.0004L13.7958 12.8774C14.0493 13.1312 14.0495 13.5426 13.7958 13.7963C13.542 14.0502 13.1298 14.0502 12.8759 13.7963L9.99897 10.9194L7.123 13.7963C6.8692 14.0501 6.4579 14.0501 6.20405 13.7963C5.95021 13.5425 5.95021 13.1312 6.20405 12.8774L9.08003 10.0004L6.20308 7.12251C5.94924 6.86867 5.94924 6.4574 6.20308 6.20356C6.45692 5.94982 6.86821 5.94976 7.12202 6.20356L9.99897 9.08052L12.8769 6.20356Z" fill="#355069" fill-opacity="0.8"/>
                 </svg>
-                <div id="toem-title">TURN ON EDITING</div>
-                <svg class="toem-dialog-icon" width="250" height="150" viewBox="0 0 250 150" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <div class="cm-title">TURN ON EDITING</div>
+                <svg class="cm-icon" width="250" height="150" viewBox="0 0 250 150" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <rect width="250" height="150" fill="white"/>
                     <path d="M138.284 13.7021C139.638 13.7022 140.941 14.2071 141.939 15.1123L142.136 15.2988L174.908 48.1064C175.928 49.127 176.5 50.5107 176.5 51.9531V65.5811L176.486 65.5908C176.13 65.8055 175.781 66.0539 175.45 66.3428L175.298 66.4824L175.188 66.5869C175.157 66.6162 175.126 66.6457 175.096 66.6758L143.347 98.4248C142.268 99.5033 141.554 100.894 141.309 102.402C141.296 102.479 141.285 102.557 141.276 102.635L141.252 102.84C141.244 102.911 141.239 102.983 141.233 103.055L140.5 113.343C140.349 115.461 141.131 117.535 142.634 119.026C144.042 120.424 145.959 121.185 147.938 121.137L148.335 121.116L158.604 120.303L158.925 120.27C160.527 120.071 162.026 119.343 163.176 118.193L176.5 104.869V114.107C176.5 126.171 166.873 135.987 154.882 136.291C154.692 136.296 154.501 136.298 154.31 136.298H95.6914L95.1182 136.291C94.1665 136.267 93.2298 136.182 92.3115 136.042C91.9442 135.986 91.5799 135.921 91.2188 135.847C88.8714 135.366 86.6591 134.515 84.6455 133.357C84.0258 133.001 83.4249 132.616 82.8447 132.203C82.4744 131.94 82.1137 131.664 81.7607 131.379C81.2845 130.994 80.8234 130.592 80.3809 130.17C79.4816 129.313 78.6537 128.381 77.9082 127.384C77.7502 127.173 77.5978 126.957 77.4473 126.74C76.4817 125.349 75.6693 123.842 75.0391 122.244C74.774 121.572 74.5412 120.884 74.3418 120.182C74.292 120.006 74.2438 119.83 74.1982 119.653C74.149 119.462 74.1028 119.269 74.0586 119.076C73.6931 117.479 73.5001 115.816 73.5 114.107V35.8936C73.5 34.3614 73.6555 32.8656 73.9512 31.4209C74.099 30.6985 74.2819 29.9889 74.498 29.2939C74.7141 28.5993 74.9635 27.9194 75.2441 27.2559C75.8056 25.9284 76.4925 24.6669 77.29 23.4863C78.3868 21.8629 79.6925 20.3922 81.1689 19.1133C81.4373 18.8808 81.7108 18.6541 81.9902 18.4346C82.4094 18.1051 82.8414 17.7913 83.2842 17.4922C84.1695 16.8941 85.1003 16.3581 86.0703 15.8906C86.3939 15.7347 86.7216 15.5858 87.0537 15.4453C87.3855 15.305 87.7217 15.1732 88.0615 15.0488C88.4015 14.9243 88.7452 14.8073 89.0928 14.6992C89.4401 14.5912 89.7911 14.4916 90.1455 14.4004C91.0319 14.1723 91.9397 13.9975 92.8652 13.8799C93.4206 13.8093 93.9824 13.7592 94.5498 13.7305C94.7386 13.7209 94.9281 13.7138 95.1182 13.709C95.3086 13.7042 95.4998 13.7021 95.6914 13.7021H138.284ZM138.206 35.2197C138.206 44.4691 145.705 51.9678 154.954 51.9678H169.298L138.206 20.8438V35.2197Z" fill="#D5ECEF"/>
                     <g filter="url(#filter0_d_16164_11753)">
@@ -203,26 +286,34 @@
                         </linearGradient>
                     </defs>
                 </svg>
-                <div class="toem-dialog-description">You are in <strong>Viewer Mode.</strong></div>
-                <div class="toem-dialog-description">Click the <strong>Edit</strong> button to start editing this document.</div>
-                <button id="toem-edit-btn" type="button">Edit</button>
+                <div class="cm-description">You are in <strong>Viewer Mode.</strong></div>
+                <div class="cm-description">Click the <strong>Edit</strong> button to start editing this document.</div>
+                <button id="toem-edit-btn" class="cm-button cm-button--marine" type="button">Edit</button>
             </div>
         </div>
 
-        <div id="viewer-mode">
-            <div class="vm-backdrop"></div>
+        <div id="viewer-mode" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
             <div
-                    class="vm-dialog"
+                    class="cm-content"
                     role="alertdialog"
                     aria-labelledby="cl-title"
                     aria-describedby="cl-desc"
             >
-                <svg id="vm-close-btn" width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <svg
+                    id="vm-close-btn"
+                    class="cm-close-button"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                >
                     <rect width="20" height="20" rx="10" fill="#355069" fill-opacity="0.15"/>
                     <path d="M12.8769 6.20356C13.1307 5.94972 13.543 5.94972 13.7968 6.20356C14.0505 6.45733 14.0504 6.86869 13.7968 7.12251L10.9189 10.0004L13.7958 12.8774C14.0493 13.1312 14.0495 13.5426 13.7958 13.7963C13.542 14.0502 13.1298 14.0502 12.8759 13.7963L9.99897 10.9194L7.123 13.7963C6.8692 14.0501 6.4579 14.0501 6.20405 13.7963C5.95021 13.5425 5.95021 13.1312 6.20405 12.8774L9.08003 10.0004L6.20308 7.12251C5.94924 6.86867 5.94924 6.4574 6.20308 6.20356C6.45692 5.94982 6.86821 5.94976 7.12202 6.20356L9.99897 9.08052L12.8769 6.20356Z" fill="#355069" fill-opacity="0.8"/>
                 </svg>
-                <div id="vm-title">EDITING LOCKED</div>
-                <svg class="vm-dialog-icon" width="250" height="160" viewBox="0 0 250 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <div class="cm-title">EDITING LOCKED</div>
+                <svg class="cm-icon" width="250" height="160" viewBox="0 0 250 160" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <rect width="250" height="150" fill="white"/>
                     <path d="M138.284 13.7021C139.638 13.7022 140.941 14.2071 141.939 15.1123L142.136 15.2988L174.908 48.1064C175.928 49.127 176.5 50.5107 176.5 51.9531V65.5811L176.486 65.5908C176.13 65.8055 175.781 66.0539 175.45 66.3428L175.298 66.4824L175.188 66.5869C175.157 66.6162 175.126 66.6457 175.096 66.6758L143.347 98.4248C142.268 99.5033 141.554 100.894 141.309 102.402C141.296 102.479 141.285 102.557 141.276 102.635L141.252 102.84C141.244 102.911 141.239 102.983 141.233 103.055L140.5 113.343C140.349 115.461 141.131 117.535 142.634 119.026C144.042 120.424 145.959 121.185 147.938 121.137L148.335 121.116L158.604 120.303L158.925 120.27C160.527 120.071 162.026 119.343 163.176 118.193L176.5 104.869V114.107C176.5 126.171 166.873 135.987 154.882 136.291C154.692 136.296 154.501 136.298 154.31 136.298H95.6914L95.1182 136.291C94.1665 136.267 93.2298 136.182 92.3115 136.042C91.9442 135.986 91.5799 135.921 91.2188 135.847C88.8714 135.366 86.6591 134.515 84.6455 133.357C84.0258 133.001 83.4249 132.616 82.8447 132.203C82.4744 131.94 82.1137 131.664 81.7607 131.379C81.2845 130.994 80.8234 130.592 80.3809 130.17C79.4816 129.313 78.6537 128.381 77.9082 127.384C77.7502 127.173 77.5978 126.957 77.4473 126.74C76.4817 125.349 75.6693 123.842 75.0391 122.244C74.774 121.572 74.5412 120.884 74.3418 120.182C74.292 120.006 74.2438 119.83 74.1982 119.653C74.149 119.462 74.1028 119.269 74.0586 119.076C73.6931 117.479 73.5001 115.816 73.5 114.107V35.8936C73.5 34.3614 73.6555 32.8656 73.9512 31.4209C74.099 30.6985 74.2819 29.9889 74.498 29.2939C74.7141 28.5993 74.9635 27.9194 75.2441 27.2559C75.8056 25.9284 76.4925 24.6669 77.29 23.4863C78.3868 21.8629 79.6925 20.3922 81.1689 19.1133C81.4373 18.8808 81.7108 18.6541 81.9902 18.4346C82.4094 18.1051 82.8414 17.7913 83.2842 17.4922C84.1695 16.8941 85.1003 16.3581 86.0703 15.8906C86.3939 15.7347 86.7216 15.5858 87.0537 15.4453C87.3855 15.305 87.7217 15.1732 88.0615 15.0488C88.4015 14.9243 88.7452 14.8073 89.0928 14.6992C89.4401 14.5912 89.7911 14.4916 90.1455 14.4004C91.0319 14.1723 91.9397 13.9975 92.8652 13.8799C93.4206 13.8093 93.9824 13.7592 94.5498 13.7305C94.7386 13.7209 94.9281 13.7138 95.1182 13.709C95.3086 13.7042 95.4998 13.7021 95.6914 13.7021H138.284ZM138.206 35.2197C138.206 44.4691 145.705 51.9678 154.954 51.9678H169.298L138.206 20.8438V35.2197Z" fill="#D5ECEF"/>
                     <path fill-rule="evenodd" clip-rule="evenodd" d="M76.0049 149.3C91.1927 149.3 103.505 136.988 103.505 121.8C103.505 106.612 91.1927 94.2998 76.0049 94.2998C60.8171 94.2998 48.5049 106.612 48.5049 121.8C48.5049 136.988 60.8171 149.3 76.0049 149.3Z" fill="white"/>
@@ -261,21 +352,127 @@
                         </linearGradient>
                     </defs>
                 </svg>
-                <div class="vm-dialog-description">You are in <strong>Viewer Mode.</strong></div>
-                <div class="vm-dialog-description"><strong id="vm-username"></strong> is currently editing this document.</div>
-                <div class="vm-dialog-description">You can edit it when no one else is editing.</div>
-                <div class="vm-dialog-footnote">Co-Editing is coming soon.</div>
-                <button id="vm-сonfirm-btn" type="button">Got it</button>
+                <div class="cm-description">You are in <strong>Viewer Mode.</strong></div>
+                <div class="cm-description"><strong id="vm-username"></strong> is currently editing this document.</div>
+                <div class="cm-description">You can edit it when no one else is editing.</div>
+                <div class="cm-description cm-footnote">Co-Editing is coming soon.</div>
+                <button id="vm-сonfirm-btn" class="cm-button" type="button">Got it</button>
             </div>
         </div>
 
-        <div id="welcome-screen">
-            <div class="ws-backdrop"></div>
+        <div id="view-only-mode" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
             <div
-                    class="ws-dialog"
-                    role="alertdialog"
-                    aria-labelledby="ws-title"
-                    aria-describedby="ws-desc"
+                class="cm-content"
+                role="alertdialog"
+                aria-labelledby="cl-title"
+                aria-describedby="cl-desc"
+            >
+                <svg
+                    id="vom-close-btn"
+                    class="cm-close-button"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                >
+                    <rect width="20" height="20" rx="10" fill="#355069" fill-opacity="0.15"/>
+                    <path d="M12.8769 6.20356C13.1307 5.94972 13.543 5.94972 13.7968 6.20356C14.0505 6.45733 14.0504 6.86869 13.7968 7.12251L10.9189 10.0004L13.7958 12.8774C14.0493 13.1312 14.0495 13.5426 13.7958 13.7963C13.542 14.0502 13.1298 14.0502 12.8759 13.7963L9.99897 10.9194L7.123 13.7963C6.8692 14.0501 6.4579 14.0501 6.20405 13.7963C5.95021 13.5425 5.95021 13.1312 6.20405 12.8774L9.08003 10.0004L6.20308 7.12251C5.94924 6.86867 5.94924 6.4574 6.20308 6.20356C6.45692 5.94982 6.86821 5.94976 7.12202 6.20356L9.99897 9.08052L12.8769 6.20356Z" fill="#355069" fill-opacity="0.8"/>
+                </svg>
+                <div class="cm-title">VIEW-ONLY MODE</div>
+                <svg class="cm-icon" width="250" height="150" viewBox="0 0 250 150" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="250" height="150" fill="white"/>
+                    <path d="M138.284 13.7021C139.638 13.7022 140.941 14.2071 141.939 15.1123L142.136 15.2988L174.908 48.1064C175.928 49.127 176.5 50.5107 176.5 51.9531V64.0869C176.398 64.086 176.295 64.085 176.192 64.085C163.323 64.0851 152.12 71.1935 146.284 81.6768C144.751 84.4314 144.751 87.7824 146.284 90.5371C152.12 101.02 163.323 108.129 176.192 108.129C176.295 108.129 176.398 108.127 176.5 108.126V114.107C176.5 126.171 166.873 135.987 154.882 136.291C154.692 136.296 154.501 136.298 154.31 136.298H95.6914L95.1182 136.291C94.1665 136.267 93.2298 136.182 92.3115 136.042C91.9442 135.986 91.5799 135.921 91.2188 135.847C88.8714 135.366 86.6591 134.515 84.6455 133.357C84.0258 133.001 83.4249 132.616 82.8447 132.203C82.4744 131.94 82.1137 131.664 81.7607 131.379C81.2845 130.994 80.8234 130.592 80.3809 130.17C79.4816 129.313 78.6537 128.381 77.9082 127.384C77.7502 127.173 77.5978 126.957 77.4473 126.74C76.4817 125.349 75.6693 123.842 75.0391 122.244C74.774 121.572 74.5412 120.884 74.3418 120.182C74.292 120.006 74.2438 119.83 74.1982 119.653C74.149 119.462 74.1028 119.269 74.0586 119.076C73.6931 117.479 73.5001 115.816 73.5 114.107V35.8936C73.5 34.3614 73.6555 32.8656 73.9512 31.4209C74.099 30.6985 74.2819 29.9889 74.498 29.2939C74.7141 28.5993 74.9635 27.9194 75.2441 27.2559C75.8056 25.9284 76.4925 24.6669 77.29 23.4863C78.3868 21.8629 79.6925 20.3922 81.1689 19.1133C81.4373 18.8808 81.7108 18.6541 81.9902 18.4346C82.4094 18.1051 82.8414 17.7913 83.2842 17.4922C84.1695 16.8941 85.1003 16.3581 86.0703 15.8906C86.3939 15.7347 86.7216 15.5858 87.0537 15.4453C87.3855 15.305 87.7217 15.1732 88.0615 15.0488C88.4015 14.9243 88.7452 14.8073 89.0928 14.6992C89.4401 14.5912 89.7911 14.4916 90.1455 14.4004C91.0319 14.1723 91.9397 13.9975 92.8652 13.8799C93.4206 13.8093 93.9824 13.7592 94.5498 13.7305C94.7386 13.7209 94.9281 13.7138 95.1182 13.709C95.3086 13.7042 95.4998 13.7021 95.6914 13.7021H138.284ZM166.809 85.6221C166.816 85.4782 166.828 85.3354 166.842 85.1934C166.828 85.3354 166.816 85.4783 166.809 85.6221ZM167.074 83.8359C167.081 83.81 167.085 83.7836 167.092 83.7578L167.107 83.7021C167.096 83.7465 167.085 83.7913 167.074 83.8359ZM167.483 82.5781C167.497 82.5453 167.509 82.5121 167.522 82.4795C167.509 82.5121 167.497 82.5453 167.483 82.5781ZM172.208 77.5977C172.276 77.566 172.344 77.5349 172.412 77.5049C172.344 77.535 172.276 77.566 172.208 77.5977ZM138.206 35.2197C138.206 44.4691 145.705 51.9678 154.954 51.9678H169.298L138.206 20.8438V35.2197Z" fill="#D5ECEF"/>
+                    <path d="M176.193 68.3369C187.458 68.3371 197.27 74.5548 202.387 83.7451C203.204 85.214 203.204 86.9999 202.387 88.4688C197.27 97.6591 187.458 103.877 176.193 103.877C164.928 103.877 155.115 97.6592 149.999 88.4688C149.181 86.9999 149.181 85.2139 149.999 83.7451C155.115 74.5546 164.928 68.3369 176.193 68.3369ZM176.189 76.7119C171.002 76.7123 166.796 80.9177 166.796 86.1055C166.796 91.293 171.002 95.4996 176.189 95.5C181.377 95.5 185.583 91.2932 185.583 86.1055C185.583 80.9175 181.377 76.7119 176.189 76.7119ZM176.189 81.7119C178.616 81.7119 180.583 83.6789 180.583 86.1055C180.583 88.533 178.615 90.5 176.189 90.5C173.765 90.4996 171.796 88.5328 171.796 86.1055C171.796 83.6791 173.763 81.7123 176.189 81.7119Z" fill="url(#paint0_linear_18145_6020)"/>
+                    <defs>
+                        <linearGradient id="paint0_linear_18145_6020" x1="206.808" y1="118.241" x2="184.771" y2="61.9463" gradientUnits="userSpaceOnUse">
+                            <stop stop-color="#125E99"/>
+                            <stop offset="1" stop-color="#64E1D8"/>
+                        </linearGradient>
+                    </defs>
+                </svg>
+                <div class="cm-description">You are in <strong>Viewer Mode.</strong></div>
+                <div class="cm-description">With the<span class="cm-role-label">Viewer +</span>role, you cannot edit this document.</div>
+                <div class="cm-description">Ask the <strong>Owner</strong> to upgrade your role to <strong>Editor +</strong> or higher.</div>
+                <button id="vom-сonfirm-btn" class="cm-button" type="button">Got it</button>
+            </div>
+        </div>
+
+        <div id="cannot-start-edit-mode" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
+            <div
+                class="cm-content"
+                role="alertdialog"
+                aria-labelledby="cl-title"
+                aria-describedby="cl-desc"
+            >
+                <svg
+                    id="csem-close-btn"
+                    class="cm-close-button"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                >
+                    <rect width="20" height="20" rx="10" fill="#355069" fill-opacity="0.15"/>
+                    <path d="M12.8769 6.20356C13.1307 5.94972 13.543 5.94972 13.7968 6.20356C14.0505 6.45733 14.0504 6.86869 13.7968 7.12251L10.9189 10.0004L13.7958 12.8774C14.0493 13.1312 14.0495 13.5426 13.7958 13.7963C13.542 14.0502 13.1298 14.0502 12.8759 13.7963L9.99897 10.9194L7.123 13.7963C6.8692 14.0501 6.4579 14.0501 6.20405 13.7963C5.95021 13.5425 5.95021 13.1312 6.20405 12.8774L9.08003 10.0004L6.20308 7.12251C5.94924 6.86867 5.94924 6.4574 6.20308 6.20356C6.45692 5.94982 6.86821 5.94976 7.12202 6.20356L9.99897 9.08052L12.8769 6.20356Z" fill="#355069" fill-opacity="0.8"/>
+                </svg>
+                <div class="cm-title">CANNOT START EDITING</div>
+                <svg class="cm-icon" width="250" height="160" viewBox="0 0 250 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="250" height="150" fill="white"/>
+                    <path d="M138.284 13.7021C139.638 13.7022 140.941 14.2071 141.939 15.1123L142.136 15.2988L174.908 48.1064C175.928 49.127 176.5 50.5107 176.5 51.9531V65.2715L143.347 98.4248L143.149 98.6309C142.181 99.678 141.539 100.989 141.309 102.402C141.296 102.48 141.284 102.557 141.275 102.635L141.252 102.839C141.244 102.91 141.238 102.983 141.232 103.055L140.5 113.343L140.482 113.739C140.45 115.719 141.226 117.629 142.634 119.026L142.923 119.297C144.397 120.608 146.349 121.273 148.334 121.116L148.335 121.115L158.604 120.302C160.219 120.174 161.747 119.511 162.942 118.418L163.176 118.193L176.5 104.869V114.107C176.5 126.171 166.873 135.987 154.882 136.291C154.692 136.296 154.501 136.298 154.31 136.298H95.6914L95.1182 136.291C94.1665 136.267 93.2298 136.182 92.3115 136.042C91.9442 135.986 91.5799 135.921 91.2188 135.847C88.8714 135.366 86.6591 134.515 84.6455 133.357C84.0258 133.001 83.4249 132.616 82.8447 132.203C82.4744 131.94 82.1137 131.664 81.7607 131.379C81.2845 130.994 80.8234 130.592 80.3809 130.17C79.4816 129.313 78.6537 128.381 77.9082 127.384C77.7502 127.173 77.5978 126.957 77.4473 126.74C76.4817 125.349 75.6693 123.842 75.0391 122.244C74.774 121.572 74.5412 120.884 74.3418 120.182C74.292 120.006 74.2438 119.83 74.1982 119.653C74.149 119.462 74.1028 119.269 74.0586 119.076C73.6931 117.479 73.5001 115.816 73.5 114.107V35.8936C73.5 34.3614 73.6555 32.8656 73.9512 31.4209C74.099 30.6985 74.2819 29.9889 74.498 29.2939C74.7141 28.5993 74.9635 27.9194 75.2441 27.2559C75.8056 25.9284 76.4925 24.6669 77.29 23.4863C78.3868 21.8629 79.6925 20.3922 81.1689 19.1133C81.4373 18.8808 81.7108 18.6541 81.9902 18.4346C82.4094 18.1051 82.8414 17.7913 83.2842 17.4922C84.1695 16.8941 85.1003 16.3581 86.0703 15.8906C86.3939 15.7347 86.7216 15.5858 87.0537 15.4453C87.3855 15.305 87.7217 15.1732 88.0615 15.0488C88.4015 14.9243 88.7452 14.8073 89.0928 14.6992C89.4401 14.5912 89.7911 14.4916 90.1455 14.4004C91.0319 14.1723 91.9397 13.9975 92.8652 13.8799C93.4206 13.8093 93.9824 13.7592 94.5498 13.7305C94.7386 13.7209 94.9281 13.7138 95.1182 13.709C95.3086 13.7042 95.4998 13.7021 95.6914 13.7021H138.284ZM138.206 35.2197C138.206 44.4691 145.705 51.9678 154.954 51.9678H169.298L138.206 20.8438V35.2197Z" fill="#D5ECEF"/>
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M76.0049 149.3C91.1927 149.3 103.505 136.988 103.505 121.8C103.505 106.612 91.1927 94.2998 76.0049 94.2998C60.8171 94.2998 48.5049 106.612 48.5049 121.8C48.5049 136.988 60.8171 149.3 76.0049 149.3Z" fill="white"/>
+                    <g filter="url(#filter0_d_17130_12793)">
+                        <path d="M76.0049 99.2998C88.4313 99.2998 98.5049 109.373 98.5049 121.8C98.5049 134.226 88.4313 144.3 76.0049 144.3C63.5785 144.3 53.5049 134.226 53.5049 121.8C53.5049 109.373 63.5785 99.2998 76.0049 99.2998ZM76.0049 129.781C74.348 129.781 73.0049 131.124 73.0049 132.781C73.0049 134.438 74.348 135.781 76.0049 135.781C77.6617 135.781 79.0049 134.438 79.0049 132.781C79.0049 131.124 77.6617 129.781 76.0049 129.781ZM76.0049 108.042C74.6242 108.042 73.5049 109.161 73.5049 110.542V123.282C73.505 124.663 74.6242 125.782 76.0049 125.782C77.3855 125.782 78.5048 124.663 78.5049 123.282V110.542C78.5049 109.161 77.3856 108.042 76.0049 108.042Z" fill="url(#paint0_linear_17130_12793)"/>
+                    </g>
+                    <g filter="url(#filter1_d_17130_12793)">
+                        <path d="M159.641 114.658C159.257 115.041 158.749 115.275 158.208 115.318L147.94 116.132C147.279 116.184 146.627 115.944 146.156 115.477C145.685 115.009 145.44 114.36 145.487 113.698L146.22 103.41L146.244 103.205C146.32 102.736 146.543 102.3 146.882 101.96L172.185 76.6579L184.913 89.3858L159.641 114.658ZM190.09 71.3863C192.517 73.813 192.938 76.6275 192.755 78.7343C192.665 79.7707 192.432 80.6516 192.221 81.2734C192.115 81.5867 192.012 81.8415 191.932 82.0268C191.892 82.1196 191.856 82.1965 191.829 82.254C191.816 82.2823 191.804 82.3065 191.795 82.3258C191.79 82.3354 191.785 82.344 191.782 82.3513C191.78 82.3549 191.778 82.3587 191.777 82.3617L191.773 82.3679L189.745 81.33L191.773 82.37C191.664 82.5806 191.524 82.7743 191.357 82.9417L188.448 85.8503L175.72 73.1223L178.631 70.2117L178.742 70.1068C178.856 70.0069 178.98 69.9191 179.112 69.8437L180.242 71.8228C179.143 69.8962 179.115 69.8442 179.115 69.8423L179.117 69.8416L179.132 69.8326C179.139 69.8285 179.148 69.8241 179.158 69.8188C179.177 69.8082 179.201 69.7943 179.229 69.7795C179.286 69.7495 179.362 69.7116 179.453 69.6676C179.635 69.5797 179.886 69.467 180.194 69.35C180.807 69.1177 181.677 68.8558 182.71 68.743C184.828 68.5117 187.628 68.9243 190.09 71.3863Z" fill="url(#paint1_linear_17130_12793)"/>
+                    </g>
+                    <defs>
+                        <filter id="filter0_d_17130_12793" x="41.5049" y="90.2998" width="69" height="69" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+                            <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+                            <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+                            <feOffset dy="3"/>
+                            <feGaussianBlur stdDeviation="6"/>
+                            <feColorMatrix type="matrix" values="0 0 0 0 0.552941 0 0 0 0 0.607843 0 0 0 0 0.658824 0 0 0 0.12 0"/>
+                            <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_17130_12793"/>
+                            <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_17130_12793" result="shape"/>
+                        </filter>
+                        <filter id="filter1_d_17130_12793" x="133.481" y="59.687" width="71.3115" height="71.4517" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+                            <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+                            <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+                            <feOffset dy="3"/>
+                            <feGaussianBlur stdDeviation="6"/>
+                            <feColorMatrix type="matrix" values="0 0 0 0 0.552941 0 0 0 0 0.607843 0 0 0 0 0.658824 0 0 0 0.12 0"/>
+                            <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_17130_12793"/>
+                            <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_17130_12793" result="shape"/>
+                        </filter>
+                        <linearGradient id="paint0_linear_17130_12793" x1="55.8008" y1="109.284" x2="96.3024" y2="144.569" gradientUnits="userSpaceOnUse">
+                            <stop stop-color="#FFEB3C"/>
+                            <stop offset="1" stop-color="#FFC400"/>
+                        </linearGradient>
+                        <linearGradient id="paint1_linear_17130_12793" x1="135.604" y1="140.502" x2="119.399" y2="93.1956" gradientUnits="userSpaceOnUse">
+                            <stop stop-color="#125E99"/>
+                            <stop offset="1" stop-color="#64E1D8"/>
+                        </linearGradient>
+                    </defs>
+                </svg>
+                <div class="cm-description">You are in <strong>Viewer Mode.</strong></div>
+                <div class="cm-description">The <strong>Close Sharekey Main App</strong> window is open.</div>
+                <div class="cm-description">To edit this document, go to the Main App and cancel closing.</div>
+                <button id="csem-сonfirm-btn" class="cm-button cm-button--marine cm-button--auto-size" type="button">Go to Main App</button>
+            </div>
+        </div>
+
+        <div id="welcome-screen" class="confirmation-modal">
+            <div class="cm-backdrop"></div>
+            <div
+                class="ws-dialog"
+                role="alertdialog"
+                aria-labelledby="ws-title"
+                aria-describedby="ws-desc"
             >
                 <svg id="ws-close-btn" width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <rect width="20" height="20" rx="10" fill="#355069" fill-opacity="0.15"/>

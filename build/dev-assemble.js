@@ -31,7 +31,7 @@ const ORIGIN  = process.env.ALLOWED_HOST_ORIGIN || 'http://localhost:3000';
 const GLUE = [
   'editor-stubs.js', 'wrapper-boot.js', 'wrapper-customization.js',
   'wrapper-mount.js', 'wrapper-postmessage.js', 'wrapper-heartbeat.js',
-  'x2t-bridge.js', 'edit-host-demo.html',
+  'wrapper-modal-manager.js', 'x2t-bridge.js', 'edit-host-demo.html',
 ];
 
 function cpFile(src, dst) {
@@ -44,7 +44,7 @@ function sync() {
     const s = path.join(V1, f);
     if (fs.existsSync(s)) cpFile(s, path.join(PUBLIC, f));
   }
-  for (const f of ['fonts.css', 'edit.css', 'connection-lost.css', 'turn-on-edit-mode.css', 'viewer-mode.css', 'welcome-screen.css']) {
+  for (const f of ['confirmation-modal.css', 'fonts.css', 'edit.css', 'welcome-screen.css']) {
     const s = path.join(OVERLAY, f);
     if (fs.existsSync(s)) cpFile(s, path.join(PUBLIC, f));
   }
