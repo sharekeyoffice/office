@@ -89,6 +89,7 @@
     var editorInstance = null;
     var pm             = null;     // WrapperPostMessage — lives for the page lifetime
     var events;                    // declared below; closed over by constructEditor
+    var headerLogoTooltip = null;
     var headerEditTooltip = null;
     var headerDownloadTooltip = null;
     var headerSaveTooltip = null;
@@ -1709,6 +1710,12 @@
               log('user clicked header logo → show welcome screen');
           };
 
+          headerLogo.onmouseenter = function () {
+              showTooltip('logo', headerLogo);
+          };
+
+          headerLogo.onmouseleave = hideHeaderLogoTooltip;
+
           return true;
       }
 
@@ -1756,6 +1763,28 @@
           }
 
           return headerEditTooltip;
+      }
+
+      function ensureHeaderLogoTooltip(doc) {
+          if (headerLogoTooltip && headerLogoTooltip.ownerDocument === doc) {
+              return headerLogoTooltip;
+          }
+
+          headerLogoTooltip = doc.createElement('div');
+          headerLogoTooltip.className = 'sk-tooltip';
+          headerLogoTooltip.textContent = 'Discover Sharekey Office';
+
+          if (doc.body) {
+              doc.body.appendChild(headerLogoTooltip);
+          }
+
+          return headerLogoTooltip;
+      }
+
+      function hideHeaderLogoTooltip() {
+          if (headerLogoTooltip) {
+              headerLogoTooltip.style.display = 'none';
+          }
       }
 
       function bindOnlyOfficeWelcomeScreen() {
@@ -1888,6 +1917,8 @@
               tooltip = ensureEditTooltip(doc);
           } else if (type === 'download') {
               tooltip = ensureDownloadTooltip(doc);
+          } else if (type === 'logo') {
+              tooltip = ensureHeaderLogoTooltip(doc);
           }
 
           if (!tooltip) {
