@@ -1428,7 +1428,7 @@
     // Main App — arrow-into-box icon (16×16), recoloured via currentColor.
     var SK_MAIN_APP_ICON_SVG =
       `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M11.5967 2.15039C12.8387 2.15039 13.8457 3.15742 13.8457 4.39941V11.6006C13.8457 12.8426 12.8387 13.8496 11.5967 13.8496H4.39551C3.15361 13.8495 2.14648 12.8425 2.14648 11.6006V10.3389C2.14648 9.98081 2.43689 9.69054 2.79492 9.69043C3.15304 9.69043 3.44336 9.98074 3.44336 10.3389V11.6006C3.44336 12.1261 3.87 12.5526 4.39551 12.5527H11.5967C12.1223 12.5527 12.5488 12.1262 12.5488 11.6006V4.39941C12.5488 3.87382 12.1223 3.44727 11.5967 3.44727H4.39551C3.87003 3.44742 3.44341 3.87391 3.44336 4.39941V5.66504C3.44336 6.02316 3.15304 6.31348 2.79492 6.31348C2.43689 6.31337 2.14648 6.0231 2.14648 5.66504V4.39941C2.14653 3.15752 3.15364 2.15054 4.39551 2.15039H11.5967ZM6.52539 5.54297C6.77775 5.28919 7.18838 5.28795 7.44238 5.54004L9.45703 7.54199C9.57946 7.66372 9.64845 7.83028 9.64844 8.00293C9.64824 8.17539 9.57939 8.34133 9.45703 8.46289L7.44238 10.4639C7.18835 10.716 6.77774 10.7148 6.52539 10.4609C6.27316 10.2069 6.27454 9.79634 6.52832 9.54395L7.42773 8.65039H0.698242C0.340375 8.65016 0.0499313 8.35984 0.0498047 8.00195C0.0498204 7.64397 0.340307 7.35374 0.698242 7.35352H7.42773L6.52832 6.45996C6.2746 6.20756 6.27324 5.79694 6.52539 5.54297Z" fill="#2FA0AF"/>
+        <path d="M11.5967 2.15039C12.8387 2.15039 13.8457 3.15742 13.8457 4.39941V11.6006C13.8457 12.8426 12.8387 13.8496 11.5967 13.8496H4.39551C3.15361 13.8495 2.14648 12.8425 2.14648 11.6006V10.3389C2.14648 9.98081 2.43689 9.69054 2.79492 9.69043C3.15304 9.69043 3.44336 9.98074 3.44336 10.3389V11.6006C3.44336 12.1261 3.87 12.5526 4.39551 12.5527H11.5967C12.1223 12.5527 12.5488 12.1262 12.5488 11.6006V4.39941C12.5488 3.87382 12.1223 3.44727 11.5967 3.44727H4.39551C3.87003 3.44742 3.44341 3.87391 3.44336 4.39941V5.66504C3.44336 6.02316 3.15304 6.31348 2.79492 6.31348C2.43689 6.31337 2.14648 6.0231 2.14648 5.66504V4.39941C2.14653 3.15752 3.15364 2.15054 4.39551 2.15039H11.5967ZM6.52539 5.54297C6.77775 5.28919 7.18838 5.28795 7.44238 5.54004L9.45703 7.54199C9.57946 7.66372 9.64845 7.83028 9.64844 8.00293C9.64824 8.17539 9.57939 8.34133 9.45703 8.46289L7.44238 10.4639C7.18835 10.716 6.77774 10.7148 6.52539 10.4609C6.27316 10.2069 6.27454 9.79634 6.52832 9.54395L7.42773 8.65039H0.698242C0.340375 8.65016 0.0499313 8.35984 0.0498047 8.00195C0.0498204 7.64397 0.340307 7.35374 0.698242 7.35352H7.42773L6.52832 6.45996C6.2746 6.20756 6.27324 5.79694 6.52539 5.54297Z" fill="currentColor"/>
       </svg>`;
 
     // Figma-derived styles for our header controls. Injected into the iframe
@@ -1518,16 +1518,21 @@
       '  -webkit-appearance:none;appearance:none;margin-bottom:5px;',  /* margin-bottom lifts the button within the row */
       '  transition:background .12s ease,border-color .12s ease,color .12s ease;',
       '}',
+      '.theme-type-dark .sk-edit-btn {background:#2FA0AF;}',
       '.sk-edit-btn__icon{display:flex;flex:0 0 auto;width:16px;height:16px;margin-right:4px}',
       '.sk-edit-btn__icon svg{display:block;width:16px;height:16px;}',
       '.sk-edit-btn__label{display:block;}',
       /* free (default) hover — not while pending/disabled */
       '.sk-edit-btn:not(.is-editing):not(.is-locked):not(.is-refresh):not(:disabled):hover{background:#41D1C9;}',
+      '.theme-type-dark .sk-edit-btn:not(.is-editing):not(.is-locked):not(.is-refresh):not(:disabled):hover{background:#3FC0C4;}',
       /* editing — you hold the lock */
       '.sk-edit-btn.is-editing{background:#E2F5F6;color:#2FA0AF;border-color:#2FA0AF;}',
       '.sk-edit-btn.is-editing:hover{background:#CFEDEF;}',
+      '.theme-type-dark .sk-edit-btn.is-editing{background:#2B434D;color:#3FC0C4;border-color:#3FC0C4;}',
+      '.theme-type-dark .sk-edit-btn.is-editing:hover{background:#2C4F59;}',
       /* locked — someone else is editing (disabled) */
       '.sk-edit-btn.is-locked{background:rgba(53,80,105,0.15);color:#FFFFFF;border-color:transparent;cursor:default;}',
+      '.theme-type-dark .sk-edit-btn.is-locked{background:rgba(255, 255, 255, 0.12);color:rgba(255, 255, 255, 0.5);border-color:transparent;cursor:default;}',
       '.sk-edit-btn:disabled{cursor:default;pointer-events:none;}',
 
       /* refresh — conflict state. Same button shape/spacing as Edit, but with
@@ -1643,8 +1648,8 @@
       '.sk-main-app-btn__icon{display:flex;flex:0 0 auto;flex-shrink:0;width:16px;height:16px;}',
       '.sk-main-app-btn__icon svg{display:block;flex-shrink:0;width:16px;height:16px;}',
       '.sk-main-app-btn:not(:disabled):hover{background:#F0F8F9;}',
-      '.theme-type-dark .sk-main-app-btn{background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.8);}',
-      '.theme-type-dark .sk-main-app-btn:not(:disabled):hover{background:rgba(255,255,255,0.2);}',
+      '.theme-type-dark .sk-main-app-btn{background:#242B2E;color:#3FC0C4;border-radius:#3FC0C4;}',
+      '.theme-type-dark .sk-main-app-btn:not(:disabled):hover{background:#253A3F;}',
       '#slot-btn-dt-quick-access{display:none !important;}',
         '.download-slot{display:inline-flex;align-items:center;}',
         '.download-btn{',
@@ -1805,7 +1810,7 @@
           }
 
           if (!canDownload) {
-              return 'Downloading is disabled in View-Only Mode';
+              return 'Download is disabled for this document';
           }
 
           return 'Download';
