@@ -1670,7 +1670,8 @@
         '.btn-header:not(.dropdown-toggle):hover:not(:disabled){background:rgba(0,0,0,0.06) !important;}',
         '.btn-header:not(.dropdown-toggle) {',
         '  width:28px !important; height:28px !important; margin: 2px 4px 0 4px !important; display: flex !important; align-items: center !important; justify-content: center !important;',
-        '}'
+        '}',
+        '.theme-type-dark .btn-header:not(.dropdown-toggle):disabled {color: #A8A8A8 !important; opacity: unset !important;}}'
     ].join('\n');
 
     function injectHeaderControlStyles(doc) {
