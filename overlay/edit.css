@@ -29,6 +29,24 @@ body {
   height: 100vh;
 }
 
+/**Ipad Only*/
+:root[data-sk-pinned-viewport],
+:root[data-sk-pinned-viewport] body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+:root[data-sk-pinned-viewport] #placeholder,
+:root[data-sk-pinned-viewport] iframe[name="frameEditor"] {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: var(--sk-viewport-height, 100vh);
+  border: 0;
+  transform: translateY(var(--sk-viewport-offset, 0px));
+}
+
 .startup-error {
   padding: 2em;
   max-width: 600px;
