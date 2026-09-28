@@ -36,15 +36,12 @@
                 var pending = false;
                 var isPinned = false;
 
-                // Let the page cover the whole screen and, where the browser
-                // supports it, resize the layout viewport for the keyboard.
-                // Set here rather than in the markup so no other platform sees it.
                 var meta = document.querySelector('meta[name="viewport"]');
 
                 if (meta) {
                     meta.setAttribute(
                         "content",
-                        "width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content",
+                        "width=device-width, initial-scale=1, interactive-widget=resizes-content",
                     );
                 }
 
@@ -66,7 +63,8 @@
 
                     if (!isPinned && !isZoomed) {
                         var isDiverged =
-                            window.innerHeight - vv.height > 1 || vv.offsetTop > 0;
+                            document.documentElement.clientHeight - vv.height > 1 ||
+                            vv.offsetTop > 0;
 
                         if (isDiverged) {
                             isPinned = true;
