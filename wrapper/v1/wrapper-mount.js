@@ -2415,7 +2415,8 @@
           // only report "done" once BOTH are in place — the poller keeps trying
           // until then.
 
-          var shouldMountMainAppButton = window.SK_DESKTOP_TRANSPORT || hasOpener;
+          var isFirefox = navigator.userAgent.indexOf('Firefox/') !== -1;
+          var shouldMountMainAppButton = !isFirefox && (window.SK_DESKTOP_TRANSPORT || hasOpener);
           var undoButton = doc.getElementById('slot-btn-dt-undo');
           var redoButton = doc.getElementById('slot-btn-dt-redo');
           var slideshowButton = doc.getElementById('slot-btn-dt-start-over');
