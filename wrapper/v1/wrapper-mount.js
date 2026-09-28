@@ -1840,7 +1840,7 @@
           }
 
           if (!canDownload) {
-              return 'Download is disabled for this document';
+              return 'Download is disabled';
           }
 
           return 'Download';
