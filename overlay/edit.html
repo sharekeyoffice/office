@@ -33,6 +33,10 @@
                     return;
 
                 var root = document.documentElement;
+
+                // Marks the platform for code outside this file: wrapper-mount.js
+                // reads it before guarding the editor's own #viewport scroll.
+                root.setAttribute("data-sk-ipad", "");
                 var pending = false;
                 var isPinned = false;
 
