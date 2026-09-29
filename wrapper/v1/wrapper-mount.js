@@ -1993,6 +1993,10 @@
       }
 
       function showTooltip(type, button) {
+          if (document.documentElement.hasAttribute('data-sk-ipad')) {
+              return;
+          }
+
           var doc = button.ownerDocument;
           var tooltip;
 
