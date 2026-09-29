@@ -116,6 +116,10 @@
     var isDownloading = false;
     var editModeTransition = null; // null | 'opening' | 'exiting'
     var isDownloadStarting = false;
+    var downloadStartingTooltipTimer = null;
+    var downloadingTooltipTimer = null;
+    var isDownloadStartingTooltipVisible = false;
+    var isDownloadingTooltipVisible = false;
     var canEdit        = true;     // role-gated edit capability, set by the main app's
                                    // `permissions` message (EDIT_CONTENT right). false ⇒ the
                                    // Edit button + "editing" label are never shown and
@@ -1248,6 +1252,10 @@
 
           if (headerEditTooltip) {
               headerEditTooltip.textContent = getEditTooltipText();
+
+              if (headerEditTooltip.style.display === 'block') {
+                  positionTooltip(headerEditTooltip, headerEditBtn);
+              }
           }
       }
 
@@ -1307,9 +1315,13 @@
                          : s === 'error' ? SK_SAVE_ICON_ERROR
                          : SK_SAVE_ICON_SVG;
       }
-        if (headerSaveTooltip) {
-            headerSaveTooltip.textContent = getSaveTooltipText();
-        }
+      if (headerSaveTooltip) {
+          headerSaveTooltip.textContent = getSaveTooltipText();
+
+          if (headerSaveTooltip.style.display === 'block') {
+              positionTooltip(headerSaveTooltip, headerSaveBtn);
+          }
+      }
     }
 
     // Called by wrapper-postmessage.js (via window.skSetSaveState) whenever the
@@ -1329,6 +1341,10 @@
 
       if (headerDownloadTooltip) {
           headerDownloadTooltip.textContent = getDownloadTooltipText();
+
+          if (headerDownloadTooltip.style.display === 'block') {
+              positionTooltip(headerDownloadTooltip, headerDownloadBtn);
+          }
       }
     }
 
@@ -1533,7 +1549,7 @@
       '.theme-type-dark .sk-edit-btn.is-editing:hover{background:#2C4F59;}',
       /* locked — someone else is editing (disabled) */
       '.sk-edit-btn.is-locked{background:rgba(53,80,105,0.15);color:#FFFFFF;border-color:transparent;cursor:default;}',
-      '.theme-type-dark .sk-edit-btn.is-locked{background:rgba(255, 255, 255, 0.12);color:rgba(255, 255, 255, 0.5);border-color:transparent;cursor:default;}',
+      '.theme-type-dark .sk-edit-btn.is-locked{background:rgba(255, 255, 255, 0.15);color:rgba(255, 255, 255, 0.5);border-color:transparent;cursor:default;}',
       '.sk-edit-btn:disabled{cursor:default;pointer-events:none;}',
 
       /* refresh — conflict state. Same button shape/spacing as Edit, but with
@@ -1598,7 +1614,7 @@
       '#slot-btn-dt-save{display:none !important;}',                /* hide native; ours takes its place */
       '.sk-save-slot{display:inline-flex;align-items:center;}',
       '.sk-save-btn{',
-      '  box-sizing:border-box; margin-top: 2px;',
+      '  box-sizing:border-box; margin: 2px 4px 0 0;',
       '  display:inline-flex;align-items:center;justify-content:center;',
       '  width:28px;height:28px;padding:0;',
       '  border:none;border-radius:5px;background:transparent;',
@@ -1624,12 +1640,8 @@
          light glyph. Idle stays mid-grey (visible on both). The saved/error
          badges carry their own fills, so only the diskette base needs flipping.
          More specific than the base rules → wins; injected late so no !important. */
-      '.theme-type-dark .sk-save-btn{color:#A8A8A8;}',
-      '.theme-type-dark .sk-save-btn--idle{color:rgba(168, 168, 168, 1);}',
-      '.theme-type-dark .sk-save-btn--dirty{color:#FFFFFF;}',
-      '.theme-type-dark .sk-save-btn--saving{color:#FFFFFF;opacity:.5;}',
-      '.theme-type-dark .sk-save-btn--saved{color:rgba(168, 168, 168, 1);}',
-      '.theme-type-dark .sk-save-btn--error{color:#FFFFFF;}',
+      '.theme-type-dark .sk-save-btn{color:rgba(255, 255, 255, 0.31);}',
+      '.theme-type-dark .sk-save-btn--dirty{color:rgba(255, 255, 255, 0.8);}',
       '.theme-type-dark .sk-save-btn:not(:disabled):hover{background:rgba(255,255,255,0.1);}',
 		/* This is the slot for the buttons in the header. We need to add a margin to the bottom of the slot to make the buttons align correctly. */
 	  '#slot-btn-search{margin-bottom:5px}',
@@ -1654,7 +1666,7 @@
       '#slot-btn-dt-quick-access{display:none !important;}',
         '.download-slot{display:inline-flex;align-items:center;}',
         '.download-btn{',
-        '  box-sizing:border-box;margin-top:2px;',
+        '  box-sizing:border-box;margin: 2px 0 0 4px;',
         '  display:inline-flex;align-items:center;justify-content:center;',
         '  width:28px;height:28px;padding:0;',
         '  border:none;border-radius:5px;background:transparent;',
@@ -1665,15 +1677,66 @@
         '.download-btn__icon{display:flex;width:24px;height:24px;}',
         '.download-btn__icon svg{display:block;width:24px;height:24px;}',
         '.download-btn:not(:disabled):hover{background:rgba(0,0,0,0.06);}',
-        '.theme-type-dark .download-btn{color:#FFFFFF;}',
+        '.theme-type-dark .download-btn{color:rgba(255, 255, 255, 0.8);}',
         '.theme-type-dark .download-btn:not(:disabled):hover{background:rgba(255,255,255,0.1);}',
         '.download-btn:disabled{opacity: var(--component-disabled-opacity, 0.4);}',
+        '.theme-type-dark .download-btn:disabled {color: rgba(255, 255, 255, 0.31); opacity: unset;}',
         '.btn-header:not(.dropdown-toggle):hover:not(:disabled){background:rgba(0,0,0,0.06) !important;}',
         '.btn-header:not(.dropdown-toggle) {',
-        '  width:28px !important; height:28px !important; margin: 2px 4px 0 4px !important; display: flex !important; align-items: center !important; justify-content: center !important;',
+        '  width:28px !important; height:28px !important; margin: 2px 4px 0 4px !important; display: flex !important; align-items: center !important; justify-content: center !important; color: #363636 !important;',
         '}',
-        '.theme-type-dark .btn-header:not(.dropdown-toggle):disabled {color: #A8A8A8 !important; opacity: unset !important;}}'
+        '.theme-type-dark .btn-header:not(.dropdown-toggle) {color: rgba(255, 255, 255, 0.8) !important;}',
+        '.theme-type-dark .btn-header:not(.dropdown-toggle):disabled {color: rgba(255, 255, 255, 0.31) !important; opacity: unset !important;}',
+        '.theme-type-dark .btn-header:not(.dropdown-toggle):disabled .slideshow-play-icon {fill: rgba(15, 140, 201, 0.5);}',
+        '.theme-type-dark .btn-header:not(.dropdown-toggle):hover:not(:disabled){background:rgba(255,255,255,0.1) !important;}',
     ].join('\n');
+
+    function pinInnerViewportScroll(doc) {
+      if (!document.documentElement.hasAttribute('data-sk-ipad')) {
+        return true;   // not an iPad — nothing to guard, never retry
+      }
+
+      if (doc.__skViewportScrollPinned) {
+        return true;
+      }
+
+      var viewport = doc.getElementById('viewport');
+
+      if (!viewport) {
+        return false;  // editor DOM not up yet; the poller calls us again
+      }
+
+      doc.__skViewportScrollPinned = true;
+
+      // The reset must not animate: `scroll-behavior: smooth` would make the
+      // snap-back visible, which is worse than the drift it undoes.
+      var style = doc.getElementById('sk-viewport-scroll-pin');
+
+      if (!style) {
+        style = doc.createElement('style');
+        style.id = 'sk-viewport-scroll-pin';
+
+        if (doc.head) {
+            doc.head.appendChild(style);
+        }
+      }
+
+      style.textContent = '#viewport{scroll-behavior:auto !important;}';
+
+      viewport.addEventListener('scroll', function () {
+        if (viewport.scrollTop !== 0) {
+            viewport.scrollTop = 0;
+        }
+
+        if (viewport.scrollLeft !== 0) {
+            viewport.scrollLeft = 0;
+        }
+      });
+
+      log('pinInnerViewportScroll: #viewport scroll pinned');
+
+      return true;
+    }
 
     function injectHeaderControlStyles(doc) {
       var style = doc.getElementById('sk-header-controls');
@@ -1831,16 +1894,16 @@
       }
 
       function getDownloadTooltipText() {
-          if (isDownloadStarting) {
+          if (isDownloadStartingTooltipVisible) {
               return 'Starting download...';
           }
 
-          if (isDownloading) {
+          if (isDownloadingTooltipVisible) {
               return 'Please wait until the current download is finished';
           }
 
           if (!canDownload) {
-              return 'Download is disabled for this document';
+              return 'Download is disabled';
           }
 
           return 'Download';
@@ -1907,7 +1970,33 @@
           return headerSaveTooltip;
       }
 
+      function positionTooltip(tooltip, button) {
+          var doc = button.ownerDocument;
+          var TOOLTIP_SCREEN_PADDING = 8;
+          var TOOLTIP_OFFSET = 6;
+          var rect = button.getBoundingClientRect();
+          var tooltipRect = tooltip.getBoundingClientRect();
+          var left = rect.left + rect.width / 2 - tooltipRect.width / 2;
+          var top = rect.bottom + TOOLTIP_OFFSET;
+          var maxLeft = doc.documentElement.clientWidth - tooltipRect.width - TOOLTIP_SCREEN_PADDING;
+
+          if (left < TOOLTIP_SCREEN_PADDING) {
+              left = TOOLTIP_SCREEN_PADDING;
+          }
+
+          if (left > maxLeft) {
+              left = maxLeft;
+          }
+
+          tooltip.style.left = left + 'px';
+          tooltip.style.top = top + 'px';
+      }
+
       function showTooltip(type, button) {
+          if (document.documentElement.hasAttribute('data-sk-ipad')) {
+              return;
+          }
+
           var doc = button.ownerDocument;
           var tooltip;
 
@@ -1925,27 +2014,9 @@
               return;
           }
 
-          var TOOLTIP_SCREEN_PADDING = 8;
-          var TOOLTIP_OFFSET = 6;
-          var rect = button.getBoundingClientRect();
-
           tooltip.style.display = 'block';
 
-          var tooltipRect = tooltip.getBoundingClientRect();
-          var left = rect.left + rect.width / 2 - tooltipRect.width / 2;
-          var top = rect.bottom + TOOLTIP_OFFSET;
-          var maxLeft = doc.documentElement.clientWidth - tooltipRect.width - TOOLTIP_SCREEN_PADDING;
-
-          if (left < TOOLTIP_SCREEN_PADDING) {
-              left = TOOLTIP_SCREEN_PADDING;
-          }
-
-          if (left > maxLeft) {
-              left = maxLeft;
-          }
-
-          tooltip.style.left = left + 'px';
-          tooltip.style.top = top + 'px';
+          positionTooltip(tooltip, button);
       }
 
       function hideSaveTooltip() {
@@ -2139,19 +2210,62 @@
               log('user clicked Download');
 
               isDownloadStarting = true;
-              renderDownloadButton();
+              isDownloadStartingTooltipVisible = false;
+              isDownloadingTooltipVisible = false;
+
+              headerDownloadBtn.disabled = true;
+
+              downloadStartingTooltipTimer = setTimeout(function () {
+                  downloadStartingTooltipTimer = null;
+
+                  if (!isDownloadStarting) {
+                      return;
+                  }
+
+                  isDownloadStartingTooltipVisible = true;
+                  renderDownloadButton();
+              }, 300);
 
               pm.downloadCurrentFile(function () {
+                  if (downloadStartingTooltipTimer) {
+                      clearTimeout(downloadStartingTooltipTimer);
+                      downloadStartingTooltipTimer = null;
+                  }
+
                   isDownloadStarting = false;
                   isDownloading = true;
-                  renderDownloadButton();
+
+                  downloadingTooltipTimer = setTimeout(function () {
+                      downloadingTooltipTimer = null;
+
+                      if (!isDownloading) {
+                          return;
+                      }
+
+                      isDownloadStartingTooltipVisible = false;
+                      isDownloadingTooltipVisible = true;
+                      renderDownloadButton();
+                  }, 300);
               })
                   .catch(function (e) {
                       log('download failed: ' + (e && e.message ? e.message : e));
                   })
                   .then(function () {
+                      if (downloadStartingTooltipTimer) {
+                          clearTimeout(downloadStartingTooltipTimer);
+                          downloadStartingTooltipTimer = null;
+                      }
+
+                      if (downloadingTooltipTimer) {
+                          clearTimeout(downloadingTooltipTimer);
+                          downloadingTooltipTimer = null;
+                      }
+
                       isDownloadStarting = false;
                       isDownloading = false;
+                      isDownloadStartingTooltipVisible = false;
+                      isDownloadingTooltipVisible = false;
+
                       renderDownloadButton();
                   });
           };
@@ -2408,6 +2522,7 @@
 
           // Inject (or refresh) our styles whenever the iframe doc is reachable.
           injectHeaderControlStyles(doc);
+          pinInnerViewportScroll(doc);
           bindBlockedEditAttemptListeners();
 
           // Mount both controls; each is idempotent and anchored independently
@@ -2415,7 +2530,9 @@
           // only report "done" once BOTH are in place — the poller keeps trying
           // until then.
 
-          var shouldMountMainAppButton = window.SK_DESKTOP_TRANSPORT || hasOpener;
+          var isIPad = document.documentElement.hasAttribute('data-sk-ipad');
+          var isFirefox = navigator.userAgent.indexOf('Firefox/') !== -1;
+          var shouldMountMainAppButton = !isIPad && !isFirefox && (window.SK_DESKTOP_TRANSPORT || hasOpener);
           var undoButton = doc.getElementById('slot-btn-dt-undo');
           var redoButton = doc.getElementById('slot-btn-dt-redo');
           var slideshowButton = doc.getElementById('slot-btn-dt-start-over');
@@ -2445,7 +2562,7 @@
           if (slideshowInnerButton) {
               slideshowInnerButton.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
                   '<path d="M17.8506 4.99951C19.3141 4.99962 20.5 6.18739 20.5 7.65088V16.3511C20.4996 17.8143 19.3138 19.0004 17.8506 19.0005H6.15039C4.68706 19.0005 3.50037 17.8143 3.5 16.3511V7.65088C3.5 6.18732 4.68684 4.99951 6.15039 4.99951H17.8506ZM6.15039 6.30127C5.40481 6.30127 4.80078 6.9053 4.80078 7.65088V16.3511C4.80115 17.0963 5.40504 17.7007 6.15039 17.7007H17.8506C18.5959 17.7006 19.1998 17.0963 19.2002 16.3511V7.65088C19.2002 6.90536 18.5961 6.30137 17.8506 6.30127H6.15039Z" fill="currentColor"/>' +
-                  '<path d="M14.7587 11.5704C15.0843 11.7642 15.0843 12.2358 14.7587 12.4296L10.7762 14.8002C10.4429 14.9985 10.0205 14.7584 10.0205 14.3705L10.0205 9.62949C10.0205 9.24163 10.4429 9.00146 10.7762 9.19985L14.7587 11.5704Z" fill="#0F8CC9"/>' +
+                  '<path class="slideshow-play-icon" d="M14.7587 11.5704C15.0843 11.7642 15.0843 12.2358 14.7587 12.4296L10.7762 14.8002C10.4429 14.9985 10.0205 14.7584 10.0205 14.3705L10.0205 9.62949C10.0205 9.24163 10.4429 9.00146 10.7762 9.19985L14.7587 11.5704Z" fill="#0F8CC9"/>' +
                   '</svg>';
           }
           var editDone = mountEditButton(doc);
@@ -2848,6 +2965,8 @@
           nc.trigger('reviewchanges:turn', false);
           editorApi.asc_setRestriction(disable ? R.View : R.None);
 
+          nc.trigger('doc:mode-changed', mode);
+
           if (!disable) {
               var documentHolderController = iframeWin.DE && iframeWin.DE.getController('DocumentHolder');
               var documentHolderView = documentHolderController && documentHolderController.getView();
@@ -2858,9 +2977,7 @@
               if (shouldCreateDelayedElements) {
                   documentHolderView.createDelayedElements();
               }
-            }
-
-            nc.trigger('doc:mode-changed', mode);
+          }
           log('applyRestriction(word): editing:disable ' + disable + ' + reviewchanges:turn false + asc_setRestriction(' + (disable ? 'View' : 'None') + ')');
         } else if (type === 'cell') {
           // Build flags per-call so `viewMode` (and `clear` sub-flags) track

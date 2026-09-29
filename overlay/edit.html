@@ -9,6 +9,101 @@
         <link rel="stylesheet" href="/welcome-screen.css" />
         <link rel="stylesheet" href="/confirmation-modal.css" />
 
+        <script>
+            (function () {
+                "use strict";
+
+                var vv = window.visualViewport;
+
+                // No visualViewport (iPadOS < 13) — nothing to measure with, so
+                // leave the page on its existing layout-viewport sizing.
+                if (!vv)
+                    return;
+
+                var nav = navigator;
+                var ua = nav.userAgent || "";
+                var isIPad =
+                    /iPad/.test(ua) ||
+                    /iPad/.test(nav.platform || "") ||
+                    ((nav.platform === "MacIntel" || /Macintosh/.test(ua)) &&
+                        nav.maxTouchPoints > 1 &&
+                        !window.MSStream);
+
+                if (!isIPad)
+                    return;
+
+                var root = document.documentElement;
+
+                // Marks the platform for code outside this file: wrapper-mount.js
+                // reads it before guarding the editor's own #viewport scroll.
+                root.setAttribute("data-sk-ipad", "");
+                var pending = false;
+                var isPinned = false;
+
+                var meta = document.querySelector('meta[name="viewport"]');
+
+                if (meta) {
+                    meta.setAttribute(
+                        "content",
+                        "width=device-width, initial-scale=1, interactive-widget=resizes-content",
+                    );
+                }
+
+                function apply() {
+                    pending = false;
+
+                    // While pinch-zoomed the offset is the user panning, and
+                    // following it would fight them.
+                    var isZoomed = vv.scale > 1;
+
+                    root.style.setProperty(
+                        "--sk-viewport-height",
+                        vv.height + "px",
+                    );
+                    root.style.setProperty(
+                        "--sk-viewport-offset",
+                        (isZoomed ? 0 : vv.offsetTop) + "px",
+                    );
+
+                    if (!isPinned && !isZoomed) {
+                        var isDiverged =
+                            document.documentElement.clientHeight - vv.height > 1 ||
+                            vv.offsetTop > 0;
+
+                        if (isDiverged) {
+                            isPinned = true;
+                            root.setAttribute("data-sk-pinned-viewport", "");
+                        }
+                    }
+
+                    // The shell is not scrollable; if iOS scrolled it anyway to
+                    // reveal a focused field, put it back.
+                    if (!isZoomed && (window.scrollX || window.scrollY))
+                        window.scrollTo(0, 0);
+                }
+
+                // The keyboard animates, so resize fires in a burst — coalesce
+                // to one write per frame, or the editor re-layouts on every tick.
+                function sync() {
+                    if (pending) return;
+
+                    pending = true;
+                    window.requestAnimationFrame(apply);
+                }
+
+                // resize: the bar or the keyboard changed the height.
+                // scroll:  iOS shifted the visual viewport to reveal a focused
+                //          cell, which is the half of the bug that pushes the
+                //          toolbar under the browser chrome.
+                // Rotation needs no listener of its own — it changes the size,
+                // so it arrives as a resize.
+                vv.addEventListener("resize", sync);
+                vv.addEventListener("scroll", sync);
+
+                apply();
+            })();
+        </script>
+
         <!-- Tab favicon from ?type= so users can recognise document tabs at a
        glance. Title gets replaced with the filename later, once the host
        sends `load` over postMessage (see wrapper-postmessage.js onLoad). -->
