@@ -2463,7 +2463,9 @@
           // only report "done" once BOTH are in place — the poller keeps trying
           // until then.
 
-          var shouldMountMainAppButton = window.SK_DESKTOP_TRANSPORT || hasOpener;
+          var isIPad = document.documentElement.hasAttribute('data-sk-ipad');
+          var shouldMountMainAppButton =
+              window.SK_DESKTOP_TRANSPORT || (hasOpener && !isIPad);
           var undoButton = doc.getElementById('slot-btn-dt-undo');
           var redoButton = doc.getElementById('slot-btn-dt-redo');
           var slideshowButton = doc.getElementById('slot-btn-dt-start-over');
