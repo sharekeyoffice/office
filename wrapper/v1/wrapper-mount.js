@@ -1675,6 +1675,53 @@
         '.theme-type-dark .btn-header:not(.dropdown-toggle):disabled {color: #A8A8A8 !important; opacity: unset !important;}}'
     ].join('\n');
 
+    function pinInnerViewportScroll(doc) {
+      if (!document.documentElement.hasAttribute('data-sk-ipad')) {
+        return true;   // not an iPad — nothing to guard, never retry
+      }
+
+      if (doc.__skViewportScrollPinned) {
+        return true;
+      }
+
+      var viewport = doc.getElementById('viewport');
+
+      if (!viewport) {
+        return false;  // editor DOM not up yet; the poller calls us again
+      }
+
+      doc.__skViewportScrollPinned = true;
+
+      // The reset must not animate: `scroll-behavior: smooth` would make the
+      // snap-back visible, which is worse than the drift it undoes.
+      var style = doc.getElementById('sk-viewport-scroll-pin');
+
+      if (!style) {
+        style = doc.createElement('style');
+        style.id = 'sk-viewport-scroll-pin';
+
+        if (doc.head) {
+            doc.head.appendChild(style);
+        }
+      }
+
+      style.textContent = '#viewport{scroll-behavior:auto !important;}';
+
+      viewport.addEventListener('scroll', function () {
+        if (viewport.scrollTop !== 0) {
+            viewport.scrollTop = 0;
+        }
+
+        if (viewport.scrollLeft !== 0) {
+            viewport.scrollLeft = 0;
+        }
+      });
+
+      log('pinInnerViewportScroll: #viewport scroll pinned');
+
+      return true;
+    }
+
     function injectHeaderControlStyles(doc) {
       var style = doc.getElementById('sk-header-controls');
 
@@ -2408,6 +2455,7 @@
 
           // Inject (or refresh) our styles whenever the iframe doc is reachable.
           injectHeaderControlStyles(doc);
+          pinInnerViewportScroll(doc);
           bindBlockedEditAttemptListeners();
 
           // Mount both controls; each is idempotent and anchored independently
