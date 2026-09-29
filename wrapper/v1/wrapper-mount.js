@@ -2464,8 +2464,8 @@
           // until then.
 
           var isIPad = document.documentElement.hasAttribute('data-sk-ipad');
-          var shouldMountMainAppButton =
-              window.SK_DESKTOP_TRANSPORT || (hasOpener && !isIPad);
+          var isFirefox = navigator.userAgent.indexOf('Firefox/') !== -1;
+          var shouldMountMainAppButton = !isIPad && !isFirefox && (window.SK_DESKTOP_TRANSPORT || hasOpener);
           var undoButton = doc.getElementById('slot-btn-dt-undo');
           var redoButton = doc.getElementById('slot-btn-dt-redo');
           var slideshowButton = doc.getElementById('slot-btn-dt-start-over');
