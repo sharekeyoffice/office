@@ -93,22 +93,35 @@ On upgrade: re-pull `configs/*.json`, re-derive `scripts-*.js`, then run
 + `build/exclusions-*.json` audit logs. Watch `bundle.js` for
 `[warn] missing:` — that means upstream renamed a file the manifest lists.
 
-### C. sdkjs patch — `wrapper/sdkjs-patches/0001-externals-plainfonts.patch` · DERIVED
+### C. sdkjs patches — `wrapper/sdkjs-patches/*.patch` · DERIVED
 
-The single source change we make to upstream sdkjs: the `__plainFonts`
-XOR-skip in `common/Drawings/Externals.js` (so our plain TTFs aren't
-XOR-mangled). Capture it as a patch (one-time), then apply at build:
+`build/01-pull-upstream.sh` applies every patch after checking out the pinned
+SDK, before step 02 compiles the editor bundles:
+
+- `0001-externals-plainfonts.patch`: the `__plainFonts` XOR-skip in
+  `common/Drawings/Externals.js`, so our plain TTFs are not XOR-mangled.
+- `0002-table-grid-borders.patch`: explicit borders for newly inserted Table
+  Grid tables and explicit reapplication of that style. It patches
+  `CDocument.AddInlineTable` and `CTable.Set_TableStyle`, uses the normal border
+  setters for undo/redo, and skips loading/read mode and presentation tables.
+  DOCX export remains the normal SDK serializer → x2t path.
+
+For example, capture the font patch from a modified SDK checkout:
 
 ```bash
 # capture once, from the sdkjs checkout that has the edit:
 git -C <sdkjs> diff common/Drawings/Externals.js > wrapper/sdkjs-patches/0001-externals-plainfonts.patch
-# apply at build (in 01-pull-upstream.sh, after checkout):
-git -C vendor/sdkjs apply ../wrapper/sdkjs-patches/0001-externals-plainfonts.patch
+# apply all patches after checkout (already done by 01-pull-upstream.sh):
+for patch in "$PWD"/wrapper/sdkjs-patches/*.patch; do
+  git -C vendor/sdkjs apply "$patch"
+done
 ```
 
-If a future upstream merges/reverts this, refresh the patch. This patch is
-a **modification of ONLYOFFICE code** → it must be disclosed as part of
-corresponding source and noted in [NOTICE](../NOTICE).
+After an upstream update, check patch application and rerun the
+[Table Grid SDK regression page](../test/README.md#table-grid-sdk-regression).
+Rebuild the SDK after patch changes; copying wrapper glue alone is insufficient.
+These patches are **modifications of ONLYOFFICE code** and are included in the
+corresponding source and [NOTICE](../NOTICE).
 
 ### D. Font manifest — `wrapper/v1/sdk-runtime/common/AllFonts.js` · ORIGINAL
 
