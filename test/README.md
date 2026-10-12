@@ -131,6 +131,32 @@ accordingly.
 For all of those, exercise via the actual messenger build once
 this smoke passes.
 
+## Table Grid SDK regression
+
+After `npm run initialize` has prepared `vendor/sdkjs` and the patched
+`wrapper/v1/bundle/word.editor.bundle.js`, serve the repository root:
+
+```bash
+python3 -m http.server 8090 --bind 127.0.0.1
+```
+
+Open <http://127.0.0.1:8090/test/sdk/table-grid-borders.html>. This page uses the
+compiled Word SDK with upstream's document test helpers, the upstream table
+layout tests, and our border regression cases. QUnit/jQuery/XRegExp are loaded
+from the same CDN versions used by upstream's test pages; internet access is
+required. These are test-page dependencies only.
+
+Check that insertion, nested tables, style reapplication, borderless/custom
+styles, preserved direct formatting, loading guards and undo/redo pass. These
+browser tests complement `npm test`, which runs the Node unit/round-trip suite.
+After changing an SDK patch, rerun build steps 01 and 02 before this page;
+`npm run sync` updates wrapper glue only.
+
+For a visual check, insert a table in the editor, save as DOCX, then open it
+in iOS Quick Look. Both outer and internal borders should be visible. Also
+check that explicitly removing a border survives saving, and that choosing
+a borderless style removes the grid.
+
 ## Common issues
 
 ### "Cannot read properties of undefined" on editor load
