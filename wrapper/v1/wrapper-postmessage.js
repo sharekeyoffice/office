@@ -1119,7 +1119,7 @@
 
   // Fire an autosave immediately (timer expired OR tab being backgrounded).
   // Skips if not dirty, or if a previous save is still in flight.
-  WrapperPostMessage.prototype.triggerAutosave = function () {
+  WrapperPostMessage.prototype.triggerAutosave = function (forceCommit) {
     if (this.autosaveTimer) {
       clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
@@ -1134,6 +1134,32 @@
       // event after save-ack will restart the timer.
       log('triggerAutosave skipped — save already in flight (saveId=' + this.pendingSaveId + ')');
       return;
+    }
+
+    // Background autosave must not interrupt active cell editing.
+    if (forceCommit !== true && this.editorType === 'cell') {
+      var iframe = this.findIframe();
+      var iframeWindow = iframe && iframe.contentWindow;
+      var spreadsheetApi =
+          iframeWindow &&
+          iframeWindow.SSE &&
+          iframeWindow.SSE.controllers &&
+          iframeWindow.SSE.controllers.Main &&
+          iframeWindow.SSE.controllers.Main.api;
+
+      if (
+          spreadsheetApi &&
+          typeof spreadsheetApi.asc_getCellEditMode === 'function' &&
+          spreadsheetApi.asc_getCellEditMode()
+      ) {
+        var self = this;
+
+        self.autosaveTimer = setTimeout(function () {
+          self.triggerAutosave();
+        }, 1000);
+
+        return;
+      }
     }
 
     var saveId = 'auto-' + Date.now();

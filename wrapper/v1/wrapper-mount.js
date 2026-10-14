@@ -2094,7 +2094,7 @@
               log('user clicked Edit (editing) → save-on-exit + mode-changed: view');
               editModeTransition = 'exiting';
               renderEditButton();
-              pm.triggerAutosave();
+              pm.triggerAutosave(true);
               window.dispatchEvent(new CustomEvent('host-response-start', {
                   detail: {
                       key: 'edit-mode'
@@ -3401,7 +3401,7 @@
           window.__skPageClosingNotified = true;
 
           if (window.__editorDirty) {
-              pm.triggerAutosave();
+              pm.triggerAutosave(true);
           }
 
           pm.toHost({
