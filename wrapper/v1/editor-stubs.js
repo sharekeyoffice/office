@@ -1065,7 +1065,53 @@
   if (!patchUploadImageFiles()) {
     var triesUI = 0;
     var ivUI = setInterval(function () {
-      if (patchUploadImageFiles() || ++triesUI > 300) clearInterval(ivUI);
+      if (patchUploadImageFiles() || ++triesUI > 300) {
+        clearInterval(ivUI);
+      }
+    }, 100);
+  }
+
+  // Clipboard images already contain their bytes as data URLs.
+  // Return them locally instead of waiting for DocumentServer.
+  function patchClipboardImages() {
+    var AscCommon = window.AscCommon;
+
+    if (!AscCommon || typeof AscCommon.sendImgUrls !== 'function') {
+      return false;
+    }
+
+    if (AscCommon.__localClipboardImagesPatched) {
+      return true;
+    }
+
+    var originalSendImgUrls = AscCommon.sendImgUrls;
+    AscCommon.sendImgUrls = function (api, images, callback, bNotShowError, token) {
+      var onlyDataImages = Array.isArray(images) && images.length > 0 &&
+          images.every(function (src) {
+            return typeof src === 'string' && /^data:image\//i.test(src);
+          });
+
+      if (!onlyDataImages) {
+        return originalSendImgUrls.apply(this, arguments);
+      }
+
+      callback(images.map(function (src) {
+        return { url: src, path: src };
+      }));
+    };
+
+    AscCommon.__localClipboardImagesPatched = true;
+    log('AscCommon.sendImgUrls patched (local clipboard images)');
+
+    return true;
+  }
+
+  if (!patchClipboardImages()) {
+    var triesCI = 0;
+    var ivCI = setInterval(function () {
+      if (patchClipboardImages() || ++triesCI > 300) {
+        clearInterval(ivCI);
+      }
     }, 100);
   }
 
