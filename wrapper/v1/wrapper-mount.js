@@ -112,6 +112,7 @@
     var lastLockHolderName = null;
     var lastLockHolderId = null;
     var canDownload = false;
+    var watermarkText = null;
     var isLargeFile = false;
     var isDownloading = false;
     var editModeTransition = null; // null | 'opening' | 'exiting'
@@ -153,6 +154,7 @@
                                            // run before the toolbar view has DOM —
                                            // the mask append target is empty and
                                            // the disable side-effects are lost.
+      var protectedWatermarkDraw = null;
 
     // ── Overlay / header UI ─────────────────────────────────────────────
     // Both the mode-switch affordance (Edit button) AND the "<who> is editing"
@@ -195,7 +197,7 @@
       }
 
       function handleBlockedContentCopy(e) {
-          if (canEdit) {
+          if (canDownload) {
               return;
           }
 
@@ -212,7 +214,7 @@
       }
 
       function handleBlockedContentCopyEvent(e) {
-          if (canEdit) {
+          if (canDownload) {
               return;
           }
 
@@ -227,7 +229,7 @@
       }
 
       function handleBlockedContentCopyKeyDown(e) {
-          if (canEdit) {
+          if (canDownload) {
               return;
           }
 
@@ -251,6 +253,53 @@
               targetDocument.addEventListener(eventName, handleBlockedContentCopyEvent, true);
           });
           targetDocument.addEventListener('keydown', handleBlockedContentCopyKeyDown, true);
+      }
+
+      function updatePrintProtectionForDocument(targetDocument) {
+          if (!targetDocument || !targetDocument.documentElement) {
+              return;
+          }
+
+          var style = targetDocument.getElementById('custom-print-protection');
+
+          if (!style) {
+              style = targetDocument.createElement('style');
+              style.id = 'custom-print-protection';
+              style.textContent =
+                  '@media print {' +
+                  'html.custom-print-disabled, ' +
+                  'html.custom-print-disabled body {' +
+                  'width: 100% !important;' +
+                  'height: 100% !important;' +
+                  'margin: 0 !important;' +
+                  'padding: 0 !important;' +
+                  'overflow: hidden !important;' +
+                  'background: white !important;' +
+                  '}' +
+                  'html.custom-print-disabled body > * {' +
+                  'display: none !important;' +
+                  '}' +
+                  '}';
+
+              if (targetDocument.head) {
+                  targetDocument.head.appendChild(style);
+              }
+          }
+
+          targetDocument.documentElement.classList.toggle(
+              'custom-print-disabled',
+              !canDownload
+          );
+      }
+
+      function updatePrintProtection() {
+          updatePrintProtectionForDocument(document);
+
+          var iframe = document.querySelector('iframe[name="frameEditor"]');
+
+          if (iframe && iframe.contentDocument) {
+              updatePrintProtectionForDocument(iframe.contentDocument);
+          }
       }
 
       function showNeedEditModeModalFromCellEditor() {
@@ -2094,7 +2143,7 @@
               log('user clicked Edit (editing) → save-on-exit + mode-changed: view');
               editModeTransition = 'exiting';
               renderEditButton();
-              pm.triggerAutosave();
+              pm.triggerAutosave(true);
               window.dispatchEvent(new CustomEvent('host-response-start', {
                   detail: {
                       key: 'edit-mode'
@@ -2602,6 +2651,356 @@
         log('auto-load failed: ' + err.message);
       });
     }
+
+      var WATERMARK_WIDTH = 1200;
+      var WATERMARK_ROTATION_ANGLE = 30;
+      var FORM_WATERMARK_COLOR = opacity => `rgba(146, 149, 151, ${opacity || 1})`;
+      var WATERMARK_NORMAL_OPACITY = 0.45;
+      var WATERMARK_ROTATED_OPACITY = 0.85;
+      var WATERMARK_FONT_FAMILY = 'Arial';
+
+      function getSlideWatermarkSize() {
+          var presentation = editorApi && editorApi.WordControl && editorApi.WordControl.m_oLogicDocument;
+          var hasPresentationSize = !!(presentation && typeof presentation.GetWidthMM === 'function' && typeof presentation.GetHeightMM === 'function');
+
+          if (!hasPresentationSize) {
+              return null;
+          }
+
+          var width = presentation.GetWidthMM();
+          var height = presentation.GetHeightMM();
+
+          return {
+              svgWidth: WATERMARK_WIDTH,
+              svgHeight: Math.round(WATERMARK_WIDTH * height / width),
+              width: width,
+              height: height
+          };
+      }
+
+      function getCellWatermarkSize() {
+          var iframe = document.querySelector('iframe[name="frameEditor"]');
+
+          if (!iframe) {
+              return null;
+          }
+
+          var PIXELS_PER_INCH = 96;
+          var MILLIMETERS_PER_INCH = 25.4;
+
+          return {
+              svgWidth: iframe.clientWidth,
+              svgHeight: iframe.clientHeight,
+              width: iframe.clientWidth / PIXELS_PER_INCH * MILLIMETERS_PER_INCH,
+              height: iframe.clientHeight / PIXELS_PER_INCH * MILLIMETERS_PER_INCH
+          };
+      }
+
+      function getWatermarkTextWidth(text, fontSize) {
+          var canvas = document.createElement('canvas');
+          var context = canvas.getContext('2d');
+
+          context.font = `${fontSize}px${WATERMARK_FONT_FAMILY}`;
+
+          return context.measureText(text).width;
+      }
+
+      function createWatermarkSvg(width, height) {
+          var normalColor = {
+              color: FORM_WATERMARK_COLOR(),
+              opacity: WATERMARK_NORMAL_OPACITY
+          };
+          var rotatedColor = {
+              color: FORM_WATERMARK_COLOR(),
+              opacity: WATERMARK_ROTATED_OPACITY
+          };
+
+          var WATERMARK_ADDITIONAL_TEXT_HEIGHT = 5;
+          var WATERMARK_LINES_GAP = 145;
+          var WATERMARK_ROTATED_FONT_SIZE = 18;
+          var WATERMARK_NORMAL_FONT_SIZE = 12;
+
+          var normalTextHeight = WATERMARK_NORMAL_FONT_SIZE + WATERMARK_ADDITIONAL_TEXT_HEIGHT;
+          var rotatedTextHeight = WATERMARK_ROTATED_FONT_SIZE + WATERMARK_ADDITIONAL_TEXT_HEIGHT;
+          var normalMargin = WATERMARK_LINES_GAP + normalTextHeight;
+          var rotatedMargin = WATERMARK_LINES_GAP + rotatedTextHeight;
+
+          var normalTextWidth = getWatermarkTextWidth(watermarkText, WATERMARK_NORMAL_FONT_SIZE);
+          var rotatedTextWidth = getWatermarkTextWidth(watermarkText, WATERMARK_ROTATED_FONT_SIZE);
+
+          var MAX_STRING_LENGTH_TO_ADAPT = 30;
+          var adaptedRotatedTextWidth = watermarkText.length <= MAX_STRING_LENGTH_TO_ADAPT ? rotatedTextWidth / 1.3 : rotatedTextWidth;
+
+          var normalLinesCount = Math.ceil(height / normalMargin);
+          var rotatedLinesCount = Math.ceil((height + width) / rotatedMargin);
+          var normalRepeats = Math.ceil(width / normalTextWidth) + 1;
+          var rotationAngleSin = Math.sin(WATERMARK_ROTATION_ANGLE * Math.PI / 180);
+
+          var svg = '<svg xmlns="http://www.w3.org/2000/svg" ' +
+              'width="' + width + '" ' +
+              'height="' + height + '" ' +
+              'viewBox="0 0 ' + width + ' ' + height + '">';
+
+          for (var normalLine = 1; normalLine <= normalLinesCount; normalLine++) {
+              svg += '<text ' +
+                  'x="0" ' +
+                  'y="' + normalLine * normalMargin + '" ' +
+                  'font-family="' + WATERMARK_FONT_FAMILY + '" ' +
+                  'font-size="' + WATERMARK_NORMAL_FONT_SIZE + '" ' +
+                  'fill="' + normalColor.color + '" ' +
+                  'fill-opacity="' + normalColor.opacity + '">' +
+                  watermarkText.repeat(normalRepeats) +
+                  '</text>';
+          }
+
+          svg += '<g transform="rotate(-' +
+              WATERMARK_ROTATION_ANGLE +
+              ')">';
+
+          for (var rotatedLine = 1; rotatedLine <= rotatedLinesCount; rotatedLine++) {
+              var currentMarginTop = rotatedLine * rotatedMargin;
+              var rotatedRepeats = Math.ceil((currentMarginTop * (1 / rotationAngleSin)) / adaptedRotatedTextWidth) + 1;
+
+              svg += '<text ' +
+                  'x="' + (-rotatedLine * rotatedMargin) + '" ' +
+                  'y="' + currentMarginTop + '" ' +
+                  'font-family="' + WATERMARK_FONT_FAMILY + '" ' +
+                  'font-size="' + WATERMARK_ROTATED_FONT_SIZE + '" ' +
+                  'font-weight="500" ' +
+                  'fill="' + rotatedColor.color + '" ' +
+                  'fill-opacity="' + rotatedColor.opacity + '">' +
+                  watermarkText.repeat(rotatedRepeats) +
+                  '</text>';
+          }
+
+          svg += '</g>';
+          svg += '</svg>';
+
+          return svg;
+      }
+
+      function drawPresentationThumbnailWatermark(context, pagePosition) {
+          var centerX = pagePosition.X + pagePosition.W / 2;
+          var centerY = pagePosition.Y + pagePosition.H / 2;
+
+          context.save();
+          context.beginPath();
+          context.rect(
+              pagePosition.X,
+              pagePosition.Y,
+              pagePosition.W,
+              pagePosition.H
+          );
+          context.clip();
+
+          context.font = '8px ' +
+              WATERMARK_FONT_FAMILY;
+          context.fillStyle = FORM_WATERMARK_COLOR(WATERMARK_NORMAL_OPACITY);
+
+          var THUMBNAIL_WATERMARK_TEXT_GAP = 12;
+          var THUMBNAIL_WATERMARK_LINES_GAP = 35;
+
+          var normalTextWidth = context.measureText(watermarkText).width;
+          var normalTextStep = normalTextWidth + THUMBNAIL_WATERMARK_TEXT_GAP;
+
+          for (var normalY = pagePosition.Y + THUMBNAIL_WATERMARK_LINES_GAP; normalY < pagePosition.Y + pagePosition.H; normalY += THUMBNAIL_WATERMARK_LINES_GAP) {
+              for (var normalX = pagePosition.X; normalX < pagePosition.X + pagePosition.W; normalX += normalTextStep) {
+                  context.fillText(watermarkText, normalX, normalY);
+              }
+          }
+
+          context.translate(centerX, centerY);
+          context.rotate(-WATERMARK_ROTATION_ANGLE * Math.PI / 180);
+          context.font = '500 ' +
+              12 +
+              'px ' +
+              WATERMARK_FONT_FAMILY;
+          context.fillStyle = context.fillStyle = FORM_WATERMARK_COLOR(WATERMARK_ROTATED_OPACITY);
+
+          var rotatedTextWidth = context.measureText(watermarkText).width;
+          var rotatedTextStep = rotatedTextWidth + THUMBNAIL_WATERMARK_TEXT_GAP;
+
+          for (var rotatedY = -pagePosition.H; rotatedY < pagePosition.H; rotatedY += THUMBNAIL_WATERMARK_LINES_GAP) {
+              for (var rotatedX = -pagePosition.W * 2; rotatedX < pagePosition.W * 2; rotatedX += rotatedTextStep) {
+                  context.fillText(watermarkText, rotatedX, rotatedY);
+              }
+          }
+
+          context.restore();
+      }
+
+      function drawPresentationThumbnailWatermarks(thumbnails) {
+          if (!watermarkText || !thumbnails || !thumbnails.m_arrPages || typeof thumbnails.GetThumbnailPagePosition !== 'function') {
+              return;
+          }
+
+          var thumbnailsControl = thumbnails.m_oWordControl && thumbnails.m_oWordControl.m_oThumbnails;
+          var canvas = thumbnailsControl && thumbnailsControl.HtmlElement;
+
+          if (!canvas || typeof canvas.getContext !== 'function') {
+              return;
+          }
+
+          var canvasRect = canvas.getBoundingClientRect();
+
+          if (!canvasRect.width || !canvasRect.height) {
+              return;
+          }
+
+          var context = canvas.getContext('2d');
+
+          if (!context) {
+              return;
+          }
+
+          var scaleX = canvas.width / canvasRect.width;
+          var scaleY = canvas.height / canvasRect.height;
+
+          context.save();
+          context.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+
+          for (var index = 0; index < thumbnails.m_arrPages.length; index++) {
+              var pagePosition = thumbnails.GetThumbnailPagePosition(index);
+
+              if (!pagePosition) {
+                  continue;
+              }
+
+              drawPresentationThumbnailWatermark(
+                  context,
+                  pagePosition
+              );
+          }
+
+          context.restore();
+      }
+
+      function bindPresentationThumbnailWatermark(pluginApi) {
+          if (type !== 'slide' || !watermarkText || !pluginApi || !pluginApi.WordControl || !pluginApi.WordControl.Thumbnails) {
+              return;
+          }
+
+          var thumbnails = pluginApi.WordControl.Thumbnails;
+
+          if (thumbnails.hasCustomWatermarkPaintWrapped) {
+              drawPresentationThumbnailWatermarks(thumbnails);
+
+              return;
+          }
+
+          if (typeof thumbnails.OnPaint !== 'function') {
+              return;
+          }
+
+          var originalOnPaint = thumbnails.OnPaint;
+
+          thumbnails.OnPaint = function () {
+              var result = originalOnPaint.apply(this, arguments);
+
+              drawPresentationThumbnailWatermarks(this);
+
+              return result;
+          };
+
+          thumbnails.hasCustomWatermarkPaintWrapped = true;
+
+          drawPresentationThumbnailWatermarks(thumbnails);
+
+          log('presentation thumbnail watermark bound');
+      }
+
+      function protectWatermark(pluginApi) {
+          if (!pluginApi || !pluginApi.watermarkDraw) {
+              return;
+          }
+
+          var descriptor = Object.getOwnPropertyDescriptor(
+              pluginApi,
+              'watermarkDraw'
+          );
+
+          if (descriptor && descriptor.configurable === false) {
+              return;
+          }
+
+          protectedWatermarkDraw = pluginApi.watermarkDraw;
+
+          Object.defineProperty(pluginApi, 'watermarkDraw', {
+              configurable: false,
+              enumerable: true,
+              get: function () {
+                  return protectedWatermarkDraw;
+              },
+              set: function () {
+                  log('watermarkDraw modification blocked');
+              }
+          });
+
+          log('watermark protected');
+      }
+
+      function applyWatermark() {
+          if (!watermarkText) {
+              return;
+          }
+
+          var iframe = document.querySelector('iframe[name="frameEditor"]');
+          var editorWindow = iframe && iframe.contentWindow;
+          var pluginApi = editorWindow && editorWindow.g_asc_plugins && editorWindow.g_asc_plugins.api;
+
+          if (!pluginApi || typeof pluginApi.pluginMethod_SetProperties !== 'function') {
+              log('applyWordWatermark: plugin api not available');
+
+              return;
+          }
+
+          var watermarkSize;
+
+          if (type === 'cell') {
+              watermarkSize = getCellWatermarkSize();
+          } else if (type === 'slide') {
+              watermarkSize = getSlideWatermarkSize();
+          } else {
+              watermarkSize = {
+                  svgWidth: WATERMARK_WIDTH,
+                  svgHeight: 1700,
+                  width: 210,
+                  height: 297
+              };
+          }
+
+          if (!watermarkSize) {
+              return;
+          }
+
+          var svg = createWatermarkSvg(watermarkSize.svgWidth, watermarkSize.svgHeight);
+
+          var watermarkImage = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+
+          pluginApi.pluginMethod_SetProperties({
+              watermark_on_draw: JSON.stringify({
+                  transparent: 1,
+                  type: 'rect',
+                  width: watermarkSize.width,
+                  height: watermarkSize.height ,
+                  rotate: 0,
+                  margins: [0, 0, 0, 0],
+                  fill: watermarkImage,
+                  'stroke-width': 0.001,
+                  stroke: [255, 255, 255],
+                  align: 1,
+                  paragraphs: []
+              })
+          });
+
+          protectWatermark(pluginApi);
+
+          if (type === 'slide') {
+              bindPresentationThumbnailWatermark(pluginApi);
+          }
+
+          log('watermark applied for ' + type);
+      }
 
     // ── Construct the DocsAPI editor (called exactly once at boot) ──────
     // No mode parameter — we always build with edit mode + edit permissions;
@@ -3208,7 +3607,14 @@
         var nextDesktopClosing = !!(perms && perms.isDesktopClosing);
         var nextDesktopLoggingOut = !!(perms && perms.isDesktopLoggingOut);
 
-        if (nextCanEdit === canEdit && nextDesktopClosing === isDesktopClosing && nextDesktopLoggingOut === isDesktopLoggingOut && nextCanDownload === canDownload && nextIsLargeFile === isLargeFile) {
+        var isPermissionsSame = nextCanEdit === canEdit &&
+            nextDesktopClosing === isDesktopClosing &&
+            nextDesktopLoggingOut === isDesktopLoggingOut &&
+            nextCanDownload === canDownload &&
+            nextIsLargeFile === isLargeFile &&
+            watermarkText === (perms.watermarkText || null);
+
+        if (isPermissionsSame) {
             return;
         }
 
@@ -3217,11 +3623,14 @@
         isDesktopLoggingOut = nextDesktopLoggingOut;
         canDownload = nextCanDownload;
         isLargeFile = nextIsLargeFile;
+        watermarkText = perms.watermarkText;
         log('handlePermissions: canEdit = ' + canEdit);
         log('handlePermissions: isDesktopClosing = ' + isDesktopClosing);
         log('handlePermissions: isDesktopLoggingOut = ' + isDesktopLoggingOut);
         log('handlePermissions: canDownload = ' + canDownload);
         log('handlePermissions: isLargeFile = ' + isLargeFile);
+        log('handlePermissions: watermarkText = ' + watermarkText);
+        updatePrintProtection();
         // Re-render the Edit button + editing label to reflect the new capability
         // (edit button hides when pm.isExternal === true).
         // The controls are mounted pm.isExternal === false, otherwise only download button.
@@ -3248,6 +3657,7 @@
         bindOnlyOfficeWelcomeScreen();
         bindSaveShortcutListeners();
         bindBlockedContentCopyListeners(document);
+        updatePrintProtection();
 
         // Cache the iframe's internal api so we can hot-toggle restriction
         // without destroy/reconstruct. The Viewport controller may not be
@@ -3353,6 +3763,8 @@
             });
         }
 
+        applyWatermark();
+
         if (pm) {
           pm.toHost({ type: 'opened', requestId: pm.requestId });
           if (pm.shouldShowOnlyOfficeWelcomeScreen) {
@@ -3411,7 +3823,7 @@
           window.__skPageClosingNotified = true;
 
           if (window.__editorDirty) {
-              pm.triggerAutosave();
+              pm.triggerAutosave(true);
           }
 
           pm.toHost({
