@@ -3343,6 +3343,16 @@
         // Header is fully rendered by now — mount our Edit button if the
         // onAppReady poller hasn't already (idempotent).
         mountHeaderControls();
+
+        if (window.installRepeatLastActionManager) {
+            window.installRepeatLastActionManager({
+                editorApi: editorApi,
+                editorWindow: document.querySelector('iframe[name="frameEditor"]').contentWindow,
+                type,
+                isRepeatAllowed: () => currentMode === 'edit' && !isDesktopClosing && !isDesktopLoggingOut
+            });
+        }
+
         if (pm) {
           pm.toHost({ type: 'opened', requestId: pm.requestId });
           if (pm.shouldShowOnlyOfficeWelcomeScreen) {
