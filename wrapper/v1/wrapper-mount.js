@@ -195,7 +195,7 @@
       }
 
       function handleBlockedContentCopy(e) {
-          if (canEdit) {
+          if (canDownload) {
               return;
           }
 
@@ -212,7 +212,7 @@
       }
 
       function handleBlockedContentCopyEvent(e) {
-          if (canEdit) {
+          if (canDownload) {
               return;
           }
 
@@ -227,7 +227,7 @@
       }
 
       function handleBlockedContentCopyKeyDown(e) {
-          if (canEdit) {
+          if (canDownload) {
               return;
           }
 
@@ -251,6 +251,53 @@
               targetDocument.addEventListener(eventName, handleBlockedContentCopyEvent, true);
           });
           targetDocument.addEventListener('keydown', handleBlockedContentCopyKeyDown, true);
+      }
+
+      function updatePrintProtectionForDocument(targetDocument) {
+          if (!targetDocument || !targetDocument.documentElement) {
+              return;
+          }
+
+          var style = targetDocument.getElementById('custom-print-protection');
+
+          if (!style) {
+              style = targetDocument.createElement('style');
+              style.id = 'custom-print-protection';
+              style.textContent =
+                  '@media print {' +
+                  'html.custom-print-disabled, ' +
+                  'html.custom-print-disabled body {' +
+                  'width: 100% !important;' +
+                  'height: 100% !important;' +
+                  'margin: 0 !important;' +
+                  'padding: 0 !important;' +
+                  'overflow: hidden !important;' +
+                  'background: white !important;' +
+                  '}' +
+                  'html.custom-print-disabled body > * {' +
+                  'display: none !important;' +
+                  '}' +
+                  '}';
+
+              if (targetDocument.head) {
+                  targetDocument.head.appendChild(style);
+              }
+          }
+
+          targetDocument.documentElement.classList.toggle(
+              'custom-print-disabled',
+              !canDownload
+          );
+      }
+
+      function updatePrintProtection() {
+          updatePrintProtectionForDocument(document);
+
+          var iframe = document.querySelector('iframe[name="frameEditor"]');
+
+          if (iframe && iframe.contentDocument) {
+              updatePrintProtectionForDocument(iframe.contentDocument);
+          }
       }
 
       function showNeedEditModeModalFromCellEditor() {
@@ -3222,6 +3269,7 @@
         log('handlePermissions: isDesktopLoggingOut = ' + isDesktopLoggingOut);
         log('handlePermissions: canDownload = ' + canDownload);
         log('handlePermissions: isLargeFile = ' + isLargeFile);
+        updatePrintProtection();
         // Re-render the Edit button + editing label to reflect the new capability
         // (edit button hides when pm.isExternal === true).
         // The controls are mounted pm.isExternal === false, otherwise only download button.
@@ -3248,6 +3296,7 @@
         bindOnlyOfficeWelcomeScreen();
         bindSaveShortcutListeners();
         bindBlockedContentCopyListeners(document);
+        updatePrintProtection();
 
         // Cache the iframe's internal api so we can hot-toggle restriction
         // without destroy/reconstruct. The Viewport controller may not be
