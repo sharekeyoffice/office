@@ -1,13 +1,20 @@
 (function () {
     'use strict';
 
+    var FORMULA_BAR_INPUT_ID = 'ce-cell-content';
+    var editorTypes = {
+        word: 'word',
+        slide: 'slide',
+        cell: 'cell'
+    };
+
     var editorApi = null;
     var editorWindow = null;
     var editorType = null;
     var logicDocument = null;
     var history = null;
     var isRepeatAllowed = function () {
-        return true;
+        return false;
     };
 
     var currentRepeatCandidate = null;
@@ -35,7 +42,7 @@
     }
 
     function getHistory() {
-        if (editorType === 'cell') {
+        if (editorType === editorTypes.cell) {
             return editorApi && editorApi.wb && editorApi.wb.model ?
                 editorApi.wb.model.History || null :
                 null;
@@ -98,7 +105,7 @@
 
         var isMethodExcluded = typeof originalMethod !== 'function' ||
             originalMethod.__isRepeatLastActionWrapped ||
-            (editorType === 'cell' && (methodName === 'onKeyDown' || methodName === 'asc_closeCellEditor'));
+            (editorType === editorTypes.cell && (methodName === 'onKeyDown' || methodName === 'asc_closeCellEditor'));
 
         if (isMethodExcluded) {
             return;
@@ -171,7 +178,7 @@
         logicDocument = getLogicDocument();
         history = getHistory();
 
-        if (editorType === 'cell') {
+        if (editorType === editorTypes.cell) {
             if (!history || typeof history.Create_NewPoint !== 'function') {
                 return false;
             }
@@ -233,16 +240,16 @@
     }
 
     function installFormulaBarInputTracker() {
-        if (editorType !== 'cell') {
+        if (editorType !== editorTypes.cell) {
             return;
         }
 
         ['input', 'beforeinput'].forEach(function (eventName) {
             editorWindow.document.addEventListener(eventName, function (event) {
-                var isFormulaBarInput = eventName === 'input' && event.target.id === 'ce-cell-content';
+                var isFormulaBarInput = eventName === 'input' && event.target.id === FORMULA_BAR_INPUT_ID;
                 var isCellInput = eventName === 'beforeinput' && event.target.id === 'area_id';
                 var isFormulaBarBackspace = eventName === 'beforeinput' &&
-                    event.target.id === 'ce-cell-content' &&
+                    event.target.id === FORMULA_BAR_INPUT_ID &&
                     event.inputType === 'deleteContentBackward';
 
                 if (isFormulaBarBackspace) {
@@ -267,7 +274,7 @@
     }
 
     function installFormattingShortcutHandler() {
-        if (editorType !== 'cell' || !editorApi.wb || typeof editorApi.wb.setFontAttributes !== 'function') {
+        if (editorType !== editorTypes.cell || !editorApi.wb || typeof editorApi.wb.setFontAttributes !== 'function') {
             return;
         }
 
@@ -310,7 +317,7 @@
     function installEditorKeyDownHandler() {
         editorApi.onKeyDown = function (event) {
             var isRedo = isRedoShortcut(event);
-            var cellEditor = editorType === 'cell' && editorApi.wb && editorApi.wb.cellEditor;
+            var cellEditor = editorType === editorTypes.cell && editorApi.wb && editorApi.wb.cellEditor;
             var keyCode = event.keyCode || event.which || (
                 typeof event.GetKeyCode === 'function' ? event.GetKeyCode() : 0
             );
@@ -360,12 +367,12 @@
     }
 
     function installFormulaBarShortcutHandler() {
-        if (editorType !== 'cell' || typeof editorApi.asc_registerCallback !== 'function') {
+        if (editorType !== editorTypes.cell || typeof editorApi.asc_registerCallback !== 'function') {
             return;
         }
 
         editorApi.asc_registerCallback('asc_onInputKeyDown', function (event) {
-            var isFormulaBarShortcut = event && event.target && event.target.id === 'ce-cell-content' &&
+            var isFormulaBarShortcut = event && event.target && event.target.id === FORMULA_BAR_INPUT_ID &&
                 isRedoShortcut(event) && !isRepeatingAction && isRepeatAllowed();
 
             if (!isFormulaBarShortcut) {
@@ -447,8 +454,8 @@
         }
 
         var isSupportedEditor = !!editorApi && !!editorWindow &&
-            (((editorType === 'word' || editorType === 'slide') && !!getLogicDocument()) ||
-                (editorType === 'cell' && !!getHistory()));
+            (((editorType === editorTypes.word || editorType === editorTypes.slide) && !!getLogicDocument()) ||
+                (editorType === editorTypes.cell && !!getHistory()));
 
         if (!isSupportedEditor) {
             return false;
