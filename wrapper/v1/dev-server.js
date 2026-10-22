@@ -92,6 +92,7 @@ const SELF_FILES = new Set([
   '/wrapper-customization.js',
   '/wrapper-postmessage.js',
   '/wrapper-modal-manager.js',
+  '/wrapper-repeat-last-action.js',
   '/editor-stubs.js',
   '/x2t-bridge.js',
   '/stubs.js'

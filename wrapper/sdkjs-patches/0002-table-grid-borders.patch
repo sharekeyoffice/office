@@ -1,0 +1,43 @@
+diff --git a/word/Editor/Document.js b/word/Editor/Document.js
+--- a/word/Editor/Document.js
++++ b/word/Editor/Document.js
+@@ -5942,6 +5942,8 @@
+ 		return null;
+ 
+ 	var oTable = this.Controller.AddInlineTable(nCols, nRows, nMode);
++	if (oTable)
++		oTable.ApplyTableGridBorders();
+ 
+ 	this.Recalculate();
+ 	this.UpdateSelection();
+diff --git a/word/Editor/Table.js b/word/Editor/Table.js
+--- a/word/Editor/Table.js
++++ b/word/Editor/Table.js
+@@ -8725,6 +8725,27 @@
+ 		this.Clear_DirectFormatting(false);
+ 	}
+ 	this.Recalc_CompiledPr2();
++	this.ApplyTableGridBorders();
++};
++CTable.prototype.ApplyTableGridBorders = function()
++{
++	// Quick Look omits borders inherited from Table Grid. Materialize them
++	// when inserting a table or explicitly applying that style, not on load.
++	if (this.bPresentation || AscCommon.g_oIdCounter.m_bLoad || AscCommon.g_oIdCounter.m_bRead)
++		return;
++
++	var styles = this.Get_Styles();
++	if (!styles || !this.TableStyle || this.TableStyle !== styles.Get_Default_TableGrid())
++		return;
++
++	var borders = this.Get_CompiledPr(false).TablePr.TableBorders;
++	var sides = ["Top", "Bottom", "Left", "Right", "InsideH", "InsideV"];
++	for (var i = 0; i < sides.length; ++i)
++	{
++		var side = sides[i];
++		if (undefined === this.Pr.TableBorders[side] && undefined !== borders[side])
++			this["Set_TableBorder_" + side](borders[side]);
++	}
+ };
+ CTable.prototype.Set_TableStyle2 = function(StyleId)
+ {
