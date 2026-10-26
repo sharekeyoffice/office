@@ -112,6 +112,7 @@
     var lastLockHolderName = null;
     var lastLockHolderId = null;
     var canDownload = false;
+    var isViewer = false;
     var watermarkText = null;
     var isLargeFile = false;
     var isDownloading = false;
@@ -958,6 +959,12 @@
           if (descriptions[2] && isLargeFile) {
               descriptions[2].innerHTML = 'Large documents will be supported soon.';
               descriptions[2].style.color = '#2FA0AF';
+          }
+
+          var roleLabel = modal.querySelector('.cm-role-label');
+
+          if (roleLabel && isViewer) {
+              roleLabel.innerHTML = 'Viewer';
           }
 
           window.modalManager.show('view-only-mode');
@@ -3603,6 +3610,7 @@
     function handlePermissions(perms) {
         var nextCanEdit = !(perms && perms.canEdit === false);
         var nextCanDownload = !(perms && perms.canDownload === false);
+        var nextIsViewer = !(perms && perms.isViewer === false);
         var nextIsLargeFile = !(perms && perms.isLargeFile === false);
         var nextDesktopClosing = !!(perms && perms.isDesktopClosing);
         var nextDesktopLoggingOut = !!(perms && perms.isDesktopLoggingOut);
@@ -3611,6 +3619,7 @@
             nextDesktopClosing === isDesktopClosing &&
             nextDesktopLoggingOut === isDesktopLoggingOut &&
             nextCanDownload === canDownload &&
+            nextIsViewer === isViewer &&
             nextIsLargeFile === isLargeFile &&
             watermarkText === (perms.watermarkText || null);
 
@@ -3622,12 +3631,14 @@
         isDesktopClosing = nextDesktopClosing;
         isDesktopLoggingOut = nextDesktopLoggingOut;
         canDownload = nextCanDownload;
+        isViewer = nextIsViewer;
         isLargeFile = nextIsLargeFile;
         watermarkText = perms.watermarkText;
         log('handlePermissions: canEdit = ' + canEdit);
         log('handlePermissions: isDesktopClosing = ' + isDesktopClosing);
         log('handlePermissions: isDesktopLoggingOut = ' + isDesktopLoggingOut);
         log('handlePermissions: canDownload = ' + canDownload);
+        log('handlePermissions: isViewer = ' + isViewer);
         log('handlePermissions: isLargeFile = ' + isLargeFile);
         log('handlePermissions: watermarkText = ' + watermarkText);
         updatePrintProtection();
