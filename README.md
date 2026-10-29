@@ -18,6 +18,20 @@ file bytes (decrypted by main app before sending) ←→ saved bytes
 
 Full architecture and deployment notes are maintained separately.
 
+## DOCX table borders in Quick Look
+
+The SDK patch `wrapper/sdkjs-patches/0002-table-grid-borders.patch` writes
+explicit borders when inserting a standard Table Grid table or reapplying
+that style. This avoids Quick Look omitting borders inherited from the style.
+It uses the editor's normal history-aware setters, so undo/redo includes the
+borders. Other table styles and document loading retain upstream behavior.
+Existing Table Grid tables gain explicit borders when that style is reapplied.
+
+The patch is applied by `build/01-pull-upstream.sh` and compiled by step 02;
+wrapper-only `npm run sync` does not rebuild the SDK. The
+[SDK regression page](test/README.md#table-grid-sdk-regression) tests the real
+model, style changes and undo/redo without adding runtime dependencies.
+
 ## 60-second quick start
 
 ```bash
