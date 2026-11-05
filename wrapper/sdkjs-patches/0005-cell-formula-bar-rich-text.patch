@@ -1,0 +1,50 @@
+diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
+--- a/cell/view/CellEditorView.js
++++ b/cell/view/CellEditorView.js
+@@ -3202,10 +3202,44 @@
+ 		AscFonts.FontPickerByCharacter.checkText(checkedText, this, function () {
+ 			t.loadFonts = false;
+ 			t.skipTLUpdate = true;
+-			var length = t.replaceText(0, t.textRender.getEndOfText(), t.input.value);
++			// The formula bar is plain text; only replace the edited span so
++			// untouched rich-text fragments keep their individual formatting.
++			const oldChars = AscCommonExcel.getFragmentsCharCodes(t.options.fragments);
++			const newChars = AscCommon.convertUTF16toUnicode(t.input.value);
++			let start = t.selectionBegin !== t.selectionEnd ? Math.min(t.selectionBegin, t.selectionEnd) : t.cursorPos;
++			let oldEnd = t.selectionBegin !== t.selectionEnd ? Math.max(t.selectionBegin, t.selectionEnd) : start;
++			let newEnd = oldEnd + newChars.length - oldChars.length;
++
++			// Prefer the existing selection, which disambiguates repeated text.
++			// Deletions and coalesced input may need a text-diff fallback.
++			const matchesSelection = start >= 0 && oldEnd <= oldChars.length &&
++				newEnd >= start && newEnd <= newChars.length &&
++				oldChars.slice(0, start).every((code, index) => code === newChars[index]) &&
++				oldChars.slice(oldEnd).every((code, index) => code === newChars[newEnd + index]);
++			if (!matchesSelection) {
++				start = 0;
++				oldEnd = oldChars.length;
++				newEnd = newChars.length;
++				const cursor = AscCommon.convertUTF16toUnicode(t.input.value.slice(0, t.input.selectionStart)).length;
++				while (start < oldEnd && start < newEnd && start < cursor && oldChars[start] === newChars[start]) {
++					++start;
++				}
++				while (oldEnd > start && newEnd > start && oldChars[oldEnd - 1] === newChars[newEnd - 1]) {
++					--oldEnd;
++					--newEnd;
++				}
++			}
++
++			if (start !== oldEnd || start !== newEnd) {
++				const format = t.newTextFormat;
++				t._moveCursor(kPosition, start);
++				t._selectChars(kPosition, oldEnd);
++				t.newTextFormat = format;
++				t._addChars(newChars.slice(start, newEnd));
++			}
+ 			t._updateCursorByTopLine();
+ 
+-			if (length !== t.input.value.length) {
++			if (AscCommonExcel.getFragmentsText(t.options.fragments) !== t.input.value) {
+ 				t.input.value = AscCommonExcel.getFragmentsText((t.options.fragments));
+ 				t._updateTopLineCurPos();
+ 			}
