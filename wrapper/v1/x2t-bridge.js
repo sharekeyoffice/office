@@ -119,12 +119,17 @@
 	 * Run x2t conversion: writes input + params, calls main1, reads output.
 	 * Cleans up virtual-FS files even on failure.
 	 *
+	 * If main1 throws (a WASM trap), the module's heap is corrupted and every
+	 * later conversion in this session would fail too. So the module is
+	 * replaced with a fresh one and the conversion is retried once.
+	 *
 	 * @param {Uint8Array} inputBytes
 	 * @param {string}     inputExt    e.g. "docx"
 	 * @param {string}     outputExt   e.g. "bin"
+	 * @param {boolean}    [isRetry]   internal: this is the single retry
 	 * @returns {Promise<Uint8Array>}
 	 */
-	function runConversion(inputBytes, inputExt, outputExt) {
+	function runConversion(inputBytes, inputExt, outputExt, isRetry) {
 		return loadModule().then(function (Module) {
 			var id = ++_convCounter;
 			var inputPath  = '/working/in_'  + id + '.' + inputExt;
@@ -167,7 +172,12 @@
 				exitCode = Module.ccall('main1', 'number', ['string'], [paramsPath]);
 			} catch (e) {
 				cleanup();
-				return Promise.reject(new Error('x2t threw during main1: ' + e.message));
+				var crash = new Error('x2t threw during main1: ' + e.message);
+				return resetModule(Module).then(function () {
+					if (isRetry) throw crash;
+					log('warn', 'x2t crashed (' + e.message + '); retrying once on a fresh module');
+					return runConversion(inputBytes, inputExt, outputExt, true);
+				});
 			}
 			var t1 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
 			log('debug', 'main1 returned ' + exitCode + ' in ' + (t1 - t0).toFixed(0) + 'ms (id=' + id + ')');
@@ -192,6 +202,338 @@
 			copy.set(outputBytes);
 			cleanup();
 			return copy;
+		});
+	}
+
+	/**
+	 * Replace a crashed module with a fresh one.
+	 *
+	 * x2t's media live in the module's virtual FS (/working/media) from the
+	 * open conversion until the save conversion. A save without them silently
+	 * drops every image from the document, so they are carried over. The FS is
+	 * plain JS memory, so it is still readable after the WASM heap is corrupted.
+	 *
+	 * @param {Object} oldModule  the crashed module
+	 * @returns {Promise<Object>} the fresh module, with the media restored
+	 */
+	function resetModule(oldModule) {
+		var media = {};
+		try {
+			oldModule.FS.readdir('/working/media').forEach(function (name) {
+				if (name === '.' || name === '..') return;
+				var data = oldModule.FS.readFile('/working/media/' + name);
+				var copy = new Uint8Array(data.length);
+				copy.set(data);
+				media[name] = copy;
+			});
+		} catch (e) {
+			log('warn', 'resetModule: could not read old media: ' + e.message);
+		}
+
+		modulePromise = null;
+		_isReady = false;
+		// x2t.js reuses an existing global Module object instead of creating its
+		// own, so it needs a fresh object, not the crashed one.
+		global.Module = {};
+
+		return loadModule().then(function (Module) {
+			Object.keys(media).forEach(function (name) {
+				Module.FS.writeFile('/working/media/' + name, media[name]);
+			});
+			log('warn', 'x2t module reset; carried over ' + Object.keys(media).length + ' media files');
+			return Module;
+		});
+	}
+
+	// --------------------------------------------------------------
+	// OLE preview sanitizer (pptx)
+	// --------------------------------------------------------------
+	//
+	// x2t-wasm corrupts its heap while it converts an EMF/WMF preview of an
+	// OLE object to SVG. The trap surfaces as "memory access out of bounds",
+	// "table index is out of bounds" or "null function". Native x2t converts the
+	// same files fine. think-cell, embedded Excel sheets and Visio drawings all
+	// carry such previews.
+	//
+	// Before pptx -> bin, the relationship that points an OLE preview at an
+	// EMF/WMF is repointed at a transparent PNG added next to it. The OLE data
+	// itself, and the original EMF/WMF file, stay in the package. A visible OLE
+	// object then shows an empty frame instead of its preview; a think-cell data
+	// object is hidden and 0.04 mm wide, so nothing visible changes.
+
+	var OLE_PREVIEW_SUFFIX = '.sk-ole-preview.png';
+	var TRANSPARENT_PNG_B64 =
+		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=';
+
+	function base64ToBytes(b64) {
+		var bin = atob(b64);
+		var out = new Uint8Array(bin.length);
+		for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+		return out;
+	}
+
+	var _crcTable = null;
+	function crc32(bytes) {
+		if (!_crcTable) {
+			_crcTable = new Uint32Array(256);
+			for (var n = 0; n < 256; n++) {
+				var c = n;
+				for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+				_crcTable[n] = c >>> 0;
+			}
+		}
+		var crc = 0xFFFFFFFF;
+		for (var i = 0; i < bytes.length; i++) crc = _crcTable[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+		return (crc ^ 0xFFFFFFFF) >>> 0;
+	}
+
+	/**
+	 * Read a ZIP's entries from its central directory. Returns null for
+	 * anything this reader does not handle (ZIP64, encryption, damage); the
+	 * caller then leaves the file untouched.
+	 */
+	function readZip(bytes) {
+		var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+		var len = bytes.length;
+		if (len < 22) return null;
+		var eocd = -1;
+		for (var i = len - 22; i >= Math.max(0, len - 22 - 0xFFFF); i--) {
+			if (dv.getUint32(i, true) === 0x06054B50) { eocd = i; break; }
+		}
+		if (eocd < 0) return null;
+		var count = dv.getUint16(eocd + 10, true);
+		var cdOff = dv.getUint32(eocd + 16, true);
+		if (count === 0xFFFF || cdOff === 0xFFFFFFFF) return null;   // ZIP64
+
+		var decoder = new TextDecoder('utf-8');
+		var entries = [];
+		var p = cdOff;
+		for (var k = 0; k < count; k++) {
+			if (p + 46 > len || dv.getUint32(p, true) !== 0x02014B50) return null;
+			var flags = dv.getUint16(p + 8, true);
+			var csize = dv.getUint32(p + 20, true);
+			var usize = dv.getUint32(p + 24, true);
+			var nlen  = dv.getUint16(p + 28, true);
+			var xlen  = dv.getUint16(p + 30, true);
+			var clen  = dv.getUint16(p + 32, true);
+			var lho   = dv.getUint32(p + 42, true);
+			if (flags & 1) return null;                                    // encrypted
+			if (csize === 0xFFFFFFFF || usize === 0xFFFFFFFF || lho === 0xFFFFFFFF) return null;
+			if (lho + 30 > len || dv.getUint32(lho, true) !== 0x04034B50) return null;
+			var nameBytes = bytes.subarray(p + 46, p + 46 + nlen);
+			var dataStart = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true);
+			if (dataStart + csize > len) return null;
+			entries.push({
+				name:      decoder.decode(nameBytes),
+				nameBytes: nameBytes,
+				flags:     flags,
+				method:    dv.getUint16(p + 10, true),
+				time:      dv.getUint16(p + 12, true),
+				date:      dv.getUint16(p + 14, true),
+				crc:       dv.getUint32(p + 16, true),
+				csize:     csize,
+				usize:     usize,
+				data:      bytes.subarray(dataStart, dataStart + csize)
+			});
+			p += 46 + nlen + xlen + clen;
+		}
+		return entries;
+	}
+
+	/** Write entries as a new ZIP. Unchanged entries keep their compressed bytes. */
+	function writeZip(entries) {
+		var parts = [];
+		var central = [];
+		var offset = 0;
+		entries.forEach(function (e) {
+			var flags = e.flags & 0x0800;            // keep only the UTF-8 name flag
+			var lh = new Uint8Array(30 + e.nameBytes.length);
+			var lv = new DataView(lh.buffer);
+			lv.setUint32(0, 0x04034B50, true);
+			lv.setUint16(4, 20, true);
+			lv.setUint16(6, flags, true);
+			lv.setUint16(8, e.method, true);
+			lv.setUint16(10, e.time, true);
+			lv.setUint16(12, e.date, true);
+			lv.setUint32(14, e.crc, true);
+			lv.setUint32(18, e.csize, true);
+			lv.setUint32(22, e.usize, true);
+			lv.setUint16(26, e.nameBytes.length, true);
+			lv.setUint16(28, 0, true);
+			lh.set(e.nameBytes, 30);
+
+			var ch = new Uint8Array(46 + e.nameBytes.length);
+			var cv = new DataView(ch.buffer);
+			cv.setUint32(0, 0x02014B50, true);
+			cv.setUint16(4, 20, true);
+			cv.setUint16(6, 20, true);
+			cv.setUint16(8, flags, true);
+			cv.setUint16(10, e.method, true);
+			cv.setUint16(12, e.time, true);
+			cv.setUint16(14, e.date, true);
+			cv.setUint32(16, e.crc, true);
+			cv.setUint32(20, e.csize, true);
+			cv.setUint32(24, e.usize, true);
+			cv.setUint16(28, e.nameBytes.length, true);
+			cv.setUint32(42, offset, true);
+			ch.set(e.nameBytes, 46);
+
+			parts.push(lh, e.data);
+			central.push(ch);
+			offset += lh.length + e.data.length;
+		});
+
+		var cdSize = central.reduce(function (s, c) { return s + c.length; }, 0);
+		var eocd = new Uint8Array(22);
+		var ev = new DataView(eocd.buffer);
+		ev.setUint32(0, 0x06054B50, true);
+		ev.setUint16(8, entries.length, true);
+		ev.setUint16(10, entries.length, true);
+		ev.setUint32(12, cdSize, true);
+		ev.setUint32(16, offset, true);
+
+		var all = parts.concat(central, [eocd]);
+		var out = new Uint8Array(offset + cdSize + 22);
+		var pos = 0;
+		all.forEach(function (a) { out.set(a, pos); pos += a.length; });
+		return out;
+	}
+
+	function inflateRaw(data) {
+		var stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+		return new Response(stream).arrayBuffer().then(function (b) { return new Uint8Array(b); });
+	}
+
+	function entryText(e) {
+		var raw;
+		if (e.method === 0) raw = Promise.resolve(e.data);
+		else if (e.method === 8) raw = inflateRaw(e.data);
+		else return Promise.reject(new Error('unsupported ZIP method ' + e.method + ' for ' + e.name));
+		return raw.then(function (b) { return new TextDecoder('utf-8').decode(b); });
+	}
+
+	/** Make e a stored (uncompressed) entry holding bytes. */
+	function setEntryBytes(e, bytes) {
+		e.method = 0;
+		e.data   = bytes;
+		e.csize  = bytes.length;
+		e.usize  = bytes.length;
+		e.crc    = crc32(bytes);
+	}
+
+	function newEntry(name, bytes) {
+		var e = {
+			name:      name,
+			nameBytes: new TextEncoder().encode(name),
+			flags:     0x0800,
+			time:      0,
+			date:      (1 << 5) | 1                 // 1980-01-01
+		};
+		setEntryBytes(e, bytes);
+		return e;
+	}
+
+	function xmlAttr(tag, name) {
+		var m = tag.match(new RegExp('\\s' + name + '="([^"]*)"'));
+		return m ? m[1] : null;
+	}
+
+	/** Resolve a relationship Target against the part that owns the rels. */
+	function resolvePartPath(ownerName, target) {
+		if (target.charAt(0) === '/') return target.slice(1);
+		var segs = ownerName.split('/').slice(0, -1);
+		target.split('/').forEach(function (s) {
+			if (s === '..') segs.pop();
+			else if (s !== '.' && s !== '') segs.push(s);
+		});
+		return segs.join('/');
+	}
+
+	/** rIds of the preview images inside the part's OLE objects. */
+	function olePreviewRelIds(xml) {
+		var ids = {};
+		var oleRe  = /<(\w+:)?oleObj\b[^>]*?(?:\/>|>[\s\S]*?<\/\1oleObj>)/g;
+		var blipRe = /<(?:\w+:)?blip\b[^>]*?\s(?:\w+:)?embed="([^"]*)"/g;
+		var m, b;
+		while ((m = oleRe.exec(xml))) {
+			blipRe.lastIndex = 0;
+			while ((b = blipRe.exec(m[0]))) ids[b[1]] = true;
+		}
+		return ids;
+	}
+
+	/**
+	 * Repoint EMF/WMF previews of OLE objects in a pptx at a transparent PNG.
+	 *
+	 * @param {Uint8Array} bytes  the pptx
+	 * @returns {Promise<{bytes: Uint8Array, replaced: number}>}  the original
+	 *          bytes and replaced=0 when there is nothing to do or the package
+	 *          cannot be read
+	 */
+	function sanitizeOlePreviews(bytes) {
+		var untouched = { bytes: bytes, replaced: 0 };
+		if (typeof DecompressionStream === 'undefined') return Promise.resolve(untouched);
+		var entries = readZip(bytes);
+		if (!entries) return Promise.resolve(untouched);
+
+		var byName = {};
+		entries.forEach(function (e) { byName[e.name] = e; });
+		var relsEntries = entries.filter(function (e) {
+			return /^ppt\/(?:.+\/)?_rels\/[^\/]+\.rels$/.test(e.name);
+		});
+		var replaced = 0;
+		var newFiles = {};
+
+		var chain = relsEntries.reduce(function (prev, rels) {
+			return prev.then(function () {
+				return entryText(rels).then(function (relsXml) {
+					if (relsXml.indexOf('/oleObject"') < 0) return;
+					var ownerName = rels.name.replace(/_rels\/([^\/]+)\.rels$/, '$1');
+					var owner = byName[ownerName];
+					if (!owner) return;
+					return entryText(owner).then(function (ownerXml) {
+						var ids = olePreviewRelIds(ownerXml);
+						var changed = false;
+						var out = relsXml.replace(/<Relationship\b[^>]*>/g, function (tag) {
+							var target = xmlAttr(tag, 'Target');
+							if (!ids[xmlAttr(tag, 'Id')] || !target) return tag;
+							if (xmlAttr(tag, 'TargetMode') === 'External') return tag;
+							if (!/\.(emf|wmf)$/i.test(target)) return tag;
+							var newTarget = target.replace(/\.(emf|wmf)$/i, OLE_PREVIEW_SUFFIX);
+							newFiles[resolvePartPath(ownerName, newTarget)] = true;
+							replaced++;
+							changed = true;
+							return tag.replace('Target="' + target + '"', 'Target="' + newTarget + '"');
+						});
+						if (changed) setEntryBytes(rels, new TextEncoder().encode(out));
+					});
+				});
+			});
+		}, Promise.resolve());
+
+		return chain.then(function () {
+			if (!replaced) return untouched;
+
+			var png = base64ToBytes(TRANSPARENT_PNG_B64);
+			Object.keys(newFiles).forEach(function (name) {
+				if (!byName[name]) entries.push(newEntry(name, png));
+			});
+
+			var ct = byName['[Content_Types].xml'];
+			if (!ct) return untouched;
+			return entryText(ct).then(function (ctXml) {
+				if (!/<Default\b[^>]*\sExtension="png"/i.test(ctXml)) {
+					ctXml = ctXml.replace(/<Types\b[^>]*>/, function (open) {
+						return open + '<Default Extension="png" ContentType="image/png"/>';
+					});
+					setEntryBytes(ct, new TextEncoder().encode(ctXml));
+				}
+				log('info', 'replaced ' + replaced + ' EMF/WMF OLE preview(s) with a transparent PNG');
+				return { bytes: writeZip(entries), replaced: replaced };
+			});
+		}).catch(function (e) {
+			log('warn', 'OLE preview sanitizer skipped: ' + (e && e.message ? e.message : e));
+			return untouched;
 		});
 	}
 
@@ -352,9 +694,15 @@
 		var bytes = (input instanceof Uint8Array) ? input : new Uint8Array(input);
 		var ext = getExt(fileName) || 'docx';
 		log('debug', 'convertToBin: ' + fileName + ' (' + bytes.length + ' bytes, ext=' + ext + ')');
+		// pptx only: OLE previews in EMF/WMF crash x2t-wasm (see the sanitizer).
+		var prepared = /^(pptx|pptm|ppsx|ppsm|potx|potm)$/.test(ext)
+			? sanitizeOlePreviews(bytes).then(function (r) { return r.bytes; })
+			: Promise.resolve(bytes);
 		// Run conversion, then extract media from /working/media/ before the FS
 		// gets reused on the next conversion. Media survive as Blob URLs.
-		return runConversion(bytes, ext, 'bin').then(function (out) {
+		return prepared.then(function (input) {
+			return runConversion(input, ext, 'bin');
+		}).then(function (out) {
 			return loadModule().then(function (Module) {
 				extractMediaFromFs(Module);
 				return out;
@@ -509,7 +857,8 @@
 		getBinVersion:   getBinVersion,
 		patchBinVersion: patchBinVersion,
 		getExt:          getExt,
-		getLastMedia:    getLastMedia
+		getLastMedia:    getLastMedia,
+		sanitizeOlePreviews: sanitizeOlePreviews
 	};
 
 	if (typeof module !== 'undefined' && module.exports) {

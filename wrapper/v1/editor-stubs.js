@@ -356,6 +356,32 @@
         }
       };
     }
+    // And for the string variants Measure / Measure2 (textmeasurer.js:309,
+    // :325), which read .fAdvanceX off the same MeasureChar return. A line
+    // break reaches them: Paragraph recalc → ParaRun.Recalculate_MeasureContent
+    // → CRunBreak.Measure → CTextMeasurer.Measure. Seen on a pptx whose
+    // theme font (Montserrat) has no face loaded yet: errorCode -82 and the
+    // "error while opening the file" dialog over a document that is fine.
+    if (typeof TM.Measure === 'function') {
+      var origMeasureText = TM.Measure;
+      TM.Measure = function (text) {
+        try {
+          return origMeasureText.call(this, text);
+        } catch (e) {
+          return { Width: 0, Height: 0 };
+        }
+      };
+    }
+    if (typeof TM.Measure2 === 'function') {
+      var origMeasure2Text = TM.Measure2;
+      TM.Measure2 = function (text) {
+        try {
+          return origMeasure2Text.call(this, text);
+        } catch (e) {
+          return { Width: 0, Ascent: 0, Height: 0, WidthG: 0, rasterOffsetX: 0, rasterOffsetY: 0 };
+        }
+      };
+    }
     TM.__measureGuardInstalled = true;
     log('CTextMeasurer.MeasureCode guarded');
     return true;
