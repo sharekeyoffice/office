@@ -25,7 +25,7 @@ done
 rm -rf "$DIST"; mkdir -p "$DIST"
 
 echo "→ wrapper sources at root"
-cp "$V1"/{edit.html,edit-host-demo.html,editor-stubs.js,wrapper-boot.js,wrapper-customization.js,wrapper-mount.js,wrapper-postmessage.js,wrapper-heartbeat.js,wrapper-modal-manager.js,wrapper-repeat-last-action.js,x2t-bridge.js} "$DIST/"
+cp "$V1"/{edit.html,edit-host-demo.html,editor-stubs.js,wrapper-boot.js,wrapper-customization.js,wrapper-mount.js,wrapper-postmessage.js,wrapper-heartbeat.js,wrapper-modal-manager.js,wrapper-repeat-last-action.js,x2t-bridge.js,ooxml-preview.js} "$DIST/"
 echo "→ service-worker stub"
 echo "// stub — wrapper does not use a service worker" > "$DIST/document_editor_service_worker.js"
 echo "→ x2t/ + fonts/"
@@ -37,6 +37,9 @@ mkdir -p "$DIST/sdkjs/common/libfont/engine"
 cp "$V1/sdk-runtime/common/AllFonts.js"               "$DIST/sdkjs/common/AllFonts.js"
 cp "$V1/sdk-runtime/common/libfont/engine/fonts.js"   "$DIST/sdkjs/common/libfont/engine/fonts.js"
 cp "$V1/sdk-runtime/common/libfont/engine/fonts.wasm" "$DIST/sdkjs/common/libfont/engine/fonts.wasm"
+# Lazy ZIP support for OOXML object previews; use the pinned SDK's engine.
+mkdir -p "$DIST/sdkjs/common/zlib/engine"
+cp "$REPO/vendor/sdkjs/common/zlib/engine/"{zlib.js,zlib.wasm,zlib_ie.js} "$DIST/sdkjs/common/zlib/engine/"
 echo "→ overwrite sdk-all-min.js with our editor bundles"
 for ed in word cell slide; do
   src="$V1/bundle/$ed.editor.bundle.js"; dst="$DIST/sdkjs/$ed"; mkdir -p "$dst"
