@@ -1462,7 +1462,7 @@
       /* Sharekey header logo (customization.logo): Header.setBranding writes an
          inline `max-height:20px` on the <img>, so !important is required to bump
          it to the logo's native 24px. */
-      '#header-logo{cursor: pointer; padding-right: 17px !important;}',
+      '#header-logo{cursor: pointer; padding: 4px 12px 0 14px !important;}',
       '#header-logo img{max-height:24px !important;}',
       /* Remove the "From Text/CSV" group from the xlsx Data tab. The button slot
          (#slot-btn-data-from-text) has no data-layout-name, so the layout config
@@ -2094,7 +2094,7 @@
               log('user clicked Edit (editing) → save-on-exit + mode-changed: view');
               editModeTransition = 'exiting';
               renderEditButton();
-              pm.triggerAutosave();
+              pm.triggerAutosave(true);
               window.dispatchEvent(new CustomEvent('host-response-start', {
                   detail: {
                       key: 'edit-mode'
@@ -3343,6 +3343,16 @@
         // Header is fully rendered by now — mount our Edit button if the
         // onAppReady poller hasn't already (idempotent).
         mountHeaderControls();
+
+        if (window.installRepeatLastActionManager) {
+            window.installRepeatLastActionManager({
+                editorApi: editorApi,
+                editorWindow: document.querySelector('iframe[name="frameEditor"]').contentWindow,
+                type,
+                isRepeatAllowed: () => currentMode === 'edit' && !isDesktopClosing && !isDesktopLoggingOut
+            });
+        }
+
         if (pm) {
           pm.toHost({ type: 'opened', requestId: pm.requestId });
           if (pm.shouldShowOnlyOfficeWelcomeScreen) {
@@ -3401,7 +3411,7 @@
           window.__skPageClosingNotified = true;
 
           if (window.__editorDirty) {
-              pm.triggerAutosave();
+              pm.triggerAutosave(true);
           }
 
           pm.toHost({

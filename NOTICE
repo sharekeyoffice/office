@@ -39,6 +39,9 @@ Summary of modifications applied on top of upstream ONLYOFFICE:
   5. Cross-origin postMessage host integration + custom edit.html boot,
      view/edit lock UX, and connection/conflict overlays (Sharekey glue).
   6. web-apps deploy trimmed (help/mobile/embed/locales) for size.
+  7. Explicit borders when inserting or applying the Table Grid style,
+     for DOCX compatibility with Apple Quick Look; see
+     `wrapper/sdkjs-patches/0002-table-grid-borders.patch`.
 
 The exact, buildable corresponding source for the AGPL-covered parts is
 this repository plus the pinned upstream refs in `upstream-pins/`; the
