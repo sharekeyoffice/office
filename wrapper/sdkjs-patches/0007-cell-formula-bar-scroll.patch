@@ -6,7 +6,7 @@ diff --git a/common/apiBase.js b/common/apiBase.js
  		{
  			document.body.onmousewheel = function(e) {
 +				const isFormulaBarScroll = e.target && e.target.id === "ce-cell-content" &&
-+					!e.ctrlKey && !e.metaKey;
++					!e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey;
 +
 +				if (isFormulaBarScroll) {
 +					return true;
