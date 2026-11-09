@@ -143,3 +143,26 @@ describe('svg raster size', () => {
     expect(rasterSize('<svg>')).toEqual({ width: 1024, height: 512 });
   });
 });
+
+// editor-stubs.js runs inside the editor iframe, so this pins its wiring by
+// source, as doc-info-identity.test.mjs does. An inserted SVG must reach
+// /working/media; as a data: URL it would bypass the save shim and the save
+// would trap in x2t.
+describe('an inserted SVG goes to /working/media, not into the bin', () => {
+  const stubs = readFileSync(path.join(HERE, '..', '..', 'wrapper', 'v1', 'editor-stubs.js'), 'utf8');
+
+  it('routes picked files through readFileAsMediaUrl', () => {
+    expect(stubs).toMatch(/Promise\.all\(list\.map\(readFileAsMediaUrl\)\)/);
+  });
+
+  it('writes an SVG through the bridge and registers it as media/<name>', () => {
+    const fn = stubs.slice(stubs.indexOf('function readFileAsMediaUrl'), stubs.indexOf('function patchUploadImageFiles'));
+    expect(fn).toMatch(/isSvgFile\(file\)/);
+    expect(fn).toMatch(/bridge\.addMedia\(name,/);
+    expect(fn).toMatch(/urls\.addImageUrl\(name, url\)/);
+  });
+
+  it('the bridge exposes addMedia', () => {
+    expect(typeof Bridge.addMedia).toBe('function');
+  });
+});

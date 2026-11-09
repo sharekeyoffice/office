@@ -1058,6 +1058,47 @@
     });
   }
 
+  // An inserted SVG cannot stay a data: URL. x2t-wasm traps drawing an SVG's
+  // PNG fallback on save, and the bridge only works around that for SVGs in
+  // /working/media (see "SVG save shim" in x2t-bridge.js). A data: URL
+  // travels inside the bin and never gets there. So an SVG is written to
+  // /working/media through the wrapper's bridge and registered as
+  // media/<name>, like an image the document was opened with: the bin then
+  // references it by name. Without the bridge, it falls back to a data: URL.
+  var insertedSvgCount = 0;
+
+  function isSvgFile(file) {
+    return file && (/^image\/svg\+xml$/i.test(file.type || '') || /\.svg$/i.test(file.name || ''));
+  }
+
+  function wrapperBridge() {
+    try {
+      var p = window.parent;
+      return (p && p !== window && p.X2TBridge && typeof p.X2TBridge.addMedia === 'function') ? p.X2TBridge : null;
+    } catch (e) {
+      return null;     // cross-origin parent
+    }
+  }
+
+  function readFileAsMediaUrl(file) {
+    var bridge = wrapperBridge();
+    var urls = window.AscCommon && window.AscCommon.g_oDocumentUrls;
+    if (!isSvgFile(file) || !bridge || !urls || typeof urls.addImageUrl !== 'function') {
+      return readFileAsDataURL(file);
+    }
+    var name = 'sk-inserted-' + Date.now().toString(36) + '-' + (++insertedSvgCount) + '.svg';
+    return file.arrayBuffer().then(function (buf) {
+      return bridge.addMedia(name, new Uint8Array(buf), 'image/svg+xml');
+    }).then(function (url) {
+      urls.addImageUrl(name, url);
+      log('UploadImageFiles (local): SVG → media/' + name);
+      return url;
+    }).catch(function (e) {
+      log('UploadImageFiles (local): SVG media path failed (' + (e && e.message) + '), using a data: URL');
+      return readFileAsDataURL(file);
+    });
+  }
+
   function patchUploadImageFiles() {
     var AscCommon = window.AscCommon;
     if (!AscCommon || typeof AscCommon.UploadImageFiles !== 'function') return false;
@@ -1075,7 +1116,7 @@
       var list = [];
       for (var i = 0; i < files.length; i++) list.push(files[i]);
 
-      Promise.all(list.map(readFileAsDataURL)).then(function (urls) {
+      Promise.all(list.map(readFileAsMediaUrl)).then(function (urls) {
         log('UploadImageFiles (local): ' + urls.length + ' image(s) → data: URL');
         callback(No, urls);
       }).catch(function (e) {

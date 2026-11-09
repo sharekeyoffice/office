@@ -1043,6 +1043,33 @@
 	}
 
 	/**
+	 * Put a file into x2t's /working/media, the way the open conversion does
+	 * for a document's own images, and return a blob URL for it.
+	 *
+	 * The editor inserts a picked image as a data: URL, which reaches the save
+	 * inside the bin, past /working/media and so past the SVG save shim. An
+	 * inserted SVG goes through here instead: registered as media/<name>, the
+	 * bin references it by name, and the save reads it from /working/media.
+	 *
+	 * @param {string}     name   file name, e.g. "sk-inserted-1.svg"
+	 * @param {Uint8Array} bytes
+	 * @param {string}     mime   e.g. "image/svg+xml"
+	 * @returns {Promise<string>} blob URL, also listed by getLastMedia()
+	 */
+	function addMedia(name, bytes, mime) {
+		var data = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
+		return loadModule().then(function (Module) {
+			Module.FS.writeFile('/working/media/' + name, data);
+			var copy = new Uint8Array(data.length);
+			copy.set(data);
+			var url = URL.createObjectURL(new Blob([copy], { type: mime || 'application/octet-stream' }));
+			_lastMedia[name] = url;
+			log('debug', 'addMedia: ' + name + ' (' + data.length + ' bytes)');
+			return url;
+		});
+	}
+
+	/**
 	 * Convert Editor.bin back to a target OOXML/ODF format.
 	 *
 	 * @param {Uint8Array | ArrayBuffer} input         Editor.bin bytes
@@ -1193,6 +1220,7 @@
 		getExt:          getExt,
 		getLastMedia:    getLastMedia,
 		sanitizeOlePreviews: sanitizeOlePreviews,
+		addMedia:        addMedia,
 		// The SVG save shim's steps, for tests against a headless x2t.
 		_svgSave: {
 			prepare: prepareSvgMediaForSave,
