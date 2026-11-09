@@ -904,11 +904,15 @@
 
           if (descriptions[1] && isLargeFile) {
               descriptions[1].innerHTML = 'Currently, this document <strong>cannot be edited</strong> (over the 10 MB limit).';
+          } else if (descriptions[1] && pm.isExternal) {
+              descriptions[1].innerText = 'Editing is restricted for this document.';
           }
 
           if (descriptions[2] && isLargeFile) {
               descriptions[2].innerHTML = 'Large documents will be supported soon.';
               descriptions[2].style.color = '#2FA0AF';
+          } else if (descriptions[2] && pm.isExternal) {
+              descriptions[2].innerHTML = 'To get <strong>Editing Access</strong>, contact the person who shared this link.';
           }
 
           window.modalManager.show('view-only-mode');
