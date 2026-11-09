@@ -35,7 +35,9 @@
 		// Optional: custom path to x2t.js (overrides wasmDir + 'x2t.js')
 		jsUrl: null,
 		// Verbose logging (calls console.debug/warn/error)
-		verbose: false
+		verbose: false,
+		// SVG → PNG for the save shim; null = the browser's renderer
+		rasterizeSvg: null
 	};
 
 	function log(level, msg) {
@@ -582,6 +584,280 @@
 	}
 
 	// --------------------------------------------------------------
+	// SVG save shim (docx / xlsx / pptx)
+	// --------------------------------------------------------------
+	//
+	// OOXML stores an SVG picture twice: the SVG itself (asvg:svgBlip) and a
+	// raster fallback (a:blip). On save (bin -> OOXML) x2t draws that fallback
+	// from the SVG, and x2t-wasm traps while drawing it ("memory access out of
+	// bounds"), for every SVG. Native x2t saves the same files fine.
+	//
+	// So x2t never sees an SVG on save:
+	//   1. before the save, the browser draws each /working/media/*.svg into a
+	//      PNG, which replaces the SVG's bytes under the same name. Each PNG
+	//      carries a tEXt chunk "sk-svg-id" naming its original.
+	//   2. x2t saves; it copies that PNG into two parts per picture, both still
+	//      named .svg: imageN.svg (the fallback) and mediaM.svg (the svgBlip).
+	//   3. in the output, the svgBlip parts get their original SVG back, and the
+	//      fallbacks are renamed .png with their relationships repointed.
+	//   4. /working/media gets the original SVGs back for the next save.
+	// The result has the same shape native x2t writes: a real SVG plus a PNG
+	// fallback that the browser drew.
+
+	var SVG_TAG_KEYWORD  = 'sk-svg-id';
+	var SVG_RASTER_LONG  = 1024;      // fallback size of the long side, in px…
+	var SVG_RASTER_MAX   = 2048;      // …unless the SVG asks for more, up to this
+	var SVG_RASTER_TIMEOUT_MS = 10000;
+
+	function isPng(bytes) {
+		return bytes && bytes.length > 33 && bytes[0] === 0x89 && bytes[1] === 0x50 &&
+			bytes[2] === 0x4E && bytes[3] === 0x47;
+	}
+
+	function pngChunk(type, data) {
+		var typeBytes = new TextEncoder().encode(type);
+		var out = new Uint8Array(12 + data.length);
+		var dv = new DataView(out.buffer);
+		dv.setUint32(0, data.length);
+		out.set(typeBytes, 4);
+		out.set(data, 8);
+		var crcInput = new Uint8Array(4 + data.length);
+		crcInput.set(typeBytes, 0);
+		crcInput.set(data, 4);
+		dv.setUint32(8 + data.length, crc32(crcInput));
+		return out;
+	}
+
+	/** Insert a tEXt chunk "sk-svg-id\0<id>" right after IHDR. */
+	function tagPng(png, id) {
+		var text = new TextEncoder().encode(SVG_TAG_KEYWORD + '\u0000' + id);
+		var chunk = pngChunk('tEXt', text);
+		var ihdrEnd = 8 + 12 + 13;                       // signature + IHDR chunk
+		var out = new Uint8Array(png.length + chunk.length);
+		out.set(png.subarray(0, ihdrEnd), 0);
+		out.set(chunk, ihdrEnd);
+		out.set(png.subarray(ihdrEnd), ihdrEnd + chunk.length);
+		return out;
+	}
+
+	/** The id from a tagged PNG, or null. */
+	function readPngTag(bytes) {
+		if (!isPng(bytes)) return null;
+		var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+		var p = 8;
+		var prefix = SVG_TAG_KEYWORD + '\u0000';
+		for (var n = 0; n < 64 && p + 12 <= bytes.length; n++) {
+			var len  = dv.getUint32(p);
+			var type = String.fromCharCode(bytes[p + 4], bytes[p + 5], bytes[p + 6], bytes[p + 7]);
+			if (type === 'IEND' || p + 12 + len > bytes.length) return null;
+			if (type === 'tEXt') {
+				var text = new TextDecoder('latin1').decode(bytes.subarray(p + 8, p + 8 + len));
+				if (text.indexOf(prefix) === 0) return text.slice(prefix.length);
+			}
+			p += 12 + len;
+		}
+		return null;
+	}
+
+	/** Pixel size for an SVG's raster fallback: its own aspect, long side 1024–2048. */
+	function svgRasterSize(svgText) {
+		var root = (svgText.match(/<svg\b[^>]*>/i) || [''])[0];
+		var num = function (v) { var f = parseFloat(v); return isFinite(f) && f > 0 ? f : 0; };
+		var w = num(xmlAttr(root, 'width'));
+		var h = num(xmlAttr(root, 'height'));
+		var vb = (xmlAttr(root, 'viewBox') || '').trim().split(/[\s,]+/).map(parseFloat);
+		if ((!w || !h) && vb.length === 4 && vb[2] > 0 && vb[3] > 0) { w = vb[2]; h = vb[3]; }
+		if (!w || !h) { w = 300; h = 150; }
+		var long = Math.max(w, h);
+		var target = Math.min(SVG_RASTER_MAX, Math.max(SVG_RASTER_LONG, long));
+		var s = target / long;
+		return { width: Math.max(1, Math.round(w * s)), height: Math.max(1, Math.round(h * s)) };
+	}
+
+	/** Draw an SVG into a PNG with the browser's own renderer. */
+	function browserRasterizeSvg(svgBytes) {
+		if (typeof document === 'undefined' || typeof Image === 'undefined') {
+			return Promise.reject(new Error('no DOM to draw SVG'));
+		}
+		var size = svgRasterSize(new TextDecoder('utf-8').decode(svgBytes));
+		var url = URL.createObjectURL(new Blob([svgBytes], { type: 'image/svg+xml' }));
+		return new Promise(function (resolve, reject) {
+			var img = new Image();
+			var timer = setTimeout(function () { reject(new Error('SVG draw timed out')); }, SVG_RASTER_TIMEOUT_MS);
+			img.onload = function () {
+				clearTimeout(timer);
+				try {
+					var canvas = document.createElement('canvas');
+					canvas.width = size.width;
+					canvas.height = size.height;
+					canvas.getContext('2d').drawImage(img, 0, 0, size.width, size.height);
+					canvas.toBlob(function (blob) {
+						if (!blob) { reject(new Error('canvas.toBlob returned nothing')); return; }
+						blob.arrayBuffer().then(function (b) { resolve(new Uint8Array(b)); }, reject);
+					}, 'image/png');
+				} catch (e) { reject(e); }
+			};
+			img.onerror = function () { clearTimeout(timer); reject(new Error('the browser could not draw this SVG')); };
+			img.src = url;
+		}).then(function (png) {
+			URL.revokeObjectURL(url);
+			return png;
+		}, function (e) {
+			URL.revokeObjectURL(url);
+			throw e;
+		});
+	}
+
+	/**
+	 * Step 1: replace every /working/media/*.svg with a tagged PNG.
+	 * @returns {Promise<{originals: Object, count: number}>}  originals: id → {name, bytes}
+	 */
+	function prepareSvgMediaForSave(Module) {
+		var state = { originals: {}, count: 0 };
+		var names;
+		try {
+			names = Module.FS.readdir('/working/media').filter(function (n) { return /\.svg$/i.test(n); });
+		} catch (e) {
+			return Promise.resolve(state);
+		}
+		var rasterize = config.rasterizeSvg || browserRasterizeSvg;
+
+		return names.reduce(function (prev, name) {
+			return prev.then(function () {
+				var path = '/working/media/' + name;
+				var data = Module.FS.readFile(path);
+				if (isPng(data)) return;                          // already swapped
+				var svg = new Uint8Array(data.length);
+				svg.set(data);
+				var id = String(++state.count);
+				return Promise.resolve().then(function () { return rasterize(svg); }).then(function (png) {
+					if (!isPng(png)) throw new Error('the rasterizer did not return a PNG');
+					return png;
+				}).catch(function (e) {
+					log('warn', 'SVG ' + name + ' drawn as a blank fallback: ' + (e && e.message ? e.message : e));
+					return base64ToBytes(TRANSPARENT_PNG_B64);
+				}).then(function (png) {
+					state.originals[id] = { name: name, bytes: svg };
+					Module.FS.writeFile(path, tagPng(png, id));
+				});
+			});
+		}, Promise.resolve()).then(function () { return state; });
+	}
+
+	/** Step 4: put the original SVGs back into the current module's media. */
+	function restoreSvgMedia(state) {
+		if (!state || !state.count) return Promise.resolve();
+		return loadModule().then(function (Module) {
+			Object.keys(state.originals).forEach(function (id) {
+				var o = state.originals[id];
+				try { Module.FS.writeFile('/working/media/' + o.name, o.bytes); }
+				catch (e) { log('warn', 'could not restore ' + o.name + ': ' + e.message); }
+			});
+		});
+	}
+
+	function entryBytes(e) {
+		if (e.method === 0) return Promise.resolve(e.data);
+		if (e.method === 8) return inflateRaw(e.data);
+		return Promise.reject(new Error('unsupported ZIP method ' + e.method + ' for ' + e.name));
+	}
+
+	/**
+	 * Step 3: give the svgBlip parts their SVG back and turn the fallbacks into
+	 * .png parts. Throws if the output cannot be read: a document with PNG
+	 * bytes inside .svg parts must not be saved.
+	 */
+	function fixSvgMediaInOutput(zipBytes, state) {
+		var entries = readZip(zipBytes);
+		if (!entries) return Promise.reject(new Error('cannot read the saved OOXML package'));
+		var byName = {};
+		entries.forEach(function (e) { byName[e.name] = e; });
+
+		var tagged = {};      // part name → original {name, bytes}
+		var relsEntries = entries.filter(function (e) { return /(^|\/)_rels\/[^\/]+\.rels$/.test(e.name); });
+		var svgCandidates = entries.filter(function (e) { return /\.svg$/i.test(e.name); });
+
+		return svgCandidates.reduce(function (prev, e) {
+			return prev.then(function () {
+				return entryBytes(e).then(function (b) {
+					var id = readPngTag(b);
+					if (id && state.originals[id]) tagged[e.name] = state.originals[id];
+				});
+			});
+		}, Promise.resolve()).then(function () {
+			if (!Object.keys(tagged).length) return zipBytes;
+
+			// Which parts are the targets of an svgBlip?
+			var svgBlipTargets = {};
+			var relsXml = {};
+			return relsEntries.reduce(function (prev, rels) {
+				return prev.then(function () {
+					return entryText(rels).then(function (xml) {
+						relsXml[rels.name] = xml;
+						var ownerName = rels.name.replace(/_rels\/([^\/]+)\.rels$/, '$1');
+						var owner = byName[ownerName];
+						if (!owner || !/\.xml$/i.test(ownerName)) return;
+						return entryText(owner).then(function (ownerXml) {
+							if (ownerXml.indexOf('svgBlip') < 0) return;
+							var ids = {};
+							var re = /<(?:\w+:)?svgBlip\b[^>]*?\s(?:\w+:)?embed="([^"]*)"/g;
+							var m;
+							while ((m = re.exec(ownerXml))) ids[m[1]] = true;
+							(xml.match(/<Relationship\b[^>]*>/g) || []).forEach(function (tag) {
+								if (ids[xmlAttr(tag, 'Id')]) {
+									svgBlipTargets[resolvePartPath(ownerName, xmlAttr(tag, 'Target') || '')] = true;
+								}
+							});
+						});
+					});
+				});
+			}, Promise.resolve()).then(function () {
+				var renamed = {};      // old part name → suffix that replaces ".svg"
+				Object.keys(tagged).forEach(function (name) {
+					var e = byName[name];
+					if (svgBlipTargets[name]) {
+						setEntryBytes(e, tagged[name].bytes);
+						return;
+					}
+					var suffix = byName[name.replace(/\.svg$/i, '.png')] ? '.sk-fallback.png' : '.png';
+					e.name = name.replace(/\.svg$/i, suffix);
+					e.nameBytes = new TextEncoder().encode(e.name);
+					renamed[name] = suffix;
+				});
+
+				relsEntries.forEach(function (rels) {
+					var ownerName = rels.name.replace(/_rels\/([^\/]+)\.rels$/, '$1');
+					var changed = false;
+					var out = relsXml[rels.name].replace(/<Relationship\b[^>]*>/g, function (tag) {
+						var target = xmlAttr(tag, 'Target');
+						if (!target || xmlAttr(tag, 'TargetMode') === 'External') return tag;
+						var suffix = renamed[resolvePartPath(ownerName, target)];
+						if (!suffix) return tag;
+						changed = true;
+						return tag.replace('Target="' + target + '"', 'Target="' + target.replace(/\.svg$/i, suffix) + '"');
+					});
+					if (changed) setEntryBytes(rels, new TextEncoder().encode(out));
+				});
+
+				var ct = byName['[Content_Types].xml'];
+				if (!ct) throw new Error('the saved package has no [Content_Types].xml');
+				return entryText(ct).then(function (ctXml) {
+					var add = '';
+					if (!/<Default\b[^>]*\sExtension="png"/i.test(ctXml)) add += '<Default Extension="png" ContentType="image/png"/>';
+					if (!/<Default\b[^>]*\sExtension="svg"/i.test(ctXml)) add += '<Default Extension="svg" ContentType="image/svg+xml"/>';
+					if (add) {
+						ctXml = ctXml.replace(/<Types\b[^>]*>/, function (open) { return open + add; });
+						setEntryBytes(ct, new TextEncoder().encode(ctXml));
+					}
+					log('info', 'SVG save: restored ' + (Object.keys(tagged).length - Object.keys(renamed).length) +
+						' SVG part(s), wrote ' + Object.keys(renamed).length + ' PNG fallback(s)');
+					return writeZip(entries);
+				});
+			});
+		});
+	}
+
+	// --------------------------------------------------------------
 	// Public API
 	// --------------------------------------------------------------
 
@@ -776,7 +1052,18 @@
 	function convertFromBin(input, outputExt) {
 		var bytes = (input instanceof Uint8Array) ? input : new Uint8Array(input);
 		log('debug', 'convertFromBin: ' + bytes.length + ' bytes -> .' + outputExt);
-		return runConversion(bytes, 'bin', outputExt);
+		// SVG media go through the save shim (see "SVG save shim").
+		var state = null;
+		return loadModule().then(prepareSvgMediaForSave).then(function (s) {
+			state = s;
+			return runConversion(bytes, 'bin', outputExt);
+		}).then(function (out) {
+			return state.count ? fixSvgMediaInOutput(out, state) : out;
+		}).then(function (out) {
+			return restoreSvgMedia(state).then(function () { return out; });
+		}, function (err) {
+			return restoreSvgMedia(state).then(function () { throw err; });
+		});
 	}
 
 	/**
@@ -851,6 +1138,8 @@
 	 *   - wasmDir: directory containing x2t.js and x2t.wasm (default './x2t/')
 	 *   - jsUrl:   override URL for x2t.js (rare)
 	 *   - verbose: enable console.debug logging
+	 *   - rasterizeSvg: (svgBytes) => Promise<pngBytes>, draws the PNG fallback
+	 *                   of an SVG on save (default: the browser's renderer)
 	 */
 	function configure(opts) {
 		opts = opts || {};
@@ -859,6 +1148,7 @@
 		}
 		if (typeof opts.jsUrl === 'string') config.jsUrl = opts.jsUrl;
 		if (typeof opts.verbose === 'boolean') config.verbose = opts.verbose;
+		if (typeof opts.rasterizeSvg === 'function') config.rasterizeSvg = opts.rasterizeSvg;
 	}
 
 	/**
@@ -902,7 +1192,14 @@
 		patchBinVersion: patchBinVersion,
 		getExt:          getExt,
 		getLastMedia:    getLastMedia,
-		sanitizeOlePreviews: sanitizeOlePreviews
+		sanitizeOlePreviews: sanitizeOlePreviews,
+		// The SVG save shim's steps, for tests against a headless x2t.
+		_svgSave: {
+			prepare: prepareSvgMediaForSave,
+			fixOutput: fixSvgMediaInOutput,
+			readPngTag: readPngTag,
+			rasterSize: svgRasterSize
+		}
 	};
 
 	if (typeof module !== 'undefined' && module.exports) {
