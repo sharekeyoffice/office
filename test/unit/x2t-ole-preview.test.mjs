@@ -107,9 +107,15 @@ describe('x2t opens the sanitized pptx in any heap layout', () => {
  * Load the bridge in a sandbox with a fake x2t.js. Each injected <script>
  * builds a new "module" generation; `crashOn` lists the generations whose
  * main1 traps the way x2t-wasm does.
+ *
+ * Like the real x2t.js, the fake runs once per global scope (page or
+ * iframe). The real one declares top-level classes, so a second copy in the
+ * same page throws "Identifier 'ExitStatus' has already been declared" and
+ * never initializes; the fake stays silent the same way.
  */
 function loadBridgeWithFakeX2T({ crashOn }) {
   const generations = [];
+  const frames = [];
   const window = {};
 
   const makeFS = () => {
@@ -126,34 +132,52 @@ function loadBridgeWithFakeX2T({ crashOn }) {
     };
   };
 
-  const document = {
-    createElement: () => ({}),
-    head: {
-      appendChild: () => {
-        const Module = window.Module;
-        const gen = generations.length + 1;
-        Module.FS = makeFS();
-        Module.ccall = (_name, _ret, _types, [paramsPath]) => {
-          if (crashOn.includes(gen)) throw new Error('memory access out of bounds');
-          const params = new TextDecoder().decode(Module.FS.readFile(paramsPath));
-          const to = params.match(/<m_sFileTo>([^<]+)<\/m_sFileTo>/)[1];
-          Module.FS.writeFile(to, new TextEncoder().encode('PK-out-from-gen-' + gen));
-          return 0;
-        };
-        generations.push(Module);
-        setTimeout(() => Module.onRuntimeInitialized(), 0);
+  // A document whose <script> runs the fake x2t.js in `win`'s global scope.
+  const makeDocument = (win) => {
+    let x2tRan = false;
+    const doc = {
+      head: {
+        appendChild: () => {
+          if (x2tRan) return;          // second copy in one scope: SyntaxError, no init
+          x2tRan = true;
+          const Module = win.Module;
+          const gen = generations.length + 1;
+          Module.FS = makeFS();
+          Module.ccall = (_name, _ret, _types, [paramsPath]) => {
+            if (crashOn.includes(gen)) throw new Error('memory access out of bounds');
+            const params = new TextDecoder().decode(Module.FS.readFile(paramsPath));
+            const to = params.match(/<m_sFileTo>([^<]+)<\/m_sFileTo>/)[1];
+            Module.FS.writeFile(to, new TextEncoder().encode('PK-out-from-gen-' + gen));
+            return 0;
+          };
+          generations.push(Module);
+          setTimeout(() => Module.onRuntimeInitialized(), 0);
+        },
       },
-    },
+      createElement: (tag) => {
+        if (tag !== 'iframe') return {};
+        const frameWin = {};
+        const frame = { style: {}, setAttribute() {}, contentWindow: frameWin, parentNode: null };
+        frame.contentDocument = makeDocument(frameWin);
+        return frame;
+      },
+      body: {
+        appendChild: (frame) => { frame.parentNode = doc.body; frames.push(frame); },
+        removeChild: (frame) => { frame.parentNode = null; },
+      },
+    };
+    return doc;
   };
+  const document = makeDocument(window);
 
   const sandbox = {
-    window, document, console, setTimeout, performance,
+    window, document, console, setTimeout, clearTimeout, performance,
     URL, Blob, Response, TextEncoder, TextDecoder, DecompressionStream, atob,
   };
   sandbox.window.location = { href: 'https://office.test/edit.html' };
   vm.createContext(sandbox);
   vm.runInContext(readFileSync(BRIDGE_PATH, 'utf8'), sandbox);
-  return { bridge: window.X2TBridge, generations };
+  return { bridge: window.X2TBridge, generations, frames };
 }
 
 describe('a crashed x2t module is replaced', () => {
@@ -171,8 +195,17 @@ describe('a crashed x2t module is replaced', () => {
     expect(Array.from(generations[1].FS.readFile('/working/media/image1.png'))).toEqual([1, 2, 3]);
   });
 
+  it('runs the fresh module in its own iframe, not a second copy in the page', async () => {
+    const { bridge, generations, frames } = loadBridgeWithFakeX2T({ crashOn: [1] });
+
+    await bridge.convertFromBin(new Uint8Array([1]), 'pptx');
+
+    expect(frames).toHaveLength(1);
+    expect(generations[1]).toBe(frames[0].contentWindow.Module);
+  });
+
   it('reports the crash when the retry crashes too, and leaves a fresh module for the next call', async () => {
-    const { bridge, generations } = loadBridgeWithFakeX2T({ crashOn: [1, 2] });
+    const { bridge, generations, frames } = loadBridgeWithFakeX2T({ crashOn: [1, 2] });
 
     await expect(bridge.convertFromBin(new Uint8Array([1]), 'pptx'))
       .rejects.toThrow('x2t threw during main1: memory access out of bounds');
@@ -180,5 +213,7 @@ describe('a crashed x2t module is replaced', () => {
     const out = await bridge.convertFromBin(new Uint8Array([1]), 'pptx');
     expect(new TextDecoder().decode(out)).toBe('PK-out-from-gen-3');
     expect(generations).toHaveLength(3);
+    // Each reset replaces the previous iframe; only the newest stays attached.
+    expect(frames.map((f) => f.parentNode !== null)).toEqual([false, true]);
   });
 });

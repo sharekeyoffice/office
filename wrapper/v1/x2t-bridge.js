@@ -49,46 +49,62 @@
 	// --------------------------------------------------------------
 	var modulePromise = null;
 
+	// Where x2t.js runs. The first module runs in this page. A module that
+	// replaces a crashed one runs in a hidden iframe (see resetModule): x2t.js
+	// declares top-level classes (ExitStatus, …), so a second copy in the same
+	// page dies with "Identifier 'ExitStatus' has already been declared".
+	var _moduleHost  = null;   // { win, doc, frame } — null means this page
+	// A module in an iframe that never initializes must not hang a save.
+	var RESET_LOAD_TIMEOUT_MS = 120000;
+
 	function loadModule() {
 		if (modulePromise) return modulePromise;
 
+		var host = _moduleHost || { win: global, doc: document, frame: null };
+
 		modulePromise = new Promise(function (resolve, reject) {
+			var timer = null;
+			var settle = function (fn, value) {
+				if (timer) { clearTimeout(timer); timer = null; }
+				fn(value);
+			};
+
 			// Per cryptpad/onlyoffice-x2t-wasm pre-js.js convention:
 			// we set Module options on window before x2t.js runs.
-			global.Module = global.Module || {};
-			global.Module.noInitialRun = true;
-			global.Module.noExitRuntime = true;
+			var Module = host.win.Module = host.win.Module || {};
+			Module.noInitialRun = true;
+			Module.noExitRuntime = true;
 
 			// locateFile: resolve x2t.wasm relative to wasmDir
-			global.Module.locateFile = function (path /*, prefix */) {
+			Module.locateFile = function (path /*, prefix */) {
 				return config.wasmDir + path;
 			};
 
 			// Capture stdout/stderr from x2t for diagnostics
-			var prevPrint    = global.Module.print;
-			var prevPrintErr = global.Module.printErr;
-			global.Module.print    = function (m) { log('debug', '[x2t stdout] ' + m); if (prevPrint) prevPrint(m); };
-			global.Module.printErr = function (m) { log('warn',  '[x2t stderr] ' + m); if (prevPrintErr) prevPrintErr(m); };
+			var prevPrint    = Module.print;
+			var prevPrintErr = Module.printErr;
+			Module.print    = function (m) { log('debug', '[x2t stdout] ' + m); if (prevPrint) prevPrint(m); };
+			Module.printErr = function (m) { log('warn',  '[x2t stderr] ' + m); if (prevPrintErr) prevPrintErr(m); };
 
-			global.Module.onAbort = function (reason) {
+			Module.onAbort = function (reason) {
 				log('error', 'x2t aborted: ' + reason);
-				reject(new Error('x2t WASM aborted: ' + reason));
+				settle(reject, new Error('x2t WASM aborted: ' + reason));
 			};
 
-			global.Module.onRuntimeInitialized = function () {
+			Module.onRuntimeInitialized = function () {
 				log('debug', 'x2t runtime initialized');
 
 				// Pre-create working directories for the first conversion
 				try {
 					['/working', '/working/themes', '/working/media', '/working/fonts']
 						.forEach(function (d) {
-							try { global.Module.FS.mkdir(d); } catch (_) { /* exists */ }
+							try { Module.FS.mkdir(d); } catch (_) { /* exists */ }
 						});
 				} catch (e) {
 					log('warn', 'Could not pre-create working dirs: ' + e.message);
 				}
 
-				resolve(global.Module);
+				settle(resolve, Module);
 			};
 
 			// Inject script tag.
@@ -96,17 +112,40 @@
 			// which only accepts absolute URLs. Resolve relative paths against the page first.
 			var rawUrl = config.jsUrl || (config.wasmDir + 'x2t.js');
 			var url    = new URL(rawUrl, global.location.href).href;
-			var script = document.createElement('script');
+			var script = host.doc.createElement('script');
 			script.src = url;
 			script.onerror = function () {
-				reject(new Error('Failed to load ' + url + ' — check wasmDir config'));
+				settle(reject, new Error('Failed to load ' + url + ' — check wasmDir config'));
 			};
-			document.head.appendChild(script);
+			if (host.frame) {
+				timer = setTimeout(function () {
+					timer = null;
+					reject(new Error('x2t module did not initialize within ' + (RESET_LOAD_TIMEOUT_MS / 1000) + 's'));
+				}, RESET_LOAD_TIMEOUT_MS);
+			}
+			host.doc.head.appendChild(script);
 
-			log('debug', 'Loading x2t.js from ' + url);
+			log('debug', 'Loading x2t.js from ' + url + (host.frame ? ' (fresh iframe)' : ''));
 		});
 
-		return modulePromise;
+		// A failed load must not be cached: the next call tries again.
+		var pending = modulePromise;
+		pending.catch(function () { if (modulePromise === pending) modulePromise = null; });
+
+		return pending;
+	}
+
+	/** A hidden same-origin iframe: a fresh global scope for one x2t.js copy. */
+	function createModuleFrame() {
+		var frame = document.createElement('iframe');
+		frame.setAttribute('aria-hidden', 'true');
+		frame.tabIndex = -1;
+		frame.style.display = 'none';
+		document.body.appendChild(frame);
+		var win = frame.contentWindow;
+		var doc = frame.contentDocument || win.document;
+		if (!doc.head) doc.documentElement.appendChild(doc.createElement('head'));
+		return { win: win, doc: doc, frame: frame };
 	}
 
 	// --------------------------------------------------------------
@@ -232,9 +271,14 @@
 
 		modulePromise = null;
 		_isReady = false;
-		// x2t.js reuses an existing global Module object instead of creating its
-		// own, so it needs a fresh object, not the crashed one.
-		global.Module = {};
+		// The new copy of x2t.js gets its own iframe (see _moduleHost). The
+		// previous reset's iframe goes, and the crashed heap with it. The first
+		// module lives in this page and cannot be unloaded; it is only dropped.
+		var previous = _moduleHost;
+		_moduleHost = createModuleFrame();
+		if (previous && previous.frame && previous.frame.parentNode) {
+			previous.frame.parentNode.removeChild(previous.frame);
+		}
 
 		return loadModule().then(function (Module) {
 			Object.keys(media).forEach(function (name) {
@@ -838,7 +882,7 @@
 	var _origLoadModule = loadModule;
 	loadModule = function () {
 		var p = _origLoadModule();
-		p.then(function () { _isReady = true; });
+		p.then(function () { _isReady = true; }, function () { /* the caller handles it */ });
 		return p;
 	};
 
