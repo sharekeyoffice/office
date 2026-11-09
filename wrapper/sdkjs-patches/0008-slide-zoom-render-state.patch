@@ -1,0 +1,31 @@
+diff --git a/slide/Drawing/DrawingDocument.js b/slide/Drawing/DrawingDocument.js
+--- a/slide/Drawing/DrawingDocument.js
++++ b/slide/Drawing/DrawingDocument.js
+@@ -6713,7 +6713,12 @@
+ 			if (this.m_oWordControl.m_oApi.isViewMode)
+ 				g.IsNoDrawingEmptyPlaceholderText = true;
+ 
+-			this.m_oWordControl.m_oLogicDocument.DrawPage(slideNum, g);
++			// CGraphics.init() saves the canvas state, including its transform.
++			try {
++				this.m_oWordControl.m_oLogicDocument.DrawPage(slideNum, g);
++			} finally {
++				g.m_oContext.restore();
++			}
+ 		}
+ 		else
+ 		{
+@@ -6816,7 +6821,12 @@
+ 			if (this.m_oWordControl.m_oApi.isViewMode)
+ 				g.IsNoDrawingEmptyPlaceholderText = true;
+ 
+-			this.m_oWordControl.m_oLogicDocument.DrawPage(slideNum, g);
++			// CGraphics.init() saves the canvas state, including its transform.
++			try {
++				this.m_oWordControl.m_oLogicDocument.DrawPage(slideNum, g);
++			} finally {
++				g.m_oContext.restore();
++			}
+ 		}
+ 
+ 		if (this.m_oWordControl.m_oApi.watermarkDraw &&
