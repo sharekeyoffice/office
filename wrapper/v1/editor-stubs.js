@@ -356,12 +356,7 @@
         }
       };
     }
-    // And for the string variants Measure / Measure2 (textmeasurer.js:309,
-    // :325), which read .fAdvanceX off the same MeasureChar return. A line
-    // break reaches them: Paragraph recalc → ParaRun.Recalculate_MeasureContent
-    // → CRunBreak.Measure → CTextMeasurer.Measure. Seen on a pptx whose
-    // theme font (Montserrat) has no face loaded yet: errorCode -82 and the
-    // "error while opening the file" dialog over a document that is fine.
+
     if (typeof TM.Measure === 'function') {
       var origMeasureText = TM.Measure;
       TM.Measure = function (text) {
@@ -1060,11 +1055,6 @@
 
   // An inserted SVG cannot stay a data: URL. x2t-wasm traps drawing an SVG's
   // PNG fallback on save, and the bridge only works around that for SVGs in
-  // /working/media (see "SVG save shim" in x2t-bridge.js). A data: URL
-  // travels inside the bin and never gets there. So an SVG is written to
-  // /working/media through the wrapper's bridge and registered as
-  // media/<name>, like an image the document was opened with: the bin then
-  // references it by name. Without the bridge, it falls back to a data: URL.
   var insertedSvgCount = 0;
 
   function isSvgFile(file) {

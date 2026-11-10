@@ -12,10 +12,6 @@
  *                   browser reuses one module for the whole session
  *
  * Prints one line of JSON: {"ok":true} or {"ok":false,"error":"..."}.
- *
- * Why: x2t-wasm corrupts its own heap on some inputs. Whether that corruption
- * traps depends on the layout, so a single green run proves nothing. A fix is
- * only trusted when it stays green across several layouts.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
