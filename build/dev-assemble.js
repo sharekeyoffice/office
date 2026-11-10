@@ -41,6 +41,8 @@ function cpFile(src, dst) {
 }
 
 function sync() {
+  require('./build-image-rasterizer')(PUBLIC);
+
   for (const f of GLUE) {
     const s = path.join(V1, f);
     if (fs.existsSync(s)) cpFile(s, path.join(PUBLIC, f));
