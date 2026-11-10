@@ -1,0 +1,89 @@
+diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
+--- a/cell/view/CellEditorView.js
++++ b/cell/view/CellEditorView.js
+@@ -3182,36 +3182,82 @@
+ 		this.hasCursor = false;
+ 		return true;
+ 	};
+ 
+ 	/** @param event {jQuery.Event} */
+ 	CellEditor.prototype._onInputTextArea = function (event) {
+ 		//TODO save the text!
+ 		var t = this;
+-		if (!this.handlers.trigger("canEdit") || this.loadFonts) {
++		const editingOptions = this.options;
++		const canProcessInput = this.isOpened && editingOptions && editingOptions.fragments &&
++			this.handlers.trigger("canEdit") && !this.loadFonts;
++
++		if (!canProcessInput) {
+ 			return true;
+ 		}
+ 		if (this.handlers.trigger("isUserProtectActiveCell")) {
+ 			this.handlers.trigger("asc_onError", Asc.c_oAscError.ID.ProtectedRangeByOtherUser, c_oAscError.Level.NoCritical);
+ 			return true;
+ 		}
+ 		if (this.handlers.trigger("isProtectActiveCell")) {
+ 			return true;
+ 		}
+ 		this.loadFonts = true;
+ 
+ 		let checkedText = this.input.value.replace(/[\r\n]+/g, '');
+ 		AscFonts.FontPickerByCharacter.checkText(checkedText, this, function () {
+ 			t.loadFonts = false;
++			// Font loading may finish after this cell was closed or another opened.
++			const isCurrentEdit = t.isOpened && t.options === editingOptions &&
++				editingOptions.fragments && t.handlers.trigger("canEdit");
++
++			if (!isCurrentEdit) {
++				return;
++			}
++
+ 			t.skipTLUpdate = true;
+-			var length = t.replaceText(0, t.textRender.getEndOfText(), t.input.value);
++			// The formula bar is plain text; only replace the edited span so
++			// untouched rich-text fragments keep their individual formatting.
++			const oldChars = AscCommonExcel.getFragmentsCharCodes(t.options.fragments);
++			const newChars = AscCommon.convertUTF16toUnicode(t.input.value);
++			let start = t.selectionBegin !== t.selectionEnd ? Math.min(t.selectionBegin, t.selectionEnd) : t.cursorPos;
++			let oldEnd = t.selectionBegin !== t.selectionEnd ? Math.max(t.selectionBegin, t.selectionEnd) : start;
++			let newEnd = oldEnd + newChars.length - oldChars.length;
++
++			// Prefer the existing selection, which disambiguates repeated text.
++			// Deletions and coalesced input may need a text-diff fallback.
++			const matchesSelection = start >= 0 && oldEnd <= oldChars.length &&
++				newEnd >= start && newEnd <= newChars.length &&
++				oldChars.slice(0, start).every((code, index) => code === newChars[index]) &&
++				oldChars.slice(oldEnd).every((code, index) => code === newChars[newEnd + index]);
++			if (!matchesSelection) {
++				start = 0;
++				oldEnd = oldChars.length;
++				newEnd = newChars.length;
++				const cursor = AscCommon.convertUTF16toUnicode(t.input.value.slice(0, t.input.selectionStart)).length;
++				while (start < oldEnd && start < newEnd && start < cursor && oldChars[start] === newChars[start]) {
++					++start;
++				}
++				while (oldEnd > start && newEnd > start && oldChars[oldEnd - 1] === newChars[newEnd - 1]) {
++					--oldEnd;
++					--newEnd;
++				}
++			}
++
++			if (start !== oldEnd || start !== newEnd) {
++				const format = t.newTextFormat;
++				t._moveCursor(kPosition, start);
++				t._selectChars(kPosition, oldEnd);
++				t.newTextFormat = format;
++				t._addChars(newChars.slice(start, newEnd));
++			}
+ 			t._updateCursorByTopLine();
+ 
+-			if (length !== t.input.value.length) {
++			if (AscCommonExcel.getFragmentsText(t.options.fragments) !== t.input.value) {
+ 				t.input.value = AscCommonExcel.getFragmentsText((t.options.fragments));
+ 				t._updateTopLineCurPos();
+ 			}
+ 		});
+ 		return true;
+ 	};
+ 
+ 	/** @param event {MouseEvent} */

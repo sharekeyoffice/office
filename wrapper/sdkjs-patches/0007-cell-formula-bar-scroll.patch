@@ -1,0 +1,55 @@
+diff --git a/common/apiBase.js b/common/apiBase.js
+--- a/common/apiBase.js
++++ b/common/apiBase.js
+@@ -421,6 +421,13 @@
+ 		if (AscCommon.AscBrowser.isMacOs)
+ 		{
+ 			document.body.onmousewheel = function(e) {
++				const isFormulaBarScroll = e.target && e.target.id === "ce-cell-content" &&
++					!e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey;
++
++				if (isFormulaBarScroll) {
++					return true;
++				}
++
+ 				if (e.stopPropagation)
+ 					e.stopPropagation();
+ 				e.returnValue = false;
+@@ -449,16 +456,22 @@
+ 		if (body && body.addEventListener)
+ 		{
+ 			body.addEventListener("mousewheel", function(e) {
+-				if (e.ctrlKey || e.altKey || e.shiftKey || e.metaKey)
++				const isFormulaBarInput = e.target && e.target.id === "ce-cell-content";
++
++				if (isFormulaBarInput || e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) {
+ 					return;
++				}
+ 				e.preventDefault && e.preventDefault();
+ 				e.stopPropagation && e.stopPropagation();
+ 				return false;
+ 			}, false);
+ 			body.addEventListener("DOMMouseScroll", function(e)
+ 			{
+-				if (e.ctrlKey || e.altKey || e.shiftKey || e.metaKey)
++				const isFormulaBarInput = e.target && e.target.id === "ce-cell-content";
++
++				if (isFormulaBarInput || e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) {
+ 					return;
++				}
+ 				e.preventDefault && e.preventDefault();
+ 				e.stopPropagation && e.stopPropagation();
+ 				return false;
+diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
+--- a/cell/view/CellEditorView.js
++++ b/cell/view/CellEditorView.js
+@@ -1826,7 +1826,8 @@
+ 			AscCommon.g_inputContext.moveAccurate(this.left * this.kx + curLeft, this.top * this.ky + curTop);
+ 		}
+ 
+-		if (cur) {
++		// The formula bar uses native textarea layout and caret scrolling.
++		if (cur && !this.isTopLineActive) {
+ 			this.input.scrollTop = this.input.clientHeight * cur.lineIndex;
+ 		}
+ 		if (this.isTopLineActive && !this.skipTLUpdate) {

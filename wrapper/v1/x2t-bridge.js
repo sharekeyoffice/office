@@ -35,7 +35,9 @@
 		// Optional: custom path to x2t.js (overrides wasmDir + 'x2t.js')
 		jsUrl: null,
 		// Verbose logging (calls console.debug/warn/error)
-		verbose: false
+		verbose: false,
+		// SVG → PNG for the save shim; null = the browser's renderer
+		rasterizeSvg: null
 	};
 
 	function log(level, msg) {
@@ -49,46 +51,62 @@
 	// --------------------------------------------------------------
 	var modulePromise = null;
 
+	// Where x2t.js runs. The first module runs in this page. A module that
+	// replaces a crashed one runs in a hidden iframe (see resetModule): x2t.js
+	// declares top-level classes (ExitStatus, …), so a second copy in the same
+	// page dies with "Identifier 'ExitStatus' has already been declared".
+	var _moduleHost  = null;   // { win, doc, frame } — null means this page
+	// A module in an iframe that never initializes must not hang a save.
+	var RESET_LOAD_TIMEOUT_MS = 120000;
+
 	function loadModule() {
 		if (modulePromise) return modulePromise;
 
+		var host = _moduleHost || { win: global, doc: document, frame: null };
+
 		modulePromise = new Promise(function (resolve, reject) {
+			var timer = null;
+			var settle = function (fn, value) {
+				if (timer) { clearTimeout(timer); timer = null; }
+				fn(value);
+			};
+
 			// Per cryptpad/onlyoffice-x2t-wasm pre-js.js convention:
 			// we set Module options on window before x2t.js runs.
-			global.Module = global.Module || {};
-			global.Module.noInitialRun = true;
-			global.Module.noExitRuntime = true;
+			var Module = host.win.Module = host.win.Module || {};
+			Module.noInitialRun = true;
+			Module.noExitRuntime = true;
 
 			// locateFile: resolve x2t.wasm relative to wasmDir
-			global.Module.locateFile = function (path /*, prefix */) {
+			Module.locateFile = function (path /*, prefix */) {
 				return config.wasmDir + path;
 			};
 
 			// Capture stdout/stderr from x2t for diagnostics
-			var prevPrint    = global.Module.print;
-			var prevPrintErr = global.Module.printErr;
-			global.Module.print    = function (m) { log('debug', '[x2t stdout] ' + m); if (prevPrint) prevPrint(m); };
-			global.Module.printErr = function (m) { log('warn',  '[x2t stderr] ' + m); if (prevPrintErr) prevPrintErr(m); };
+			var prevPrint    = Module.print;
+			var prevPrintErr = Module.printErr;
+			Module.print    = function (m) { log('debug', '[x2t stdout] ' + m); if (prevPrint) prevPrint(m); };
+			Module.printErr = function (m) { log('warn',  '[x2t stderr] ' + m); if (prevPrintErr) prevPrintErr(m); };
 
-			global.Module.onAbort = function (reason) {
+			Module.onAbort = function (reason) {
 				log('error', 'x2t aborted: ' + reason);
-				reject(new Error('x2t WASM aborted: ' + reason));
+				settle(reject, new Error('x2t WASM aborted: ' + reason));
 			};
 
-			global.Module.onRuntimeInitialized = function () {
+			Module.onRuntimeInitialized = function () {
 				log('debug', 'x2t runtime initialized');
 
 				// Pre-create working directories for the first conversion
 				try {
 					['/working', '/working/themes', '/working/media', '/working/fonts']
 						.forEach(function (d) {
-							try { global.Module.FS.mkdir(d); } catch (_) { /* exists */ }
+							try { Module.FS.mkdir(d); } catch (_) { /* exists */ }
 						});
 				} catch (e) {
 					log('warn', 'Could not pre-create working dirs: ' + e.message);
 				}
 
-				resolve(global.Module);
+				settle(resolve, Module);
 			};
 
 			// Inject script tag.
@@ -96,17 +114,40 @@
 			// which only accepts absolute URLs. Resolve relative paths against the page first.
 			var rawUrl = config.jsUrl || (config.wasmDir + 'x2t.js');
 			var url    = new URL(rawUrl, global.location.href).href;
-			var script = document.createElement('script');
+			var script = host.doc.createElement('script');
 			script.src = url;
 			script.onerror = function () {
-				reject(new Error('Failed to load ' + url + ' — check wasmDir config'));
+				settle(reject, new Error('Failed to load ' + url + ' — check wasmDir config'));
 			};
-			document.head.appendChild(script);
+			if (host.frame) {
+				timer = setTimeout(function () {
+					timer = null;
+					reject(new Error('x2t module did not initialize within ' + (RESET_LOAD_TIMEOUT_MS / 1000) + 's'));
+				}, RESET_LOAD_TIMEOUT_MS);
+			}
+			host.doc.head.appendChild(script);
 
-			log('debug', 'Loading x2t.js from ' + url);
+			log('debug', 'Loading x2t.js from ' + url + (host.frame ? ' (fresh iframe)' : ''));
 		});
 
-		return modulePromise;
+		// A failed load must not be cached: the next call tries again.
+		var pending = modulePromise;
+		pending.catch(function () { if (modulePromise === pending) modulePromise = null; });
+
+		return pending;
+	}
+
+	/** A hidden same-origin iframe: a fresh global scope for one x2t.js copy. */
+	function createModuleFrame() {
+		var frame = document.createElement('iframe');
+		frame.setAttribute('aria-hidden', 'true');
+		frame.tabIndex = -1;
+		frame.style.display = 'none';
+		document.body.appendChild(frame);
+		var win = frame.contentWindow;
+		var doc = frame.contentDocument || win.document;
+		if (!doc.head) doc.documentElement.appendChild(doc.createElement('head'));
+		return { win: win, doc: doc, frame: frame };
 	}
 
 	// --------------------------------------------------------------
@@ -119,12 +160,17 @@
 	 * Run x2t conversion: writes input + params, calls main1, reads output.
 	 * Cleans up virtual-FS files even on failure.
 	 *
+	 * If main1 throws (a WASM trap), the module's heap is corrupted and every
+	 * later conversion in this session would fail too. So the module is
+	 * replaced with a fresh one and the conversion is retried once.
+	 *
 	 * @param {Uint8Array} inputBytes
 	 * @param {string}     inputExt    e.g. "docx"
 	 * @param {string}     outputExt   e.g. "bin"
+	 * @param {boolean}    [isRetry]   internal: this is the single retry
 	 * @returns {Promise<Uint8Array>}
 	 */
-	function runConversion(inputBytes, inputExt, outputExt) {
+	function runConversion(inputBytes, inputExt, outputExt, isRetry) {
 		return loadModule().then(function (Module) {
 			var id = ++_convCounter;
 			var inputPath  = '/working/in_'  + id + '.' + inputExt;
@@ -167,7 +213,12 @@
 				exitCode = Module.ccall('main1', 'number', ['string'], [paramsPath]);
 			} catch (e) {
 				cleanup();
-				return Promise.reject(new Error('x2t threw during main1: ' + e.message));
+				var crash = new Error('x2t threw during main1: ' + e.message);
+				return resetModule(Module).then(function () {
+					if (isRetry) throw crash;
+					log('warn', 'x2t crashed (' + e.message + '); retrying once on a fresh module');
+					return runConversion(inputBytes, inputExt, outputExt, true);
+				});
 			}
 			var t1 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
 			log('debug', 'main1 returned ' + exitCode + ' in ' + (t1 - t0).toFixed(0) + 'ms (id=' + id + ')');
@@ -192,6 +243,617 @@
 			copy.set(outputBytes);
 			cleanup();
 			return copy;
+		});
+	}
+
+	/**
+	 * Replace a crashed module with a fresh one.
+	 *
+	 * x2t's media live in the module's virtual FS (/working/media) from the
+	 * open conversion until the save conversion. A save without them silently
+	 * drops every image from the document, so they are carried over. The FS is
+	 * plain JS memory, so it is still readable after the WASM heap is corrupted.
+	 *
+	 * @param {Object} oldModule  the crashed module
+	 * @returns {Promise<Object>} the fresh module, with the media restored
+	 */
+	function resetModule(oldModule) {
+		var media = {};
+		try {
+			oldModule.FS.readdir('/working/media').forEach(function (name) {
+				if (name === '.' || name === '..') return;
+				var data = oldModule.FS.readFile('/working/media/' + name);
+				var copy = new Uint8Array(data.length);
+				copy.set(data);
+				media[name] = copy;
+			});
+		} catch (e) {
+			log('warn', 'resetModule: could not read old media: ' + e.message);
+		}
+
+		modulePromise = null;
+		_isReady = false;
+		// The new copy of x2t.js gets its own iframe (see _moduleHost). The
+		// previous reset's iframe goes, and the crashed heap with it. The first
+		// module lives in this page and cannot be unloaded; it is only dropped.
+		var previous = _moduleHost;
+		_moduleHost = createModuleFrame();
+		if (previous && previous.frame && previous.frame.parentNode) {
+			previous.frame.parentNode.removeChild(previous.frame);
+		}
+
+		return loadModule().then(function (Module) {
+			Object.keys(media).forEach(function (name) {
+				Module.FS.writeFile('/working/media/' + name, media[name]);
+			});
+			log('warn', 'x2t module reset; carried over ' + Object.keys(media).length + ' media files');
+			return Module;
+		});
+	}
+
+	// --------------------------------------------------------------
+	// OLE preview sanitizer (pptx)
+	// --------------------------------------------------------------
+	//
+	// x2t-wasm corrupts its heap while it converts an EMF/WMF preview of an
+	// OLE object to SVG. The trap surfaces as "memory access out of bounds",
+	// "table index is out of bounds" or "null function". Native x2t converts the
+	// same files fine. think-cell, embedded Excel sheets and Visio drawings all
+	// carry such previews.
+	//
+	// Before pptx -> bin, the relationship that points an OLE preview at an
+	// EMF/WMF is repointed at a transparent PNG added next to it. The OLE data
+	// itself, and the original EMF/WMF file, stay in the package. A visible OLE
+	// object then shows an empty frame instead of its preview; a think-cell data
+	// object is hidden and 0.04 mm wide, so nothing visible changes.
+
+	var OLE_PREVIEW_SUFFIX = '.sk-ole-preview.png';
+	var TRANSPARENT_PNG_B64 =
+		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=';
+
+	function base64ToBytes(b64) {
+		var bin = atob(b64);
+		var out = new Uint8Array(bin.length);
+		for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+		return out;
+	}
+
+	var _crcTable = null;
+	function crc32(bytes) {
+		if (!_crcTable) {
+			_crcTable = new Uint32Array(256);
+			for (var n = 0; n < 256; n++) {
+				var c = n;
+				for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+				_crcTable[n] = c >>> 0;
+			}
+		}
+		var crc = 0xFFFFFFFF;
+		for (var i = 0; i < bytes.length; i++) crc = _crcTable[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+		return (crc ^ 0xFFFFFFFF) >>> 0;
+	}
+
+	/**
+	 * Read a ZIP's entries from its central directory. Returns null for
+	 * anything this reader does not handle (ZIP64, encryption, damage); the
+	 * caller then leaves the file untouched.
+	 */
+	function readZip(bytes) {
+		var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+		var len = bytes.length;
+		if (len < 22) return null;
+		var eocd = -1;
+		for (var i = len - 22; i >= Math.max(0, len - 22 - 0xFFFF); i--) {
+			if (dv.getUint32(i, true) === 0x06054B50) { eocd = i; break; }
+		}
+		if (eocd < 0) return null;
+		var count = dv.getUint16(eocd + 10, true);
+		var cdOff = dv.getUint32(eocd + 16, true);
+		if (count === 0xFFFF || cdOff === 0xFFFFFFFF) return null;   // ZIP64
+
+		var decoder = new TextDecoder('utf-8');
+		var entries = [];
+		var p = cdOff;
+		for (var k = 0; k < count; k++) {
+			if (p + 46 > len || dv.getUint32(p, true) !== 0x02014B50) return null;
+			var flags = dv.getUint16(p + 8, true);
+			var csize = dv.getUint32(p + 20, true);
+			var usize = dv.getUint32(p + 24, true);
+			var nlen  = dv.getUint16(p + 28, true);
+			var xlen  = dv.getUint16(p + 30, true);
+			var clen  = dv.getUint16(p + 32, true);
+			var lho   = dv.getUint32(p + 42, true);
+			if (flags & 1) return null;                                    // encrypted
+			if (csize === 0xFFFFFFFF || usize === 0xFFFFFFFF || lho === 0xFFFFFFFF) return null;
+			if (lho + 30 > len || dv.getUint32(lho, true) !== 0x04034B50) return null;
+			var nameBytes = bytes.subarray(p + 46, p + 46 + nlen);
+			var dataStart = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true);
+			if (dataStart + csize > len) return null;
+			entries.push({
+				name:      decoder.decode(nameBytes),
+				nameBytes: nameBytes,
+				flags:     flags,
+				method:    dv.getUint16(p + 10, true),
+				time:      dv.getUint16(p + 12, true),
+				date:      dv.getUint16(p + 14, true),
+				crc:       dv.getUint32(p + 16, true),
+				csize:     csize,
+				usize:     usize,
+				data:      bytes.subarray(dataStart, dataStart + csize)
+			});
+			p += 46 + nlen + xlen + clen;
+		}
+		return entries;
+	}
+
+	/** Write entries as a new ZIP. Unchanged entries keep their compressed bytes. */
+	function writeZip(entries) {
+		var parts = [];
+		var central = [];
+		var offset = 0;
+		entries.forEach(function (e) {
+			var flags = e.flags & 0x0800;            // keep only the UTF-8 name flag
+			var lh = new Uint8Array(30 + e.nameBytes.length);
+			var lv = new DataView(lh.buffer);
+			lv.setUint32(0, 0x04034B50, true);
+			lv.setUint16(4, 20, true);
+			lv.setUint16(6, flags, true);
+			lv.setUint16(8, e.method, true);
+			lv.setUint16(10, e.time, true);
+			lv.setUint16(12, e.date, true);
+			lv.setUint32(14, e.crc, true);
+			lv.setUint32(18, e.csize, true);
+			lv.setUint32(22, e.usize, true);
+			lv.setUint16(26, e.nameBytes.length, true);
+			lv.setUint16(28, 0, true);
+			lh.set(e.nameBytes, 30);
+
+			var ch = new Uint8Array(46 + e.nameBytes.length);
+			var cv = new DataView(ch.buffer);
+			cv.setUint32(0, 0x02014B50, true);
+			cv.setUint16(4, 20, true);
+			cv.setUint16(6, 20, true);
+			cv.setUint16(8, flags, true);
+			cv.setUint16(10, e.method, true);
+			cv.setUint16(12, e.time, true);
+			cv.setUint16(14, e.date, true);
+			cv.setUint32(16, e.crc, true);
+			cv.setUint32(20, e.csize, true);
+			cv.setUint32(24, e.usize, true);
+			cv.setUint16(28, e.nameBytes.length, true);
+			cv.setUint32(42, offset, true);
+			ch.set(e.nameBytes, 46);
+
+			parts.push(lh, e.data);
+			central.push(ch);
+			offset += lh.length + e.data.length;
+		});
+
+		var cdSize = central.reduce(function (s, c) { return s + c.length; }, 0);
+		var eocd = new Uint8Array(22);
+		var ev = new DataView(eocd.buffer);
+		ev.setUint32(0, 0x06054B50, true);
+		ev.setUint16(8, entries.length, true);
+		ev.setUint16(10, entries.length, true);
+		ev.setUint32(12, cdSize, true);
+		ev.setUint32(16, offset, true);
+
+		var all = parts.concat(central, [eocd]);
+		var out = new Uint8Array(offset + cdSize + 22);
+		var pos = 0;
+		all.forEach(function (a) { out.set(a, pos); pos += a.length; });
+		return out;
+	}
+
+	function inflateRaw(data) {
+		var stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+		return new Response(stream).arrayBuffer().then(function (b) { return new Uint8Array(b); });
+	}
+
+	function entryText(e) {
+		var raw;
+		if (e.method === 0) raw = Promise.resolve(e.data);
+		else if (e.method === 8) raw = inflateRaw(e.data);
+		else return Promise.reject(new Error('unsupported ZIP method ' + e.method + ' for ' + e.name));
+		return raw.then(function (b) { return new TextDecoder('utf-8').decode(b); });
+	}
+
+	/** Make e a stored (uncompressed) entry holding bytes. */
+	function setEntryBytes(e, bytes) {
+		e.method = 0;
+		e.data   = bytes;
+		e.csize  = bytes.length;
+		e.usize  = bytes.length;
+		e.crc    = crc32(bytes);
+	}
+
+	function newEntry(name, bytes) {
+		var e = {
+			name:      name,
+			nameBytes: new TextEncoder().encode(name),
+			flags:     0x0800,
+			time:      0,
+			date:      (1 << 5) | 1                 // 1980-01-01
+		};
+		setEntryBytes(e, bytes);
+		return e;
+	}
+
+	function xmlAttr(tag, name) {
+		var m = tag.match(new RegExp('\\s' + name + '="([^"]*)"'));
+		return m ? m[1] : null;
+	}
+
+	/** Resolve a relationship Target against the part that owns the rels. */
+	function resolvePartPath(ownerName, target) {
+		if (target.charAt(0) === '/') return target.slice(1);
+		var segs = ownerName.split('/').slice(0, -1);
+		target.split('/').forEach(function (s) {
+			if (s === '..') segs.pop();
+			else if (s !== '.' && s !== '') segs.push(s);
+		});
+		return segs.join('/');
+	}
+
+	/** rIds of the preview images inside the part's OLE objects. */
+	function olePreviewRelIds(xml) {
+		var ids = {};
+		var oleRe  = /<(\w+:)?oleObj\b[^>]*?(?:\/>|>[\s\S]*?<\/\1oleObj>)/g;
+		var blipRe = /<(?:\w+:)?blip\b[^>]*?\s(?:\w+:)?embed="([^"]*)"/g;
+		var m, b;
+		while ((m = oleRe.exec(xml))) {
+			blipRe.lastIndex = 0;
+			while ((b = blipRe.exec(m[0]))) ids[b[1]] = true;
+		}
+		return ids;
+	}
+
+	/**
+	 * Repoint EMF/WMF previews of OLE objects in a pptx at a transparent PNG.
+	 *
+	 * @param {Uint8Array} bytes  the pptx
+	 * @returns {Promise<{bytes: Uint8Array, replaced: number}>}  the original
+	 *          bytes and replaced=0 when there is nothing to do or the package
+	 *          cannot be read
+	 */
+	function sanitizeOlePreviews(bytes) {
+		var untouched = { bytes: bytes, replaced: 0 };
+		if (typeof DecompressionStream === 'undefined') return Promise.resolve(untouched);
+		var entries = readZip(bytes);
+		if (!entries) return Promise.resolve(untouched);
+
+		var byName = {};
+		entries.forEach(function (e) { byName[e.name] = e; });
+		var relsEntries = entries.filter(function (e) {
+			return /^ppt\/(?:.+\/)?_rels\/[^\/]+\.rels$/.test(e.name);
+		});
+		var replaced = 0;
+		var newFiles = {};
+
+		var chain = relsEntries.reduce(function (prev, rels) {
+			return prev.then(function () {
+				return entryText(rels).then(function (relsXml) {
+					if (relsXml.indexOf('/oleObject"') < 0) return;
+					var ownerName = rels.name.replace(/_rels\/([^\/]+)\.rels$/, '$1');
+					var owner = byName[ownerName];
+					if (!owner) return;
+					return entryText(owner).then(function (ownerXml) {
+						var ids = olePreviewRelIds(ownerXml);
+						var changed = false;
+						var out = relsXml.replace(/<Relationship\b[^>]*>/g, function (tag) {
+							var target = xmlAttr(tag, 'Target');
+							if (!ids[xmlAttr(tag, 'Id')] || !target) return tag;
+							if (xmlAttr(tag, 'TargetMode') === 'External') return tag;
+							if (!/\.(emf|wmf)$/i.test(target)) return tag;
+							var newTarget = target.replace(/\.(emf|wmf)$/i, OLE_PREVIEW_SUFFIX);
+							newFiles[resolvePartPath(ownerName, newTarget)] = true;
+							replaced++;
+							changed = true;
+							return tag.replace('Target="' + target + '"', 'Target="' + newTarget + '"');
+						});
+						if (changed) setEntryBytes(rels, new TextEncoder().encode(out));
+					});
+				});
+			});
+		}, Promise.resolve());
+
+		return chain.then(function () {
+			if (!replaced) return untouched;
+
+			var png = base64ToBytes(TRANSPARENT_PNG_B64);
+			Object.keys(newFiles).forEach(function (name) {
+				if (!byName[name]) entries.push(newEntry(name, png));
+			});
+
+			var ct = byName['[Content_Types].xml'];
+			if (!ct) return untouched;
+			return entryText(ct).then(function (ctXml) {
+				if (!/<Default\b[^>]*\sExtension="png"/i.test(ctXml)) {
+					ctXml = ctXml.replace(/<Types\b[^>]*>/, function (open) {
+						return open + '<Default Extension="png" ContentType="image/png"/>';
+					});
+					setEntryBytes(ct, new TextEncoder().encode(ctXml));
+				}
+				log('info', 'replaced ' + replaced + ' EMF/WMF OLE preview(s) with a transparent PNG');
+				return { bytes: writeZip(entries), replaced: replaced };
+			});
+		}).catch(function (e) {
+			log('warn', 'OLE preview sanitizer skipped: ' + (e && e.message ? e.message : e));
+			return untouched;
+		});
+	}
+
+	// --------------------------------------------------------------
+	// SVG save shim (docx / xlsx / pptx)
+	// --------------------------------------------------------------
+	//
+	// OOXML stores an SVG picture twice: the SVG itself (asvg:svgBlip) and a
+	// raster fallback (a:blip). On save (bin -> OOXML) x2t draws that fallback
+	// from the SVG, and x2t-wasm traps while drawing it ("memory access out of
+	// bounds"), for every SVG. Native x2t saves the same files fine.
+	//
+	// So x2t never sees an SVG on save:
+	//   1. before the save, the browser draws each /working/media/*.svg into a
+	//      PNG, which replaces the SVG's bytes under the same name. Each PNG
+	//      carries a tEXt chunk "sk-svg-id" naming its original.
+	//   2. x2t saves; it copies that PNG into two parts per picture, both still
+	//      named .svg: imageN.svg (the fallback) and mediaM.svg (the svgBlip).
+	//   3. in the output, the svgBlip parts get their original SVG back, and the
+	//      fallbacks are renamed .png with their relationships repointed.
+	//   4. /working/media gets the original SVGs back for the next save.
+	// The result has the same shape native x2t writes: a real SVG plus a PNG
+	// fallback that the browser drew.
+
+	var SVG_TAG_KEYWORD  = 'sk-svg-id';
+	var SVG_RASTER_LONG  = 1024;      // fallback size of the long side, in px…
+	var SVG_RASTER_MAX   = 2048;      // …unless the SVG asks for more, up to this
+	var SVG_RASTER_TIMEOUT_MS = 10000;
+
+	function isPng(bytes) {
+		return bytes && bytes.length > 33 && bytes[0] === 0x89 && bytes[1] === 0x50 &&
+			bytes[2] === 0x4E && bytes[3] === 0x47;
+	}
+
+	function pngChunk(type, data) {
+		var typeBytes = new TextEncoder().encode(type);
+		var out = new Uint8Array(12 + data.length);
+		var dv = new DataView(out.buffer);
+		dv.setUint32(0, data.length);
+		out.set(typeBytes, 4);
+		out.set(data, 8);
+		var crcInput = new Uint8Array(4 + data.length);
+		crcInput.set(typeBytes, 0);
+		crcInput.set(data, 4);
+		dv.setUint32(8 + data.length, crc32(crcInput));
+		return out;
+	}
+
+	/** Insert a tEXt chunk "sk-svg-id\0<id>" right after IHDR. */
+	function tagPng(png, id) {
+		var text = new TextEncoder().encode(SVG_TAG_KEYWORD + '\u0000' + id);
+		var chunk = pngChunk('tEXt', text);
+		var ihdrEnd = 8 + 12 + 13;                       // signature + IHDR chunk
+		var out = new Uint8Array(png.length + chunk.length);
+		out.set(png.subarray(0, ihdrEnd), 0);
+		out.set(chunk, ihdrEnd);
+		out.set(png.subarray(ihdrEnd), ihdrEnd + chunk.length);
+		return out;
+	}
+
+	/** The id from a tagged PNG, or null. */
+	function readPngTag(bytes) {
+		if (!isPng(bytes)) return null;
+		var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+		var p = 8;
+		var prefix = SVG_TAG_KEYWORD + '\u0000';
+		for (var n = 0; n < 64 && p + 12 <= bytes.length; n++) {
+			var len  = dv.getUint32(p);
+			var type = String.fromCharCode(bytes[p + 4], bytes[p + 5], bytes[p + 6], bytes[p + 7]);
+			if (type === 'IEND' || p + 12 + len > bytes.length) return null;
+			if (type === 'tEXt') {
+				var text = new TextDecoder('latin1').decode(bytes.subarray(p + 8, p + 8 + len));
+				if (text.indexOf(prefix) === 0) return text.slice(prefix.length);
+			}
+			p += 12 + len;
+		}
+		return null;
+	}
+
+	/** Pixel size for an SVG's raster fallback: its own aspect, long side 1024–2048. */
+	function svgRasterSize(svgText) {
+		var root = (svgText.match(/<svg\b[^>]*>/i) || [''])[0];
+		var num = function (v) { var f = parseFloat(v); return isFinite(f) && f > 0 ? f : 0; };
+		var w = num(xmlAttr(root, 'width'));
+		var h = num(xmlAttr(root, 'height'));
+		var vb = (xmlAttr(root, 'viewBox') || '').trim().split(/[\s,]+/).map(parseFloat);
+		if ((!w || !h) && vb.length === 4 && vb[2] > 0 && vb[3] > 0) { w = vb[2]; h = vb[3]; }
+		if (!w || !h) { w = 300; h = 150; }
+		var long = Math.max(w, h);
+		var target = Math.min(SVG_RASTER_MAX, Math.max(SVG_RASTER_LONG, long));
+		var s = target / long;
+		return { width: Math.max(1, Math.round(w * s)), height: Math.max(1, Math.round(h * s)) };
+	}
+
+	/** Draw an SVG into a PNG with the browser's own renderer. */
+	function browserRasterizeSvg(svgBytes) {
+		if (typeof document === 'undefined' || typeof Image === 'undefined') {
+			return Promise.reject(new Error('no DOM to draw SVG'));
+		}
+		var size = svgRasterSize(new TextDecoder('utf-8').decode(svgBytes));
+		var url = URL.createObjectURL(new Blob([svgBytes], { type: 'image/svg+xml' }));
+		return new Promise(function (resolve, reject) {
+			var img = new Image();
+			var timer = setTimeout(function () { reject(new Error('SVG draw timed out')); }, SVG_RASTER_TIMEOUT_MS);
+			img.onload = function () {
+				clearTimeout(timer);
+				try {
+					var canvas = document.createElement('canvas');
+					canvas.width = size.width;
+					canvas.height = size.height;
+					canvas.getContext('2d').drawImage(img, 0, 0, size.width, size.height);
+					canvas.toBlob(function (blob) {
+						if (!blob) { reject(new Error('canvas.toBlob returned nothing')); return; }
+						blob.arrayBuffer().then(function (b) { resolve(new Uint8Array(b)); }, reject);
+					}, 'image/png');
+				} catch (e) { reject(e); }
+			};
+			img.onerror = function () { clearTimeout(timer); reject(new Error('the browser could not draw this SVG')); };
+			img.src = url;
+		}).then(function (png) {
+			URL.revokeObjectURL(url);
+			return png;
+		}, function (e) {
+			URL.revokeObjectURL(url);
+			throw e;
+		});
+	}
+
+	/**
+	 * Step 1: replace every /working/media/*.svg with a tagged PNG.
+	 * @returns {Promise<{originals: Object, count: number}>}  originals: id → {name, bytes}
+	 */
+	function prepareSvgMediaForSave(Module) {
+		var state = { originals: {}, count: 0 };
+		var names;
+		try {
+			names = Module.FS.readdir('/working/media').filter(function (n) { return /\.svg$/i.test(n); });
+		} catch (e) {
+			return Promise.resolve(state);
+		}
+		var rasterize = config.rasterizeSvg || browserRasterizeSvg;
+
+		return names.reduce(function (prev, name) {
+			return prev.then(function () {
+				var path = '/working/media/' + name;
+				var data = Module.FS.readFile(path);
+				if (isPng(data)) return;                          // already swapped
+				var svg = new Uint8Array(data.length);
+				svg.set(data);
+				var id = String(++state.count);
+				return Promise.resolve().then(function () { return rasterize(svg); }).then(function (png) {
+					if (!isPng(png)) throw new Error('the rasterizer did not return a PNG');
+					return png;
+				}).catch(function (e) {
+					log('warn', 'SVG ' + name + ' drawn as a blank fallback: ' + (e && e.message ? e.message : e));
+					return base64ToBytes(TRANSPARENT_PNG_B64);
+				}).then(function (png) {
+					state.originals[id] = { name: name, bytes: svg };
+					Module.FS.writeFile(path, tagPng(png, id));
+				});
+			});
+		}, Promise.resolve()).then(function () { return state; });
+	}
+
+	/** Step 4: put the original SVGs back into the current module's media. */
+	function restoreSvgMedia(state) {
+		if (!state || !state.count) return Promise.resolve();
+		return loadModule().then(function (Module) {
+			Object.keys(state.originals).forEach(function (id) {
+				var o = state.originals[id];
+				try { Module.FS.writeFile('/working/media/' + o.name, o.bytes); }
+				catch (e) { log('warn', 'could not restore ' + o.name + ': ' + e.message); }
+			});
+		});
+	}
+
+	function entryBytes(e) {
+		if (e.method === 0) return Promise.resolve(e.data);
+		if (e.method === 8) return inflateRaw(e.data);
+		return Promise.reject(new Error('unsupported ZIP method ' + e.method + ' for ' + e.name));
+	}
+
+	/**
+	 * Step 3: give the svgBlip parts their SVG back and turn the fallbacks into
+	 * .png parts. Throws if the output cannot be read: a document with PNG
+	 * bytes inside .svg parts must not be saved.
+	 */
+	function fixSvgMediaInOutput(zipBytes, state) {
+		var entries = readZip(zipBytes);
+		if (!entries) return Promise.reject(new Error('cannot read the saved OOXML package'));
+		var byName = {};
+		entries.forEach(function (e) { byName[e.name] = e; });
+
+		var tagged = {};      // part name → original {name, bytes}
+		var relsEntries = entries.filter(function (e) { return /(^|\/)_rels\/[^\/]+\.rels$/.test(e.name); });
+		var svgCandidates = entries.filter(function (e) { return /\.svg$/i.test(e.name); });
+
+		return svgCandidates.reduce(function (prev, e) {
+			return prev.then(function () {
+				return entryBytes(e).then(function (b) {
+					var id = readPngTag(b);
+					if (id && state.originals[id]) tagged[e.name] = state.originals[id];
+				});
+			});
+		}, Promise.resolve()).then(function () {
+			if (!Object.keys(tagged).length) return zipBytes;
+
+			// Which parts are the targets of an svgBlip?
+			var svgBlipTargets = {};
+			var relsXml = {};
+			return relsEntries.reduce(function (prev, rels) {
+				return prev.then(function () {
+					return entryText(rels).then(function (xml) {
+						relsXml[rels.name] = xml;
+						var ownerName = rels.name.replace(/_rels\/([^\/]+)\.rels$/, '$1');
+						var owner = byName[ownerName];
+						if (!owner || !/\.xml$/i.test(ownerName)) return;
+						return entryText(owner).then(function (ownerXml) {
+							if (ownerXml.indexOf('svgBlip') < 0) return;
+							var ids = {};
+							var re = /<(?:\w+:)?svgBlip\b[^>]*?\s(?:\w+:)?embed="([^"]*)"/g;
+							var m;
+							while ((m = re.exec(ownerXml))) ids[m[1]] = true;
+							(xml.match(/<Relationship\b[^>]*>/g) || []).forEach(function (tag) {
+								if (ids[xmlAttr(tag, 'Id')]) {
+									svgBlipTargets[resolvePartPath(ownerName, xmlAttr(tag, 'Target') || '')] = true;
+								}
+							});
+						});
+					});
+				});
+			}, Promise.resolve()).then(function () {
+				var renamed = {};      // old part name → suffix that replaces ".svg"
+				Object.keys(tagged).forEach(function (name) {
+					var e = byName[name];
+					if (svgBlipTargets[name]) {
+						setEntryBytes(e, tagged[name].bytes);
+						return;
+					}
+					var suffix = byName[name.replace(/\.svg$/i, '.png')] ? '.sk-fallback.png' : '.png';
+					e.name = name.replace(/\.svg$/i, suffix);
+					e.nameBytes = new TextEncoder().encode(e.name);
+					renamed[name] = suffix;
+				});
+
+				relsEntries.forEach(function (rels) {
+					var ownerName = rels.name.replace(/_rels\/([^\/]+)\.rels$/, '$1');
+					var changed = false;
+					var out = relsXml[rels.name].replace(/<Relationship\b[^>]*>/g, function (tag) {
+						var target = xmlAttr(tag, 'Target');
+						if (!target || xmlAttr(tag, 'TargetMode') === 'External') return tag;
+						var suffix = renamed[resolvePartPath(ownerName, target)];
+						if (!suffix) return tag;
+						changed = true;
+						return tag.replace('Target="' + target + '"', 'Target="' + target.replace(/\.svg$/i, suffix) + '"');
+					});
+					if (changed) setEntryBytes(rels, new TextEncoder().encode(out));
+				});
+
+				var ct = byName['[Content_Types].xml'];
+				if (!ct) throw new Error('the saved package has no [Content_Types].xml');
+				return entryText(ct).then(function (ctXml) {
+					var add = '';
+					if (!/<Default\b[^>]*\sExtension="png"/i.test(ctXml)) add += '<Default Extension="png" ContentType="image/png"/>';
+					if (!/<Default\b[^>]*\sExtension="svg"/i.test(ctXml)) add += '<Default Extension="svg" ContentType="image/svg+xml"/>';
+					if (add) {
+						ctXml = ctXml.replace(/<Types\b[^>]*>/, function (open) { return open + add; });
+						setEntryBytes(ct, new TextEncoder().encode(ctXml));
+					}
+					log('info', 'SVG save: restored ' + (Object.keys(tagged).length - Object.keys(renamed).length) +
+						' SVG part(s), wrote ' + Object.keys(renamed).length + ' PNG fallback(s)');
+					return writeZip(entries);
+				});
+			});
 		});
 	}
 
@@ -352,9 +1014,15 @@
 		var bytes = (input instanceof Uint8Array) ? input : new Uint8Array(input);
 		var ext = getExt(fileName) || 'docx';
 		log('debug', 'convertToBin: ' + fileName + ' (' + bytes.length + ' bytes, ext=' + ext + ')');
+		// pptx only: OLE previews in EMF/WMF crash x2t-wasm (see the sanitizer).
+		var prepared = /^(pptx|pptm|ppsx|ppsm|potx|potm)$/.test(ext)
+			? sanitizeOlePreviews(bytes).then(function (r) { return r.bytes; })
+			: Promise.resolve(bytes);
 		// Run conversion, then extract media from /working/media/ before the FS
 		// gets reused on the next conversion. Media survive as Blob URLs.
-		return runConversion(bytes, ext, 'bin').then(function (out) {
+		return prepared.then(function (input) {
+			return runConversion(input, ext, 'bin');
+		}).then(function (out) {
 			return loadModule().then(function (Module) {
 				extractMediaFromFs(Module);
 				return out;
@@ -375,6 +1043,33 @@
 	}
 
 	/**
+	 * Put a file into x2t's /working/media, the way the open conversion does
+	 * for a document's own images, and return a blob URL for it.
+	 *
+	 * The editor inserts a picked image as a data: URL, which reaches the save
+	 * inside the bin, past /working/media and so past the SVG save shim. An
+	 * inserted SVG goes through here instead: registered as media/<name>, the
+	 * bin references it by name, and the save reads it from /working/media.
+	 *
+	 * @param {string}     name   file name, e.g. "sk-inserted-1.svg"
+	 * @param {Uint8Array} bytes
+	 * @param {string}     mime   e.g. "image/svg+xml"
+	 * @returns {Promise<string>} blob URL, also listed by getLastMedia()
+	 */
+	function addMedia(name, bytes, mime) {
+		var data = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
+		return loadModule().then(function (Module) {
+			Module.FS.writeFile('/working/media/' + name, data);
+			var copy = new Uint8Array(data.length);
+			copy.set(data);
+			var url = URL.createObjectURL(new Blob([copy], { type: mime || 'application/octet-stream' }));
+			_lastMedia[name] = url;
+			log('debug', 'addMedia: ' + name + ' (' + data.length + ' bytes)');
+			return url;
+		});
+	}
+
+	/**
 	 * Convert Editor.bin back to a target OOXML/ODF format.
 	 *
 	 * @param {Uint8Array | ArrayBuffer} input         Editor.bin bytes
@@ -384,7 +1079,18 @@
 	function convertFromBin(input, outputExt) {
 		var bytes = (input instanceof Uint8Array) ? input : new Uint8Array(input);
 		log('debug', 'convertFromBin: ' + bytes.length + ' bytes -> .' + outputExt);
-		return runConversion(bytes, 'bin', outputExt);
+		// SVG media go through the save shim (see "SVG save shim").
+		var state = null;
+		return loadModule().then(prepareSvgMediaForSave).then(function (s) {
+			state = s;
+			return runConversion(bytes, 'bin', outputExt);
+		}).then(function (out) {
+			return state.count ? fixSvgMediaInOutput(out, state) : out;
+		}).then(function (out) {
+			return restoreSvgMedia(state).then(function () { return out; });
+		}, function (err) {
+			return restoreSvgMedia(state).then(function () { throw err; });
+		});
 	}
 
 	/**
@@ -459,6 +1165,8 @@
 	 *   - wasmDir: directory containing x2t.js and x2t.wasm (default './x2t/')
 	 *   - jsUrl:   override URL for x2t.js (rare)
 	 *   - verbose: enable console.debug logging
+	 *   - rasterizeSvg: (svgBytes) => Promise<pngBytes>, draws the PNG fallback
+	 *                   of an SVG on save (default: the browser's renderer)
 	 */
 	function configure(opts) {
 		opts = opts || {};
@@ -467,6 +1175,7 @@
 		}
 		if (typeof opts.jsUrl === 'string') config.jsUrl = opts.jsUrl;
 		if (typeof opts.verbose === 'boolean') config.verbose = opts.verbose;
+		if (typeof opts.rasterizeSvg === 'function') config.rasterizeSvg = opts.rasterizeSvg;
 	}
 
 	/**
@@ -490,7 +1199,7 @@
 	var _origLoadModule = loadModule;
 	loadModule = function () {
 		var p = _origLoadModule();
-		p.then(function () { _isReady = true; });
+		p.then(function () { _isReady = true; }, function () { /* the caller handles it */ });
 		return p;
 	};
 
@@ -509,7 +1218,16 @@
 		getBinVersion:   getBinVersion,
 		patchBinVersion: patchBinVersion,
 		getExt:          getExt,
-		getLastMedia:    getLastMedia
+		getLastMedia:    getLastMedia,
+		sanitizeOlePreviews: sanitizeOlePreviews,
+		addMedia:        addMedia,
+		// The SVG save shim's steps, for tests against a headless x2t.
+		_svgSave: {
+			prepare: prepareSvgMediaForSave,
+			fixOutput: fixSvgMediaInOutput,
+			readPngTag: readPngTag,
+			rasterSize: svgRasterSize
+		}
 	};
 
 	if (typeof module !== 'undefined' && module.exports) {

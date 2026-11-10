@@ -904,11 +904,15 @@
 
           if (descriptions[1] && isLargeFile) {
               descriptions[1].innerHTML = 'Currently, this document <strong>cannot be edited</strong> (over the 10 MB limit).';
+          } else if (descriptions[1] && pm.isExternal) {
+              descriptions[1].innerText = 'Editing is restricted for this document.';
           }
 
           if (descriptions[2] && isLargeFile) {
               descriptions[2].innerHTML = 'Large documents will be supported soon.';
               descriptions[2].style.color = '#2FA0AF';
+          } else if (descriptions[2] && pm.isExternal) {
+              descriptions[2].innerHTML = 'To get <strong>Editing Access</strong>, contact the person who shared this link.';
           }
 
           window.modalManager.show('view-only-mode');
@@ -1462,7 +1466,7 @@
       /* Sharekey header logo (customization.logo): Header.setBranding writes an
          inline `max-height:20px` on the <img>, so !important is required to bump
          it to the logo's native 24px. */
-      '#header-logo{cursor: pointer; padding-right: 17px !important;}',
+      '#header-logo{cursor: pointer; padding: 4px 12px 0 14px !important;}',
       '#header-logo img{max-height:24px !important;}',
       /* Remove the "From Text/CSV" group from the xlsx Data tab. The button slot
          (#slot-btn-data-from-text) has no data-layout-name, so the layout config

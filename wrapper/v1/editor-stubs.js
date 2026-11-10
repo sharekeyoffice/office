@@ -356,6 +356,27 @@
         }
       };
     }
+
+    if (typeof TM.Measure === 'function') {
+      var origMeasureText = TM.Measure;
+      TM.Measure = function (text) {
+        try {
+          return origMeasureText.call(this, text);
+        } catch (e) {
+          return { Width: 0, Height: 0 };
+        }
+      };
+    }
+    if (typeof TM.Measure2 === 'function') {
+      var origMeasure2Text = TM.Measure2;
+      TM.Measure2 = function (text) {
+        try {
+          return origMeasure2Text.call(this, text);
+        } catch (e) {
+          return { Width: 0, Ascent: 0, Height: 0, WidthG: 0, rasterOffsetX: 0, rasterOffsetY: 0 };
+        }
+      };
+    }
     TM.__measureGuardInstalled = true;
     log('CTextMeasurer.MeasureCode guarded');
     return true;
@@ -1032,6 +1053,42 @@
     });
   }
 
+  // An inserted SVG cannot stay a data: URL. x2t-wasm traps drawing an SVG's
+  // PNG fallback on save, and the bridge only works around that for SVGs in
+  var insertedSvgCount = 0;
+
+  function isSvgFile(file) {
+    return file && (/^image\/svg\+xml$/i.test(file.type || '') || /\.svg$/i.test(file.name || ''));
+  }
+
+  function wrapperBridge() {
+    try {
+      var p = window.parent;
+      return (p && p !== window && p.X2TBridge && typeof p.X2TBridge.addMedia === 'function') ? p.X2TBridge : null;
+    } catch (e) {
+      return null;     // cross-origin parent
+    }
+  }
+
+  function readFileAsMediaUrl(file) {
+    var bridge = wrapperBridge();
+    var urls = window.AscCommon && window.AscCommon.g_oDocumentUrls;
+    if (!isSvgFile(file) || !bridge || !urls || typeof urls.addImageUrl !== 'function') {
+      return readFileAsDataURL(file);
+    }
+    var name = 'sk-inserted-' + Date.now().toString(36) + '-' + (++insertedSvgCount) + '.svg';
+    return file.arrayBuffer().then(function (buf) {
+      return bridge.addMedia(name, new Uint8Array(buf), 'image/svg+xml');
+    }).then(function (url) {
+      urls.addImageUrl(name, url);
+      log('UploadImageFiles (local): SVG → media/' + name);
+      return url;
+    }).catch(function (e) {
+      log('UploadImageFiles (local): SVG media path failed (' + (e && e.message) + '), using a data: URL');
+      return readFileAsDataURL(file);
+    });
+  }
+
   function patchUploadImageFiles() {
     var AscCommon = window.AscCommon;
     if (!AscCommon || typeof AscCommon.UploadImageFiles !== 'function') return false;
@@ -1049,7 +1106,7 @@
       var list = [];
       for (var i = 0; i < files.length; i++) list.push(files[i]);
 
-      Promise.all(list.map(readFileAsDataURL)).then(function (urls) {
+      Promise.all(list.map(readFileAsMediaUrl)).then(function (urls) {
         log('UploadImageFiles (local): ' + urls.length + ' image(s) → data: URL');
         callback(No, urls);
       }).catch(function (e) {
@@ -1208,6 +1265,16 @@
     if (!api || !dh.permissions || typeof api.asc_checkNeedCallback !== 'function') return false;
     if (dh.permissions.isEdit !== true) return false;                     // edit capability off → nothing to do
     if (!api.asc_checkNeedCallback('asc_onHyperlinkClick')) return false; // setEvents hasn't run → don't pre-empt it
+
+    // view-first boot can return from FormulaDialog.setApi before binding its tab.
+    var formulaController = ns.controllers.FormulaDialog;
+    var formulaTab = formulaController && formulaController.formulaTab;
+    var needsFormulaTabApi = formulaTab && typeof formulaTab.setApi === 'function' && formulaTab.api !== api;
+
+    if (needsFormulaTabApi) {
+      formulaTab.setApi(api);
+    }
+
     if (api.asc_checkNeedCallback('asc_onSetAFDialog')) return true;      // already present → no duplicate
     function reg(name, fn) {
       if (typeof fn === 'function') api.asc_registerCallback(name, fn.bind(dh));

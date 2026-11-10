@@ -232,7 +232,7 @@
 
       warning.innerHTML =
           '<span class="cm-footnote" style="color: #FF274B">' +
-          'The latest changes made in this document could NOT be saved' +
+          'The latest changes made in this document could NOT be saved ' +
           'and will be lost if you close this ' + closeTarget + '.</span> ' +
           'They will be saved if the connection is restored.';
 
