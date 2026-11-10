@@ -199,6 +199,7 @@
         }
 
         image.id = String(drawing.docPr.id);
+        image.position = { x: drawing.GraphicObj.x, y: drawing.GraphicObj.y };
         images.push(image);
       });
     }
@@ -339,6 +340,65 @@
     graphicData.setAttribute("uri", namespaces.pic);
 
     return drawingCopy;
+  }
+
+  function createQuickLookWordPreview(xmlDocument, preview, image) {
+    const hasPagePosition = image.position &&
+      Number.isFinite(image.position.x) &&
+      Number.isFinite(image.position.y);
+
+    if (!hasPagePosition) {
+      return null;
+    }
+
+    const quickLookPreview = preview.cloneNode(true);
+    const originalContainer = quickLookPreview.firstElementChild;
+    const anchor = createElement(xmlDocument, "wp", "anchor", {
+      distT: "0",
+      distB: "0",
+      distL: "0",
+      distR: "0",
+      simplePos: "0",
+      relativeHeight: "0",
+      behindDoc: "0",
+      locked: "0",
+      layoutInCell: "1",
+      allowOverlap: "1"
+    });
+
+    anchor.append(createElement(xmlDocument, "wp", "simplePos", { x: "0", y: "0" }));
+
+    const pageCoordinates = [["H", image.position.x], ["V", image.position.y]];
+
+    for (const [axis, coordinate] of pageCoordinates) {
+      const position = createElement(xmlDocument, "wp", "position" + axis, {
+        relativeFrom: "page"
+      });
+      const offset = createElement(xmlDocument, "wp", "posOffset");
+      offset.textContent = String(Math.round(coordinate * 36e3));
+      position.append(offset);
+      anchor.append(position);
+    }
+
+    const anchorChildren = [
+      "extent", "effectExtent", "wrapNone", "docPr", "cNvGraphicFramePr", "graphic"
+    ];
+
+    for (const name of anchorChildren) {
+      const child = Array.from(originalContainer.children).find(function (element) {
+        return element.localName === name;
+      });
+
+      if (name === "wrapNone") {
+        anchor.append(createElement(xmlDocument, "wp", "wrapNone"));
+      } else if (child) {
+        anchor.append(child);
+      }
+    }
+
+    originalContainer.replaceWith(anchor);
+
+    return quickLookPreview;
   }
 
   function resolvePartPath(basePath, targetPath) {
@@ -647,12 +707,49 @@
             preview = anchor;
           }
 
-          // Keep the editable object in Choice and expose the bitmap only as its fallback.
+          const quickLookPreview = isWordDocument
+            ? createQuickLookWordPreview(partDocument, preview, image)
+            : null;
+
+          if (isWordDocument) {
+            if (quickLookPreview) {
+              const properties = quickLookPreview.getElementsByTagNameNS(
+                namespaces.wp,
+                "docPr"
+              )[0];
+
+              properties.setAttribute("id", String(++nextDrawingId));
+              properties.setAttribute("hidden", "1");
+
+              // OnlyOffice drops hidden drawings on import; Quick Look still displays them.
+              insertionNode.parentNode.insertBefore(quickLookPreview, insertionNode);
+            } else {
+              logSkippedPreview("Word preview page position is unavailable", {
+                format: snapshot.format,
+                part: partPath,
+                drawingId: image.id
+              });
+            }
+          }
+
+          // Require Word shape support so Quick Look uses the separate PNG without duplicates.
+          const requiredPrefix = quickLookPreview ? "wps" : "a14";
           const canReuseAlternateContent = isWordDocument &&
             insertionNode.namespaceURI === namespaces.mc &&
             insertionNode.localName === "AlternateContent";
 
           if (canReuseAlternateContent) {
+            if (quickLookPreview) {
+              const choice = drawing.parentNode;
+
+              choice.setAttribute("Requires", requiredPrefix);
+              choice.setAttributeNS(
+                "http://www.w3.org/2000/xmlns/",
+                "xmlns:" + requiredPrefix,
+                namespaces[requiredPrefix]
+              );
+            }
+
             let fallback = Array.from(insertionNode.children).find(function (childNode) {
               return childNode.namespaceURI === namespaces.mc &&
                 childNode.localName === "Fallback";
@@ -668,11 +765,13 @@
             const alternateContent = createElement(partDocument, "mc", "AlternateContent");
             alternateContent.setAttributeNS(
               "http://www.w3.org/2000/xmlns/",
-              "xmlns:a14",
-              namespaces.a14
+              "xmlns:" + requiredPrefix,
+              namespaces[requiredPrefix]
             );
 
-            const choice = createElement(partDocument, "mc", "Choice", { Requires: "a14" });
+            const choice = createElement(partDocument, "mc", "Choice", {
+              Requires: requiredPrefix
+            });
             const fallback = createElement(partDocument, "mc", "Fallback");
 
             insertionNode.parentNode.insertBefore(alternateContent, insertionNode);
