@@ -197,6 +197,7 @@
       }
 
       var binBytes;
+      var objectPreview;
 
       try {
         if (!self.commitActiveSpreadsheetCell()) {
@@ -204,6 +205,10 @@
         }
 
         binBytes = capture();
+
+        if (['docx', 'pptx', 'xlsx'].includes(ext) && global.OfficePreview) {
+          objectPreview = global.OfficePreview.capture(iframe.contentWindow, ext);
+        }
       } catch (e) {
         throw new Error('failed to capture current editor state: ' + (e && e.message ? e.message : e));
       }
@@ -226,7 +231,12 @@
 
       log('download current file: format=' + ext);
 
-      return x2t.convertFromBin(binBytes, ext);
+      return x2t.convertFromBin(binBytes, ext)
+          .then(function (bytes) {
+            return objectPreview ?
+                global.OfficePreview.apply(bytes, objectPreview, iframe.contentWindow) :
+                bytes;
+          });
     }).then(function (fileBytes) {
       if (!fileBytes || typeof fileBytes.length !== 'number' || fileBytes.length === 0) {
         throw new Error('converted file is empty');
@@ -957,9 +967,13 @@
     }
 
     var binBytes;
+    var objectPreview;
 
     try {
       binBytes = capture();
+      if (['docx', 'pptx', 'xlsx'].includes(ext) && global.OfficePreview) {
+        objectPreview = global.OfficePreview.capture(iframe.contentWindow, ext);
+      }
     } catch (e) {
       self.setSaveState('error');
       self.error('SERIALIZE_FAILED', e.message, saveId);
@@ -984,7 +998,9 @@
     self.pendingSaveId      = saveId;
     self.editedSincePending = false;
 
-    x2t.convertFromBin(binBytes, ext).then(function (ooxmlBytes) {
+    x2t.convertFromBin(binBytes, ext).then(function (bytes) {
+      return objectPreview ? global.OfficePreview.apply(bytes, objectPreview, iframe.contentWindow) : bytes;
+    }).then(function (ooxmlBytes) {
       var fileName = (self._lastFileName || 'document').replace(/\.[^.]+$/, '') + '.' + ext;
       log('saved ' + fileName + ' (' + ooxmlBytes.length + ' bytes) saveId=' + saveId);
 
