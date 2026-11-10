@@ -1265,6 +1265,16 @@
     if (!api || !dh.permissions || typeof api.asc_checkNeedCallback !== 'function') return false;
     if (dh.permissions.isEdit !== true) return false;                     // edit capability off → nothing to do
     if (!api.asc_checkNeedCallback('asc_onHyperlinkClick')) return false; // setEvents hasn't run → don't pre-empt it
+
+    // view-first boot can return from FormulaDialog.setApi before binding its tab.
+    var formulaController = ns.controllers.FormulaDialog;
+    var formulaTab = formulaController && formulaController.formulaTab;
+    var needsFormulaTabApi = formulaTab && typeof formulaTab.setApi === 'function' && formulaTab.api !== api;
+
+    if (needsFormulaTabApi) {
+      formulaTab.setApi(api);
+    }
+
     if (api.asc_checkNeedCallback('asc_onSetAFDialog')) return true;      // already present → no duplicate
     function reg(name, fn) {
       if (typeof fn === 'function') api.asc_registerCallback(name, fn.bind(dh));
