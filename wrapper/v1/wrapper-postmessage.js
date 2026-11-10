@@ -1079,7 +1079,7 @@
 
     // If a save is in flight and the user keeps editing, mark the upload
     // as "stale" so a successful save-ack doesn't wrongly clear our
-    // save-state indicator.
+    // saved state.
     if (isDirty && self.pendingSaveId) {
       self.editedSincePending = true;
     }
@@ -1367,9 +1367,9 @@
     return !!fallbackEdited;
   };
 
-  // Single funnel for the save lifecycle. Drives (1) our injected diskette
-  // button (wrapper-mount.js owns it via window.skSetSaveState) and (2) the
-  // legacy bottom-right text indicator. Because every save path — manual click,
+  // Single funnel for the save lifecycle. Drives our injected diskette
+  // button (wrapper-mount.js owns it via window.skSetSaveState).
+  // Because every save path — manual click,
   // autosave timer, tab-hide, edit-mode-off — runs through captureAndSend /
   // onSaveAck, the diskette always mirrors the true state.
   // States: 'idle' | 'dirty' | 'saving' | 'saved' | 'error'.
@@ -1378,23 +1378,6 @@
     if (typeof window.skSetSaveState === 'function') {
       window.skSetSaveState(state);
     }
-
-    // Legacy text indicator — no-op if absent (e.g. standalone test page).
-    var el = document.getElementById('save-state');
-
-    if (!el) {
-      return;
-    }
-
-    el.dataset.state = state;
-    var text;
-    switch (state) {
-      case 'saving': text = 'Saving…';                   break;
-      case 'saved':  text = 'All changes saved';         break;
-      case 'error':  text = 'Couldn’t save — retrying'; break;
-      default:       text = '';                          // 'idle' / 'dirty' → no text
-    }
-    el.textContent = text;
   };
 
   global.WrapperPostMessage = WrapperPostMessage;
