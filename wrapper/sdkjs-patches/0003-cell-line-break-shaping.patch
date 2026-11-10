@@ -1,7 +1,17 @@
 diff --git a/cell/view/StringRender.js b/cell/view/StringRender.js
 --- a/cell/view/StringRender.js
 +++ b/cell/view/StringRender.js
-@@ -172,7 +172,10 @@
+@@ -153,7 +153,8 @@
+ 		FragmentShaper.prototype.constructor = FragmentShaper;
+ 		FragmentShaper.prototype.GetCodePoint = function(oItem)
+ 		{
+-			return oItem.char;
++			const isTab = oItem.char === 0x9;
++			return isTab ? 0x20 : oItem.char;
+ 		};
+ 		FragmentShaper.prototype.GetTextScript = function(nUnicode)
+ 		{
+@@ -172,7 +173,10 @@
  				let isNL = stringRenderer.codesHypNL[char];
  				let isSP = !isNL ? stringRenderer.codesHypSp[char] : false;
  
