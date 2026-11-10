@@ -20,13 +20,21 @@
 
   const zipLoadPromises = new WeakMap();
 
-  function renderPreview(graphicObject) {
+  function logSkippedPreview(reason, context) {
+    console.warn("[office-preview] " + reason, context);
+  }
+
+  function renderPreview(graphicObject, context) {
     const canRenderPreview = graphicObject && (
       (graphicObject.isShape && graphicObject.isShape()) ||
       (graphicObject.isChart && graphicObject.isChart())
     );
 
     if (!canRenderPreview) {
+      if (!graphicObject) {
+        logSkippedPreview("Missing graphic object", context);
+      }
+
       return null;
     }
 
@@ -35,6 +43,8 @@
       const isPngImage = /^data:image\/png;base64,/.test(imageDataUrl);
 
       if (!isPngImage) {
+        logSkippedPreview("Preview renderer returned a non-PNG image", context);
+
         return null;
       }
 
@@ -51,8 +61,8 @@
           height: drawingBounds.b - drawingBounds.t
         } : null
       };
-    } catch (_) {
-      console.warn("[office-preview] Object preview could not be rendered");
+    } catch (error) {
+      logSkippedPreview("Object preview could not be rendered", { ...context, error });
 
       return null;
     }
@@ -69,29 +79,42 @@
     const canCaptureSpreadsheet = format === "xlsx" && editorApi && editorApi.wb;
 
     if (canCaptureSpreadsheet) {
-      editorApi.wb.model.aWorksheets.forEach(function (worksheet) {
-        worksheet.Drawings.forEach(function (drawing) {
+      editorApi.wb.model.aWorksheets.forEach(function (worksheet, sheetIndex) {
+        worksheet.Drawings.forEach(function (drawing, drawingIndex) {
           const graphicObject = drawing.graphicObject;
           const nonVisualProperties = graphicObject.getUniNvProps &&
             graphicObject.getUniNvProps();
-          const isHiddenOrMissingProperties = !nonVisualProperties ||
-            !nonVisualProperties.cNvPr ||
-            nonVisualProperties.cNvPr.isHidden;
+          const drawingProperties = nonVisualProperties && nonVisualProperties.cNvPr;
+          const previewContext = {
+            format,
+            sheetIndex,
+            drawingIndex,
+            drawingId: drawingProperties ? drawingProperties.id : null
+          };
+          const isHiddenOrMissingProperties = !drawingProperties || drawingProperties.isHidden;
 
           if (isHiddenOrMissingProperties) {
+            if (!drawingProperties) {
+              logSkippedPreview("Missing drawing properties", previewContext);
+            }
+
             return;
           }
 
-          const image = renderPreview(graphicObject);
+          const image = renderPreview(graphicObject, previewContext);
           const hasValidBounds = image &&
             image.bounds &&
             Object.values(image.bounds).every(Number.isFinite);
 
           if (!hasValidBounds) {
+            if (image) {
+              logSkippedPreview("Preview bounds are missing or invalid", previewContext);
+            }
+
             return;
           }
 
-          image.id = String(nonVisualProperties.cNvPr.id);
+          image.id = String(drawingProperties.id);
           image.sheet = worksheet.sName;
           images.push(image);
         });
@@ -101,6 +124,8 @@
     }
 
     if (!documentModel) {
+      logSkippedPreview("Editor model is unavailable", { format });
+
       return { format, images };
     }
 
@@ -110,24 +135,38 @@
 
     if (canCapturePresentation) {
       documentModel.Slides.forEach(function (slide, slideIndex) {
-        slide.cSld.spTree.forEach(function (graphicObject) {
+        slide.cSld.spTree.forEach(function (graphicObject, drawingIndex) {
           const nonVisualProperties = graphicObject.getUniNvProps &&
             graphicObject.getUniNvProps();
           const drawingProperties = nonVisualProperties && nonVisualProperties.cNvPr;
+          const previewContext = {
+            format,
+            drawingIndex,
+            drawingId: drawingProperties ? drawingProperties.id : null,
+            part: "ppt/slides/slide" + (slideIndex + 1) + ".xml"
+          };
           const shouldSkipDrawing = !drawingProperties ||
             drawingProperties.isHidden ||
             (graphicObject.isPlaceholder && graphicObject.isPlaceholder());
 
           if (shouldSkipDrawing) {
+            if (!drawingProperties) {
+              logSkippedPreview("Missing drawing properties", previewContext);
+            }
+
             return;
           }
 
-          const image = renderPreview(graphicObject);
+          const image = renderPreview(graphicObject, previewContext);
           const hasValidBounds = image &&
             image.bounds &&
             Object.values(image.bounds).every(Number.isFinite);
 
           if (!hasValidBounds) {
+            if (image) {
+              logSkippedPreview("Preview bounds are missing or invalid", previewContext);
+            }
+
             return;
           }
 
@@ -137,14 +176,23 @@
         });
       });
     } else if (canCaptureWordDocument) {
-      documentModel.GetAllDrawingObjects().forEach(function (drawing) {
+      documentModel.GetAllDrawingObjects().forEach(function (drawing, drawingIndex) {
+        const previewContext = {
+          format,
+          drawingIndex,
+          drawingId: drawing.docPr ? drawing.docPr.id : null
+        };
         const shouldSkipDrawing = !drawing.docPr || drawing.docPr.isHidden;
 
         if (shouldSkipDrawing) {
+          if (!drawing.docPr) {
+            logSkippedPreview("Missing drawing properties", previewContext);
+          }
+
           return;
         }
 
-        const image = renderPreview(drawing.GraphicObj);
+        const image = renderPreview(drawing.GraphicObj, previewContext);
 
         if (!image) {
           return;
@@ -331,6 +379,11 @@
       });
 
       if (!worksheetRelationship) {
+        logSkippedPreview("Worksheet relationship is missing", {
+          format: "xlsx",
+          relationshipId: worksheet.getAttributeNS(namespaces.r, "id")
+        });
+
         continue;
       }
 
@@ -506,6 +559,20 @@
           const hasUniquePreview = matchingImages && matchingImages.length === 1;
 
           if (!hasUniquePreview) {
+            if (!drawingProperties) {
+              logSkippedPreview("OOXML drawing properties are missing", {
+                format: snapshot.format,
+                part: partPath
+              });
+            } else if (matchingImages.length > 1) {
+              logSkippedPreview("Multiple previews match the same drawing", {
+                format: snapshot.format,
+                part: partPath,
+                drawingId: drawingProperties.getAttribute("id"),
+                matches: matchingImages.length
+              });
+            }
+
             continue;
           }
 
@@ -545,6 +612,12 @@
           }
 
           if (!preview) {
+            logSkippedPreview("Word drawing graphicData or extent is missing", {
+              format: snapshot.format,
+              part: partPath,
+              drawingId: image.id
+            });
+
             continue;
           }
 
