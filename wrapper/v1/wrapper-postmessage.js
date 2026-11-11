@@ -796,6 +796,11 @@
     }
 
     self._lastFmt = fmt;
+
+    if (typeof global.skSetPrintReady === 'function') {
+      global.skSetPrintReady(false);
+    }
+
     self._lastFileName = fileName;
 
     // ── Load-stall diagnostics (temporary) ───────────────────────────────
