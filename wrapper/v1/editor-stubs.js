@@ -1070,7 +1070,53 @@
     }
   }
 
+  const WEBP_DECODE_TIMEOUT_MS = 15_000;
+
+  function readWebpAsPngDataUrl(file) {
+    const imageUrl = URL.createObjectURL(file);
+    const image = new Image();
+    let timeout;
+
+    return new Promise(function (resolve, reject) {
+      timeout = setTimeout(function () {
+        reject(new Error('WEBP image decoding timed out'));
+      }, WEBP_DECODE_TIMEOUT_MS);
+
+      image.onload = function () {
+        const canvas = document.createElement('canvas');
+
+        try {
+          canvas.width = image.naturalWidth;
+          canvas.height = image.naturalHeight;
+          canvas.getContext('2d').drawImage(image, 0, 0);
+          resolve(canvas.toDataURL('image/png'));
+        } catch (error) {
+          reject(error);
+        } finally {
+          canvas.width = 0;
+          canvas.height = 0;
+        }
+      };
+      image.onerror = function () {
+        reject(new Error('WEBP image could not be decoded'));
+      };
+      image.src = imageUrl;
+    }).finally(function () {
+      clearTimeout(timeout);
+      image.onload = null;
+      image.onerror = null;
+      URL.revokeObjectURL(imageUrl);
+    });
+  }
+
   function readFileAsMediaUrl(file) {
+    const isWebpFile = /\.webp$/i.test(file.name || '') ||
+      /^image\/webp$/i.test(file.type || '');
+
+    if (isWebpFile) {
+      return readWebpAsPngDataUrl(file);
+    }
+
     var bridge = wrapperBridge();
     var urls = window.AscCommon && window.AscCommon.g_oDocumentUrls;
     if (!isSvgFile(file) || !bridge || !urls || typeof urls.addImageUrl !== 'function') {
@@ -1091,8 +1137,21 @@
 
   function patchUploadImageFiles() {
     var AscCommon = window.AscCommon;
-    if (!AscCommon || typeof AscCommon.UploadImageFiles !== 'function') return false;
-    if (AscCommon.__localUploadPatched) return true;
+    const uploadOptions = AscCommon && AscCommon.c_oAscImageUploadProp;
+    const isUploadReady = AscCommon && typeof AscCommon.UploadImageFiles === 'function' &&
+      uploadOptions;
+
+    if (!isUploadReady) {
+      return false;
+    }
+
+    if (AscCommon.__localUploadPatched) {
+      return true;
+    }
+
+    if (uploadOptions.SupportedFormats.indexOf('webp') === -1) {
+      uploadOptions.SupportedFormats.push('webp');
+    }
 
     AscCommon.UploadImageFiles = function (files, documentId, documentUserId, jwt, shardKey, wopiSrc, userSessionId, callback) {
       var ID = window.Asc && window.Asc.c_oAscError && window.Asc.c_oAscError.ID;
