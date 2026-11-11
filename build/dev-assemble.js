@@ -33,6 +33,7 @@ const GLUE = [
   'wrapper-mount.js', 'wrapper-postmessage.js', 'wrapper-heartbeat.js',
   'wrapper-modal-manager.js', 'x2t-bridge.js', 'edit-host-demo.html',
   'wrapper-repeat-last-action.js', 'ooxml-preview.js',
+  'sheet-view-filters.js',
 ];
 
 function cpFile(src, dst) {

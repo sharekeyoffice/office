@@ -634,6 +634,12 @@
 
         var target = getEditAttemptTarget(e);
         var isOnlyOfficeDocumentInput = !!(target && target.id === 'area_id');
+        var isViewerFilter = !!(target && target.closest &&
+            target.closest('[data-sk-view-filter]'));
+
+        if (isViewerFilter) {
+            return false;
+        }
 
         if (isNativeEditableElement(target) && !isOnlyOfficeDocumentInput) {
             return false;
