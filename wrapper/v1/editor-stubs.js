@@ -1263,6 +1263,12 @@
     var dh = ns.controllers.DocumentHolder;
     var api = ns.controllers.Main.api;
     if (!api || !dh.permissions || typeof api.asc_checkNeedCallback !== 'function') return false;
+    var viewFilters = window.parent.OfficeSheetFilters;
+
+    if (viewFilters) {
+      viewFilters.install(window);
+    }
+
     if (dh.permissions.isEdit !== true) return false;                     // edit capability off → nothing to do
     if (!api.asc_checkNeedCallback('asc_onHyperlinkClick')) return false; // setEvents hasn't run → don't pre-empt it
 
