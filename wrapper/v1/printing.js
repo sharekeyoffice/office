@@ -3,6 +3,7 @@
 
   const PRINT_DPI = 300;
   let activePrintJob = null;
+  let authorizationHandler = null;
 
   function createPage(win, width, height, fontManager) {
     const hasValidSize = Number.isFinite(width) && Number.isFinite(height) &&
@@ -144,8 +145,85 @@
     return result;
   }
 
-  function checkAllowed(options) {
-    if (options.isAllowed && !options.isAllowed()) {
+  function captureDocumentState(win, api, type) {
+    const model = type === 'cell' ? api.wb.model : api.WordControl.m_oLogicDocument;
+    const history = win.AscCommon.History;
+    const historyPoint = history && history.Points[history.Index];
+    const historyItems = historyPoint ? historyPoint.Items : [];
+    const layoutVersion = model && typeof model.GetRecalcId === 'function'
+      ? model.GetRecalcId() : null;
+    const pageCount = type === 'word' ? api.WordControl.m_oDrawingDocument.m_lPagesCount
+      : type === 'slide' ? model.Slides.length : null;
+
+    return {
+      model,
+      history,
+      historyIndex: history && history.Index,
+      historyPoint,
+      historyItemCount: historyItems.length,
+      lastHistoryItem: historyItems[historyItems.length - 1],
+      historyPosition: history && history.BinaryWriter ? history.BinaryWriter.GetCurPosition() : null,
+      layoutVersion,
+      pageCount
+    };
+  }
+
+  function watchDocumentChanges(win, api, type) {
+    const canWatchChanges = typeof api.asc_registerCallback === 'function' &&
+      typeof api.asc_unregisterCallback === 'function';
+
+    if (!canWatchChanges) {
+      throw new Error('Document change tracking is not available');
+    }
+
+    const initialState = captureDocumentState(win, api, type);
+    const events = ['asc_onUserActionStart', 'asc_onUserActionEnd', 'asc_onBeforeUndoRedo',
+      'asc_onBeforeApplyChanges', 'asc_onBeforeUndoRedoInCollaboration'];
+    let hasChanged = false;
+    const onChange = function () { hasChanged = true; };
+
+    events.forEach(function (event) {
+      api.asc_registerCallback(event, onChange);
+    });
+
+    return {
+      check: function () {
+        const currentState = captureDocumentState(win, api, type);
+        const isStateChanged = Object.keys(initialState).some(function (key) {
+          return initialState[key] !== currentState[key];
+        });
+
+        if (hasChanged || isStateChanged) {
+          const error = new Error('The document changed while preparing to print. Please try again.');
+          error.name = 'DocumentChangedError';
+
+          throw error;
+        }
+      },
+      cleanup: function () {
+        events.forEach(function (event) {
+          api.asc_unregisterCallback(event, onChange);
+        });
+      }
+    };
+  }
+
+  function setAuthorizationHandler(handler) {
+    if (authorizationHandler) {
+      throw new Error('Print authorization is already configured');
+    }
+
+    if (typeof handler !== 'function') {
+      throw new TypeError('Print authorization handler must be a function');
+    }
+
+    authorizationHandler = handler;
+  }
+
+  function checkAllowed(isAllowed) {
+    const hasPermission = typeof isAllowed === 'function' && isAllowed() === true;
+
+    if (!hasPermission) {
       const error = new Error('Printing is no longer available');
       error.name = 'AbortError';
 
@@ -154,7 +232,12 @@
   }
 
   async function prepare(win, type, options = {}) {
-    checkAllowed(options);
+    if (!authorizationHandler) {
+      checkAllowed(null);
+    }
+
+    const isAllowed = await authorizationHandler(win, type);
+    checkAllowed(isAllowed);
 
     const api = win.Asc && win.Asc.editor;
 
@@ -177,8 +260,15 @@
       frame.remove();
     };
     global.document.body.appendChild(frame);
+    let documentChanges;
 
     try {
+      documentChanges = watchDocumentChanges(win, api, type);
+      const checkPrintState = function () {
+        checkAllowed(isAllowed);
+        documentChanges.check();
+      };
+
       const doc = frame.contentDocument;
       doc.title = options.title || 'Document';
       const style = doc.createElement('style');
@@ -213,7 +303,7 @@
       }
 
       for (let index = 0; index < pages.length; index++) {
-        checkAllowed(options);
+        checkPrintState();
 
         const result = type === 'cell'
           ? renderSpreadsheetPage(win, api, pages[index], index, pages)
@@ -229,6 +319,7 @@
         });
         result.canvas.width = 0;
         result.canvas.height = 0;
+        checkPrintState();
 
         const url = global.URL.createObjectURL(blob);
         urls.push(url);
@@ -245,15 +336,20 @@
         section.appendChild(image);
         doc.body.appendChild(section);
         await image.decode();
+        checkPrintState();
       }
 
-      checkAllowed(options);
+      checkPrintState();
 
       return { frame, cleanup, pageCount: pages.length };
     } catch (error) {
       cleanup();
 
       throw error;
+    } finally {
+      if (documentChanges) {
+        documentChanges.cleanup();
+      }
     }
   }
 
@@ -284,5 +380,5 @@
     }
   }
 
-  global.OfficePrinting = { prepare, print };
+  global.OfficePrinting = { setAuthorizationHandler, prepare, print };
 })(window);

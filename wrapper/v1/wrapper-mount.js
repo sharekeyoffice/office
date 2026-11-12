@@ -1385,35 +1385,49 @@
       renderPrintButton();
     };
 
+    async function authorizePrint(win, requestedType) {
+      const documentVersion = printDocumentVersion;
+      const isAllowed = function () {
+        const iframe = document.querySelector('iframe[name="frameEditor"]');
+        const isCurrentEditor = iframe && iframe.contentWindow === win && requestedType === type;
+
+        return canDownload && isPrintReady && !!editorApi && !!isCurrentEditor &&
+          documentVersion === printDocumentVersion;
+      };
+
+      if (!pm || !isAllowed()) {
+        return null;
+      }
+
+      const permissionGranted = await pm.requestDownloadPermission();
+
+      return permissionGranted ? isAllowed : null;
+    }
+
     async function onPrintButtonClick() {
       if (!canDownload || !isPrintReady || isPreparingPrint || !editorApi) {
         return;
       }
 
       const iframe = document.querySelector('iframe[name="frameEditor"]');
-      const documentVersion = printDocumentVersion;
       isPreparingPrint = true;
       renderPrintButton();
 
       try {
-        const permissionGranted = await pm.requestDownloadPermission();
-
-        if (!permissionGranted) {
-          return;
-        }
-
         await window.OfficePrinting.print(iframe.contentWindow, type, {
-          title: pm && pm._lastFileName,
-          isAllowed: function () {
-            return canDownload && isPrintReady && documentVersion === printDocumentVersion;
-          }
+          title: pm && pm._lastFileName
         });
       } catch (error) {
         if (error.name !== 'AbortError') {
           console.warn('[office-print] Could not prepare document', error);
+          const isDocumentChanged = error.name === 'DocumentChangedError';
+          const message = isDocumentChanged
+            ? 'The document changed while preparing to print. Please try again.'
+            : 'Could not prepare the document for printing. Please try again.';
+
           iframe.contentWindow.Common.UI.alert({
             title: 'Print',
-            msg: 'Could not prepare the document for printing. Please try again.',
+            msg: message,
             iconCls: 'warn',
             buttons: ['ok']
           });
@@ -3677,6 +3691,10 @@
     // is an outer-page element; renderEditButton no-ops until the header
     // button exists).
     updateOverlayUI();
+
+    if (window.OfficePrinting) {
+      window.OfficePrinting.setAuthorizationHandler(authorizePrint);
+    }
 
     // ── Boot: construct the editor in edit mode. We immediately queue a
     // pending view restriction so the document opens read-only by default;
