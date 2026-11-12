@@ -93,10 +93,15 @@
     var headerEditTooltip = null;
     var headerDownloadTooltip = null;
     var headerSaveTooltip = null;
+    var headerPrintTooltip = null;
     var headerEditBtn  = null;     // our Edit button injected into the iframe header
                                    // (approach B); null until mountHeaderControls runs
     var headerSaveBtn  = null;     // our Save (diskette) button, same approach
     var headerDownloadBtn = null;
+    var headerPrintBtn = null;
+    var isPreparingPrint = false;
+    var isPrintReady = false;
+    var printDocumentVersion = 0;
     var headerMainAppBtn = null;   // "Main App" button in the header-right area
     var headerEditingLabel = null; // our "<who> is editing the document…" label,
                                    // injected into the tab row right of the Edit button
@@ -165,6 +170,7 @@
       renderEditButton();
       renderEditingLabel();
       renderDownloadButton();
+      renderPrintButton();
     }
 
       // Determines the relevant DOM element for an edit attempt event.
@@ -692,8 +698,27 @@
 
       function bindSaveShortcutListeners() {
           document.addEventListener('keydown', handleSaveShortcut, true);
+          document.addEventListener('keydown', handlePrintShortcut, true);
 
           log('save shortcut listener bound on wrapper document');
+      }
+
+      function handlePrintShortcut(event) {
+          const isPrintKey = event.code === 'KeyP' ||
+              (event.key && event.key.toLowerCase() === 'p');
+          const isPrintShortcut = isPrintKey && (event.ctrlKey || event.metaKey) &&
+              !event.altKey && !event.shiftKey;
+
+          if (!isPrintShortcut) {
+              return;
+          }
+
+          event.preventDefault();
+          event.stopImmediatePropagation();
+
+          if (!event.repeat) {
+              onPrintButtonClick();
+          }
       }
 
     // Shows the turn-on-edit-mode modal only when the user tries to edit while
@@ -777,6 +802,7 @@
       log('blocked edit attempt listeners bound');
 
       iframe.contentDocument.addEventListener('keydown', handleSaveShortcut, true);
+      iframe.contentDocument.addEventListener('keydown', handlePrintShortcut, true);
       iframe.contentDocument.addEventListener('keydown', handleTurnOnEditModeModalKeyDown, true);
 
       log('save shortcut listener bound on editor iframe document');
@@ -1336,6 +1362,82 @@
       renderSaveButton();
     };
 
+    function renderPrintButton() {
+      if (!headerPrintBtn) {
+        return;
+      }
+
+      headerPrintBtn.disabled = !canDownload || !isPrintReady || isPreparingPrint;
+      headerPrintBtn.setAttribute('aria-busy', String(isPreparingPrint));
+
+      if (headerPrintTooltip) {
+        headerPrintTooltip.textContent = getPrintTooltipText();
+      }
+    }
+
+    window.skSetPrintReady = function (ready) {
+      isPrintReady = ready;
+
+      if (!ready) {
+        printDocumentVersion++;
+      }
+
+      renderPrintButton();
+    };
+
+    async function authorizePrint(win, requestedType) {
+      const documentVersion = printDocumentVersion;
+      const isAllowed = function () {
+        const iframe = document.querySelector('iframe[name="frameEditor"]');
+        const isCurrentEditor = iframe && iframe.contentWindow === win && requestedType === type;
+
+        return canDownload && isPrintReady && !!editorApi && !!isCurrentEditor &&
+          documentVersion === printDocumentVersion;
+      };
+
+      if (!pm || !isAllowed()) {
+        return null;
+      }
+
+      const permissionGranted = await pm.requestDownloadPermission();
+
+      return permissionGranted ? isAllowed : null;
+    }
+
+    async function onPrintButtonClick() {
+      if (!canDownload || !isPrintReady || isPreparingPrint || !editorApi) {
+        return;
+      }
+
+      const iframe = document.querySelector('iframe[name="frameEditor"]');
+      isPreparingPrint = true;
+      renderPrintButton();
+
+      try {
+        await window.OfficePrinting.print(iframe.contentWindow, type, {
+          title: pm && pm._lastFileName
+        });
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          console.warn('[office-print] Could not prepare document', error);
+          const isDocumentChanged = error.name === 'DocumentChangedError';
+          const message = isDocumentChanged
+            ? 'The document changed while preparing to print. Please try again.'
+            : 'Could not prepare the document for printing. Please try again.';
+
+          iframe.contentWindow.Common.UI.alert({
+            title: 'Print',
+            msg: message,
+            iconCls: 'warn',
+            buttons: ['ok']
+          });
+        }
+      } finally {
+        isPreparingPrint = false;
+        renderPrintButton();
+      }
+    }
+
     function renderDownloadButton() {
       if (!headerDownloadBtn) {
           return;
@@ -1407,6 +1509,28 @@
         '<path d="M6 0.65C7.4189 0.65 8.77968 1.21365 9.783 2.21696C10.7863 3.22027 11.35 4.58105 11.35 5.99995" ' +
         'stroke="#355069" stroke-opacity="0.55" stroke-width="1.3" stroke-linecap="round"/>' +
         '</svg>';
+
+    const SK_PRINT_ICON_SVG =
+      '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" ' +
+      'xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">' +
+      '<path fill="currentColor" d="' + [
+        'M14.3994 4C15.5867 4 16.5496 4.96311 16.5498 6.15039V8.00293H17.8486C19.3122',
+        '8.00293 20.499 9.18977 20.499 10.6533V15.0537C20.4985 16.5169 19.3119 17.7031',
+        '17.8486 17.7031H16.5498V17.8506C16.5498 19.038 15.5868 20.001 14.3994',
+        '20.001H9.60059C8.41317 20.001 7.4502 19.038 7.4502',
+        '17.8506V17.7031H6.15137C4.68794 17.7031 3.50119 16.5161 3.50098',
+        '15.0527V10.6523C3.50124 9.18901 4.68798 8.00293 6.15137',
+        '8.00293H7.4502V6.15039C7.45035 4.96311 8.41327 4 9.60059 4H14.3994ZM8.75098',
+        '17.8506C8.75098 18.32 9.13115 18.7002 9.60059 18.7002H14.3994C14.8689 18.7002',
+        '15.249 18.32 15.249 17.8506V15.4004H8.75098V17.8506ZM6.15137 9.30371C5.40578',
+        '9.30371 4.80176 9.90774 4.80176 10.6533V15.0537C4.80223 15.7989 5.40608 16.4033',
+        '6.15137 16.4033H7.4502V14.751C7.4502 14.4368 7.67351 14.1748 7.96973',
+        '14.1143L8.10059 14.1006H15.8994C16.2584 14.1006 16.5498 14.392 16.5498',
+        '14.751V16.4033H17.8486C18.5939 16.4033 19.1987 15.7989 19.1992',
+        '15.0537V10.6533C19.1992 9.90774 18.5942 9.30371 17.8486 9.30371H6.15137ZM9.60059',
+        '5.30078C9.13124 5.30078 8.75113 5.68108 8.75098 6.15039V8H15.249V6.15039C15.2489',
+        '5.68108 14.8688 5.30078 14.3994 5.30078H9.60059Z'
+      ].join(' ') + '"/></svg>';
 
     var DOWNLOAD_ICON_SVG = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
         '<path d="M19.3506 14.4995C19.7095 14.4996 20 14.791 20 15.1499V17.3071C20 18.7943 18.7948 19.9995 17.3076 19.9995H6.69336C5.20616 19.9995 4.00005 18.7943 4 17.3071V15.1499C4 14.7909 4.29141 14.4995 4.65039 14.4995C5.00938 14.4995 5.30078 14.7909 5.30078 15.1499V17.3071C5.30083 18.0763 5.92413 18.6997 6.69336 18.6997H17.3076C18.0768 18.6997 18.7001 18.0763 18.7002 17.3071V15.1499C18.7002 14.7909 18.9916 14.4995 19.3506 14.4995ZM12.001 4.00049C12.3594 4.00094 12.6502 4.29137 12.6504 4.6499V12.1519L15.0039 9.78467C15.2762 9.511 15.7192 9.50973 15.9932 9.78174C16.2668 10.054 16.2681 10.497 15.9961 10.771L12.4961 14.2935C12.3649 14.4254 12.1851 14.4994 11.999 14.4995C11.8131 14.4993 11.634 14.4253 11.5029 14.2935L8.00391 10.771C7.73196 10.497 7.73321 10.054 8.00684 9.78174C8.28083 9.50979 8.72382 9.51104 8.99609 9.78467L11.3506 12.1538V4.6499C11.3508 4.2911 11.6421 4.00049 12.001 4.00049Z" fill="currentColor"/>' +
@@ -1639,6 +1763,22 @@
       '.sk-save-btn--saved{color:rgba(168, 168, 168, 1);}',
       '.sk-save-btn--error{color:#363636;}',
       '.sk-save-btn:disabled{cursor:default;}',
+      '.sk-print-slot{display:inline-flex;align-items:center;}',
+      '.sk-print-btn{',
+      '  box-sizing:border-box;margin:2px 4px 0 0;',
+      '  display:inline-flex;align-items:center;justify-content:center;',
+      '  width:28px;height:28px;padding:0;',
+      '  border:none;border-radius:5px;background:transparent;',
+      '  color:rgba(0,0,0,.8);cursor:pointer;',
+      '  transition:color .12s ease,background .12s ease,opacity .12s ease;',
+      '}',
+      '.sk-print-btn svg{display:block;width:24px;height:24px;}',
+      '.sk-print-btn:not(:disabled):hover{background:rgba(0,0,0,.06);}',
+      '.sk-print-btn:focus-visible{outline:2px solid #2FA0AF;outline-offset:1px;}',
+      '.sk-print-btn:disabled{opacity:var(--component-disabled-opacity,.4);cursor:default;}',
+      '.theme-type-dark .sk-print-btn{color:rgba(255,255,255,.8);}',
+      '.theme-type-dark .sk-print-btn:not(:disabled):hover{background:rgba(255,255,255,.1);}',
+      '.theme-type-dark .sk-print-btn:disabled{color:rgba(255,255,255,.31);opacity:1;}',
       /* Dark theme (editor sets body.theme-type-dark): the "dark" dirty glyph
          would vanish on the dark toolbar, so flip the prominent states to a
          light glyph. Idle stays mid-grey (visible on both). The saved/error
@@ -1974,6 +2114,30 @@
           return headerSaveTooltip;
       }
 
+      function getPrintTooltipText() {
+          if (!canDownload) {
+              return 'Print is disabled';
+          }
+
+          if (!isPrintReady) {
+              return 'Document is loading';
+          }
+
+          return isPreparingPrint ? 'Preparing to print...' : 'Print';
+      }
+
+      function ensurePrintTooltip(doc) {
+          if (!headerPrintTooltip || headerPrintTooltip.ownerDocument !== doc) {
+              headerPrintTooltip = doc.createElement('div');
+              headerPrintTooltip.className = 'sk-tooltip';
+              doc.body.appendChild(headerPrintTooltip);
+          }
+
+          headerPrintTooltip.textContent = getPrintTooltipText();
+
+          return headerPrintTooltip;
+      }
+
       function positionTooltip(tooltip, button) {
           var doc = button.ownerDocument;
           var TOOLTIP_SCREEN_PADDING = 8;
@@ -2006,6 +2170,8 @@
 
           if (type === 'save') {
               tooltip = ensureSaveTooltip(doc);
+          } else if (type === 'print') {
+              tooltip = ensurePrintTooltip(doc);
           } else if (type === 'edit') {
               tooltip = ensureEditTooltip(doc);
           } else if (type === 'download') {
@@ -2441,6 +2607,53 @@
       return true;
     }
 
+    function mountPrintButton(doc) {
+      const nativeSaveSlot = doc.getElementById('slot-btn-dt-save');
+      const saveSlot = headerSaveBtn && headerSaveBtn.parentNode;
+      const anchor = saveSlot || nativeSaveSlot;
+
+      if (!anchor || !anchor.parentNode) {
+        return false;
+      }
+
+      let button = doc.getElementById('sk-print-btn');
+      let slot = button && button.parentNode;
+
+      if (!button) {
+        slot = doc.createElement('div');
+        slot.className = 'sk-print-slot';
+        button = doc.createElement('button');
+        button.id = 'sk-print-btn';
+        button.className = 'sk-print-btn';
+        button.type = 'button';
+        button.setAttribute('aria-label', 'Print');
+        button.setAttribute('aria-keyshortcuts', /Mac/.test(navigator.platform)
+          ? 'Meta+P' : 'Control+P');
+        button.innerHTML = SK_PRINT_ICON_SVG;
+        button.onclick = onPrintButtonClick;
+        slot.appendChild(button);
+        slot.onmouseenter = function () { showTooltip('print', button); };
+        slot.onmouseleave = function () {
+          if (headerPrintTooltip) {
+            headerPrintTooltip.style.display = 'none';
+          }
+        };
+      }
+
+      if (saveSlot) {
+        if (slot.previousSibling !== saveSlot) {
+          saveSlot.parentNode.insertBefore(slot, saveSlot.nextSibling);
+        }
+      } else if (slot.nextSibling !== nativeSaveSlot) {
+        nativeSaveSlot.parentNode.insertBefore(slot, nativeSaveSlot);
+      }
+
+      headerPrintBtn = button;
+      renderPrintButton();
+
+      return true;
+    }
+
     // Main App button → header-right, immediately before the search slot
     // (#slot-btn-search, Header.js). Skipped in standalone mode (no opener).
     function mountMainAppButton(doc) {
@@ -2552,9 +2765,11 @@
               mountEditingLabel(doc);
 
               var externalDownloadDone = mountDownloadButton(doc);
+              var externalPrintDone = mountPrintButton(doc);
               var externalMainAppDone = !shouldMountMainAppButton || mountMainAppButton(doc);
 
-              return externalEditDone && externalDownloadDone && externalMainAppDone;
+              return externalEditDone && externalDownloadDone && externalMainAppDone &&
+                  externalPrintDone;
           }
 
           undoButton.querySelector('button').innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
@@ -2572,10 +2787,11 @@
           var editDone = mountEditButton(doc);
           mountEditingLabel(doc);              // anchored off the Edit <li>; no-op if edit not mounted yet
           var saveDone = mountSaveButton(doc);
+          var printDone = mountPrintButton(doc);
           var downloadDone = mountDownloadButton(doc);
           var mainAppDone = !shouldMountMainAppButton || mountMainAppButton(doc);
 
-          return editDone && saveDone && mainAppDone && downloadDone;
+          return editDone && saveDone && printDone && mainAppDone && downloadDone;
       }
 
     function autoLoadFixture() {
@@ -3316,6 +3532,7 @@
       },
       onDocumentReady: function () {
         log('onDocumentReady');
+        window.skSetPrintReady(true);
         // Phase 2 of the initial-mode setup — uniform across word/cell/slide.
         // By the time the SDK fires onDocumentReady, the editor's Main
         // controller has finished onDocumentContentReady — toolbar.setApi
@@ -3474,6 +3691,10 @@
     // is an outer-page element; renderEditButton no-ops until the header
     // button exists).
     updateOverlayUI();
+
+    if (window.OfficePrinting) {
+      window.OfficePrinting.setAuthorizationHandler(authorizePrint);
+    }
 
     // ── Boot: construct the editor in edit mode. We immediately queue a
     // pending view restriction so the document opens read-only by default;
