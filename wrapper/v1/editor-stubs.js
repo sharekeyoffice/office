@@ -1089,7 +1089,14 @@
           canvas.width = image.naturalWidth;
           canvas.height = image.naturalHeight;
           canvas.getContext('2d').drawImage(image, 0, 0);
-          resolve(canvas.toDataURL('image/png'));
+          canvas.toBlob(function (blob) {
+            if (!blob) {
+              reject(new Error('WEBP image could not be converted to PNG'));
+              return;
+            }
+
+            readFileAsDataURL(blob).then(resolve, reject);
+          }, 'image/png');
         } catch (error) {
           reject(error);
         } finally {
