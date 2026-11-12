@@ -98,6 +98,7 @@
     var headerSaveBtn  = null;     // our Save (diskette) button, same approach
     var headerDownloadBtn = null;
     var headerMainAppBtn = null;   // "Main App" button in the header-right area
+    var editorLayoutState = null;
     var headerEditingLabel = null; // our "<who> is editing the document…" label,
                                    // injected into the tab row right of the Edit button
     var currentSaveState = 'idle'; // 'idle'|'dirty'|'saving'|'saved'|'error' — drives
@@ -165,6 +166,7 @@
       renderEditButton();
       renderEditingLabel();
       renderDownloadButton();
+      applyEditorLayout();
     }
 
       // Determines the relevant DOM element for an edit attempt event.
@@ -1463,6 +1465,35 @@
     // so the editor's own stylesheets never match our elements; injected late
     // so ours wins on equal specificity (no !important needed).
     var SK_HEADER_CONTROLS_CSS = [
+      '.sk-viewer-compact #right-menu,',
+      '.sk-role-viewer .sk-viewer-right-resizer,',
+      '.sk-role-viewer #file-menu-panel,',
+      '.sk-viewer-compact #toolbar{display:none !important;}',
+      '.sk-viewer-sheet #toolbar .ribtab:not(:has(> #home, > #data)){display:none !important;}',
+      '.sk-viewer-sheet #toolbar .box-panels > .panel' +
+      ':not([data-tab="home"]):not([data-tab="data"]){display:none !important;}',
+      '.sk-header-top{--sk-header-height:34px;}',
+      '.sk-header-top #box-document-title{height:var(--sk-header-height);}',
+      '.sk-viewer-compact .search-bar{top:calc(var(--sk-header-height) + 2px) !important;}',
+      '.sk-header-top #sk-header-actions{',
+      '  display:flex;align-items:center;align-self:flex-start;gap:8px;',
+      '  margin-top:5px;min-width:0;',
+      '  margin-inline-start:12px;',
+      '}',
+      '.sk-header-top #sk-header-actions .sk-edit-tab{margin-left:0;height:24px;}',
+      '.sk-header-top #sk-header-actions .sk-edit-btn{margin-bottom:0;}',
+      '.sk-header-top #sk-header-actions .sk-editing-tab{',
+      '  display:inline-flex;align-items:center;height:24px;list-style:none;min-width:0;',
+      '}',
+      '.sk-header-top #sk-header-actions .sk-editing-label{',
+      '  margin:0;max-width:30vw;overflow:hidden;line-height:16px;',
+      '}',
+      '.sk-header-top #box-right-btn-group{',
+      '  height:28px;flex-shrink:0;margin:5px 2px 0 auto;align-self:flex-start;',
+      '}',
+      '.sk-header-top #box-right-btn-group .hedset{height:28px;}',
+      '.sk-header-top #slot-btn-search{margin-bottom:0;}',
+      '.sk-header-top .sk-main-app-btn{margin-bottom:0;}',
       /* our <li> sits at the end of the toolbar tablist, right after "View".
          The toolbar-mask (view mode) starts at top:32px, so the tab row — and
          thus this button — stays visible AND clickable while read-only.
@@ -2560,6 +2591,8 @@
               var externalDownloadDone = mountDownloadButton(doc);
               var externalMainAppDone = !shouldMountMainAppButton || mountMainAppButton(doc);
 
+              applyEditorLayout();
+
               return externalEditDone && externalDownloadDone && externalMainAppDone;
           }
 
@@ -2581,8 +2614,108 @@
           var downloadDone = mountDownloadButton(doc);
           var mainAppDone = !shouldMountMainAppButton || mountMainAppButton(doc);
 
+          applyEditorLayout();
+
           return editDone && saveDone && mainAppDone && downloadDone;
       }
+
+    function applyEditorLayout() {
+      const iframe = document.querySelector('iframe[name="frameEditor"]');
+      const editorWindow = iframe && iframe.contentWindow;
+      const doc = iframe && iframe.contentDocument;
+      const namespace = editorWindow && (editorWindow.DE || editorWindow.SSE || editorWindow.PE);
+      const controllers = namespace && namespace.controllers;
+      const viewportController = controllers && controllers.Viewport;
+      const viewport = viewportController && viewportController.viewport;
+      const notifications = editorWindow && editorWindow.Common && editorWindow.Common.NotificationCenter;
+      const title = doc && doc.getElementById('box-document-title');
+      const downloadSlot = headerDownloadBtn && headerDownloadBtn.parentNode;
+      const isReady = viewport && notifications && title && downloadSlot && headerEditBtn && headerEditingLabel;
+
+      if (!isReady) {
+        return;
+      }
+
+      if (!editorLayoutState || editorLayoutState.document !== doc) {
+        editorLayoutState = {
+          document: doc,
+          updating: false,
+          isViewer: null
+        };
+        notifications.on('layout:changed tab:active', applyEditorLayout);
+      }
+
+      const state = editorLayoutState;
+
+      if (state.updating) {
+        return;
+      }
+
+      state.updating = true;
+
+      try {
+        const isViewer = !canEdit;
+        let layoutChanged = state.isViewer !== isViewer;
+        let actions = doc.getElementById('sk-header-actions');
+
+        if (!actions) {
+          actions = doc.createElement('div');
+          actions.id = 'sk-header-actions';
+          downloadSlot.parentNode.insertBefore(actions, downloadSlot.nextSibling);
+        }
+
+        function moveControl(element, parent) {
+          if (element && element.parentNode !== parent) {
+            parent.appendChild(element);
+            layoutChanged = true;
+          }
+        }
+
+        moveControl(headerEditBtn.parentNode, actions);
+        moveControl(headerEditingLabel.parentNode, actions);
+        moveControl(doc.getElementById('box-right-btn-group'), title);
+
+        doc.body.classList.add('sk-header-top');
+        doc.body.classList.toggle('sk-role-viewer', isViewer);
+        doc.body.classList.toggle('sk-viewer-compact', isViewer && type !== 'cell');
+        doc.body.classList.toggle('sk-viewer-sheet', isViewer && type === 'cell');
+
+        const rightPanel = viewport.hlayout.getItem('right');
+        const rightResizer = rightPanel && rightPanel.resize && rightPanel.resize.el;
+
+        if (rightResizer) {
+          rightResizer.addClass('sk-viewer-right-resizer');
+        }
+
+        const titlePanel = viewport.vlayout.getItem('title');
+        const headerHeight = Math.max(titlePanel.height, title.getBoundingClientRect().height);
+
+        if (headerHeight !== titlePanel.height) {
+          titlePanel.height = headerHeight;
+          layoutChanged = true;
+        }
+
+        state.isViewer = isViewer;
+
+        const toolbarController = controllers.Toolbar;
+        const toolbar = toolbarController && toolbarController.toolbar;
+        const needsHomeTab = isViewer && type === 'cell' && toolbar && toolbar.$tabs && !toolbar.isTabActive('home') && !toolbar.isTabActive('data');
+
+        if (needsHomeTab) {
+          toolbar.setTab('home');
+        }
+
+        if (layoutChanged) {
+          viewportController.onLayoutChanged('window');
+
+          if (viewportController.searchBar) {
+            viewportController.searchBar.onLayoutChanged();
+          }
+        }
+      } finally {
+        state.updating = false;
+      }
+    }
 
     function autoLoadFixture() {
       log('standalone mode — auto-loading ' + fixtureUrl);
