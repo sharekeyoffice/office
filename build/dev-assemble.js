@@ -46,7 +46,7 @@ function sync() {
     const s = path.join(V1, f);
     if (fs.existsSync(s)) cpFile(s, path.join(PUBLIC, f));
   }
-  for (const f of ['confirmation-modal.css', 'fonts.css', 'edit.css', 'welcome-screen.css']) {
+  for (const f of ['confirmation-modal.css', 'fonts.css', 'edit.css', 'editor-ui.css', 'welcome-screen.css']) {
     const s = path.join(OVERLAY, f);
     if (fs.existsSync(s)) cpFile(s, path.join(PUBLIC, f));
   }

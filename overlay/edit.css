@@ -6,8 +6,8 @@
  *
  * The mode-switch control ("Edit" button) AND the "<who> is editing the
  * document…" label now live INSIDE the editor iframe header (our injected
- * controls — see wrapper-mount.js mountHeaderControls; styled by the injected
- * #sk-header-controls stylesheet, not this sheet). The old outer-page
+ * controls — see wrapper-mount.js mountHeaderControls; styled by editor-ui.css,
+ * loaded inside that iframe). The old outer-page
  * #mode-button and #lock-held-banner overlays were removed.
  */
 
@@ -58,4 +58,14 @@ body {
 .startup-error h1 {
   font-size: 1.4em;
   margin-bottom: 0.5em;
+}
+
+.wrapper-startup-message {
+  font-family: sans-serif;
+  padding: 1em;
+  color: #a00;
+}
+
+.cm-description--accent {
+  color: #2FA0AF;
 }

@@ -1,0 +1,733 @@
+/* Figma-derived styles for our header controls inside the OnlyOffice iframe.
+ * Unique sk-* class names keep these controls separate from native components.
+ * Loaded after the editor's stylesheets to win on equal specificity.
+ */
+
+/* Hide the native Editing/Viewing menu in favour of our Edit button,
+ * including the canRequestEditRights button if legacy config enables it.
+ */
+.btn-header-pdf-mode,
+.btn-header-pdf-mode + * {
+  display: none !important;
+}
+
+.sk-viewer-compact #right-menu,
+.sk-role-viewer .sk-viewer-right-resizer,
+.sk-role-viewer #file-menu-panel,
+.sk-viewer-compact #toolbar {
+  display: none !important;
+}
+
+.sk-viewer-sheet #toolbar .ribtab:not(:has(> #home, > #data)) {
+  display: none !important;
+}
+
+.sk-viewer-sheet #toolbar .box-panels > .panel:not([data-tab="home"]):not([data-tab="data"]) {
+  display: none !important;
+}
+
+.sk-header-top {
+  --sk-header-height: 34px;
+}
+
+.sk-header-top #box-document-title {
+  height: var(--sk-header-height);
+}
+
+.sk-viewer-compact .search-bar {
+  top: calc(var(--sk-header-height) + 2px) !important;
+}
+
+.sk-header-top #sk-header-actions {
+  display: flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 8px;
+  margin-top: 5px;
+  min-width: 0;
+  margin-inline-start: 12px;
+}
+
+.sk-header-top #sk-header-actions .sk-edit-tab {
+  margin-left: 0;
+  height: 24px;
+}
+
+.sk-header-top #sk-header-actions .sk-edit-btn {
+  margin-bottom: 0;
+}
+
+.sk-header-top #sk-header-actions .sk-editing-tab {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  list-style: none;
+  min-width: 0;
+}
+
+.sk-header-top #sk-header-actions .sk-editing-label {
+  margin: 0;
+  max-width: 30vw;
+  overflow: hidden;
+  line-height: 16px;
+}
+
+.sk-header-top #box-right-btn-group {
+  height: 28px;
+  flex-shrink: 0;
+  margin: 5px 2px 0 auto;
+  align-self: flex-start;
+}
+
+.sk-header-top #box-right-btn-group .hedset {
+  height: 28px;
+}
+
+.sk-header-top #slot-btn-search {
+  margin-bottom: 0;
+}
+
+.sk-header-top .sk-main-app-btn {
+  margin-bottom: 0;
+}
+
+/* tab row height (was 28px) — per design; !important beats .toolbar .box-tabs /
+ * .top-title>.toolbar .box-tabs
+ */
+.box-tabs {
+  height: 30px !important;
+}
+
+/* Sharekey header logo (customization.logo): Header.setBranding writes an
+ * inline `max-height:20px` on the <img>, so !important is required to bump
+ * it to the logo's native 24px.
+ */
+#header-logo {
+  cursor: pointer;
+  padding: 4px 12px 0 14px !important;
+}
+
+#header-logo img {
+  max-height: 24px !important;
+}
+
+/* Remove the "From Text/CSV" group from the xlsx Data tab. The button slot
+ * (#slot-btn-data-from-text) has no data-layout-name, so the layout config
+ * can't reach it — hide its whole .group plus the trailing separator so no
+ * empty gap is left. :has() is fine (editor runs in modern Chrome). Scoped
+ * to the spreadsheet's Data panel; the selector simply doesn't match in
+ * word/slide.
+ */
+.panel[data-tab="data"] .group:has(#slot-btn-data-from-text),
+.panel[data-tab="data"] .group:has(#slot-btn-data-from-text)+.separator {
+  display: none !important;
+}
+
+/* Legacy tab-row layout: our <li> follows the "View" tab. The toolbar mask
+ * starts at top:32px, so the control stays visible and clickable in view mode.
+ * inline-flex keeps it flowing among inline-block tabs, and the matching height
+ * prevents it from protruding. .sk-header-top overrides its placement in the header.
+ */
+.sk-edit-tab {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  vertical-align: top;
+  margin-left: 8px;
+  list-style: none;
+}
+
+/* kill the native tab-hover chrome on OUR li: the inset bottom box-shadow
+ * + grey hover background (toolbar.less:160-163), and the ::after bottom
+ * underline the tabs draw (revealed on hover). Our li isn't a real tab,
+ * so it needs none of it. !important beats the non-important native rules.
+ */
+.sk-edit-tab:hover {
+  box-shadow: none !important;
+  background-color: transparent !important;
+}
+
+.sk-edit-tab::after,
+.sk-edit-tab::before {
+  display: none !important;
+}
+
+.tooltip,
+.sk-tooltip {
+  box-sizing: border-box;
+  width: max-content;
+  max-width: none;
+  min-height: 18px;
+  padding: 2px 8px !important;
+  white-space: nowrap;
+  border-radius: 3px;
+  background: #728596;
+  color: #FFFFFF;
+  font-family: 'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 400;
+  text-align: center;
+  box-shadow: none;
+}
+
+.tooltip .tooltip-inner {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  max-width: none;
+}
+
+.sk-tooltip {
+  position: fixed;
+  display: none;
+  height: 18px;
+  z-index: 100000;
+  pointer-events: none;
+}
+
+.tooltip * {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  font-family: 'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif !important;
+  font-size: 10px !important;
+  line-height: 14px !important;
+  font-weight: 400 !important;
+  text-align: center !important;
+}
+
+.sk-edit-btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* fits inside the 28px tab row (was 32px → protruded) */
+  height: 24px;
+  padding: 0 8px 0 4px;
+  /* keeps box size stable across bordered/unbordered states */
+  border: 1px solid transparent;
+  border-radius: 5px;
+  /* free state; color drives icon (currentColor) + label */
+  background: #3fc0c4;
+  color: #FFFFFF;
+  font-family: 'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  /* margin-bottom lifts the button within the row */
+  margin-bottom: 5px;
+  transition: background .12s ease,border-color .12s ease,color .12s ease;
+}
+
+.theme-type-dark .sk-edit-btn {
+  background: #2FA0AF;
+}
+
+.sk-edit-btn__icon {
+  display: flex;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-right: 4px
+}
+
+.sk-edit-btn__icon svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+.sk-edit-btn__label {
+  display: block;
+}
+
+/* free (default) hover — not while pending/disabled */
+.sk-edit-btn:not(.is-editing):not(.is-locked):not(.is-refresh):not(:disabled):hover {
+  background: #41D1C9;
+}
+
+.theme-type-dark .sk-edit-btn:not(.is-editing):not(.is-locked):not(.is-refresh):not(:disabled):hover {
+  background: #3FC0C4;
+}
+
+/* editing — you hold the lock */
+.sk-edit-btn.is-editing {
+  background: #E2F5F6;
+  color: #2FA0AF;
+  border-color: #2FA0AF;
+}
+
+.sk-edit-btn.is-editing:hover {
+  background: #CFEDEF;
+}
+
+.theme-type-dark .sk-edit-btn.is-editing {
+  background: #2B434D;
+  color: #3FC0C4;
+  border-color: #3FC0C4;
+}
+
+.theme-type-dark .sk-edit-btn.is-editing:hover {
+  background: #2C4F59;
+}
+
+/* locked — someone else is editing (disabled) */
+.sk-edit-btn.is-locked {
+  background: rgba(53,80,105,0.15);
+  color: #FFFFFF;
+  border-color: transparent;
+  cursor: default;
+}
+
+.theme-type-dark .sk-edit-btn.is-locked {
+  background: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.5);
+  border-color: transparent;
+  cursor: default;
+}
+
+.sk-edit-btn:disabled {
+  cursor: default;
+  pointer-events: none;
+}
+
+/* refresh — conflict state. Same button shape/spacing as Edit, but with
+ * Refresh icon/text and the blue background from design.
+ */
+.sk-edit-btn.is-refresh {
+  background: #0F8CC9;
+  color: #FFFFFF;
+  border-color: transparent;
+}
+
+.sk-edit-btn.is-refresh:not(.is-refreshing):not(:disabled):hover {
+  background: #3FA3D4;
+}
+
+.sk-edit-btn.is-refresh:not(.is-refreshing):not(:disabled):active {
+  background: #3FA3D4;
+}
+
+.sk-edit-btn.is-refresh .sk-edit-btn__icon {
+  margin-right: 4px;
+}
+
+/* refreshing — disabled in-flight state after the user clicks Refresh.
+ * Uses a separate spinner icon and muted disabled colours from design.
+ */
+@keyframes sk-refreshing-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sk-edit-btn.is-refreshing,
+.sk-edit-btn.is-refreshing:disabled {
+  background: rgba(53,80,105,0.1);
+  color: rgba(53,80,105,0.55);
+  border-color: transparent;
+  cursor: default;
+  opacity: 1;
+}
+
+.sk-edit-btn.is-refreshing:hover,
+.sk-edit-btn.is-refreshing:active,
+.sk-edit-btn.is-refreshing:disabled:hover,
+.sk-edit-btn.is-refreshing:disabled:active {
+  background: rgba(53,80,105,0.1);
+  color: rgba(53,80,105,0.55);
+}
+
+.sk-edit-btn.is-refreshing .sk-edit-btn__icon {
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+}
+
+.sk-edit-btn.is-refreshing .sk-edit-btn__icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.sk-refreshing-icon {
+  display: block;
+  animation: sk-refreshing-spin 2s linear infinite;
+}
+
+/* ── "<who> is editing the document…" label ───────────────────────────
+ * Sits next to the Edit button; .sk-header-top moves both into the header.
+ * renderEditingLabel
+ * toggles the <li> display + the --self/--other modifier classes.
+ * TODO(figma): placeholder styling — exact colours / font / spacing
+ * pending the Figma specs (nodes 15802:85984 self, 15802:86051 other;
+ * MCP rate-limited). Tweak the values below once available.
+ */
+.sk-editing-tab {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  vertical-align: top;
+  margin-left: 8px;
+  list-style: none;
+}
+
+/* Win the cascade: OnlyOffice's `.toolbar .tabs li{align-items:end}` (0,2,1)
+ * beats a bare `.sk-editing-tab` (0,1,0), so the center above never applied.
+ * This selector (0,3,1) overrides it. NOTE: with centering now active, the
+ * label's `margin-bottom:5px` (below) nudges the centered label upward — keep
+ * or drop that margin depending on the look you want.
+ */
+.toolbar .tabs li.sk-editing-tab {
+  align-items: center;
+}
+
+.sk-editing-tab:hover {
+  box-shadow: none !important;
+  background-color: transparent !important;
+}
+
+.sk-editing-tab::after,
+.sk-editing-tab::before {
+  display: none !important;
+}
+
+.sk-editing-label {
+  /* centring is on .sk-editing-tab (the <li>) */
+  display: inline-flex;
+  font-family: 'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 400;
+  white-space: nowrap;
+  /* #3: rgba(53,80,105,.7) */
+  color: #355069B2;
+  /* This legacy tab-row margin lifts the label to align with the Edit button.
+   * .sk-header-top resets the margin when the label is placed in the header.
+   */
+  margin-bottom: 5px;
+}
+
+/* #4: the editing user (or "You") — semibold */
+.sk-editing-label__who {
+  font-weight: 600;
+}
+
+/* dark theme: #355069 would vanish */
+.theme-type-dark .sk-editing-label {
+  color: rgba(255,255,255,0.7);
+}
+
+/* Conflict label: "Updated by <user>" reuses the same label slot as the
+ * normal editing-status text. Kept as a modifier class so the base spacing,
+ * font and dark-theme fallback stay shared.
+ */
+.sk-editing-label--conflict {
+  color: #355069B2;
+}
+
+.theme-type-dark .sk-editing-label--conflict {
+  color: rgba(255,255,255,0.7);
+}
+
+@keyframes sk-dot-loader-blink {
+  0% {
+    opacity: .2;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: .2;
+  }
+}
+
+.sk-dot-loader {
+  display: inline;
+}
+
+.sk-dot-loader__dot {
+  color: inherit;
+  animation-name: sk-dot-loader-blink;
+  animation-duration: 1.4s;
+  animation-iteration-count: infinite;
+  animation-fill-mode: both;
+}
+
+.sk-dot-loader__dot:nth-of-type(2) {
+  animation-delay: .2s;
+}
+
+.sk-dot-loader__dot:nth-of-type(3) {
+  animation-delay: .4s;
+}
+
+/* ── Save (diskette) button — replaces the native quick-access Save ── */
+#slot-btn-dt-save {
+  /* hide native; ours takes its place */
+  display: none !important;
+}
+
+.sk-save-slot {
+  display: inline-flex;
+  align-items: center;
+}
+
+.sk-save-btn {
+  box-sizing: border-box;
+  margin: 2px 4px 0 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  /* idle (Figma) — drives the diskette via currentColor */
+  color: #A8A8A8;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  transition: color .12s ease,background .12s ease,opacity .12s ease;
+}
+
+.sk-save-btn__icon {
+  display: flex;
+  width: 24px;
+  height: 24px;
+}
+
+.sk-save-btn__icon svg {
+  display: block;
+  width: 24px;
+  height: 24px;
+}
+
+.sk-save-btn:not(:disabled):hover {
+  background: rgba(0,0,0,0.06);
+}
+
+/* The diskette has only two colours per design: grey at rest, black when
+ * there are unsaved changes. saved/error swap to a DISTINCT badge icon
+ * (renderSaveButton) — the diskette under the badge keeps its base colour:
+ * grey for saved (back to rest), black for error (changes still pending).
+ */
+.sk-save-btn--idle {
+  color rgba(168, 168, 168, 1);
+}
+
+.sk-save-btn--dirty {
+  color: #363636;
+}
+
+.sk-save-btn--saving {
+  color: #363636;
+  opacity: .5;
+  cursor: default;
+}
+
+.sk-save-btn--saved {
+  color: rgba(168, 168, 168, 1);
+}
+
+.sk-save-btn--error {
+  color: #363636;
+}
+
+.sk-save-btn:disabled {
+  cursor: default;
+}
+
+/* Dark theme (editor sets body.theme-type-dark): the "dark" dirty glyph
+ * would vanish on the dark toolbar, so flip the prominent states to a
+ * light glyph. Idle stays mid-grey (visible on both). The saved/error
+ * badges carry their own fills, so only the diskette base needs flipping.
+ * More specific than the base rules → wins; injected late so no !important.
+ */
+.theme-type-dark .sk-save-btn {
+  color: rgba(255, 255, 255, 0.31);
+}
+
+.theme-type-dark .sk-save-btn--dirty {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.theme-type-dark .sk-save-btn:not(:disabled):hover {
+  background: rgba(255,255,255,0.1);
+}
+
+/* The legacy header slot needs a bottom margin to align its buttons.
+ * .sk-header-top removes that margin when the controls are in the top row.
+ */
+#slot-btn-search {
+  margin-bottom: 5px
+}
+
+/* ── Main App button — header-right, before the search slot. */
+.sk-main-app-slot {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+.sk-main-app-btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px 0 4px;
+  border: 1px solid #2FA0AF;
+  border-radius: 5px;
+  background: white;
+  color: #2FA0AF;
+  font-family: 'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  margin-bottom: 5px;
+  transition: background .12s ease;
+}
+
+.sk-main-app-btn__icon {
+  display: flex;
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.sk-main-app-btn__icon svg {
+  display: block;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.sk-main-app-btn:not(:disabled):hover {
+  background: #F0F8F9;
+}
+
+.theme-type-dark .sk-main-app-btn {
+  background: #242B2E;
+  color: #3FC0C4;
+  border-radius: #3FC0C4;
+}
+
+.theme-type-dark .sk-main-app-btn:not(:disabled):hover {
+  background: #253A3F;
+}
+
+#slot-btn-dt-quick-access {
+  display: none !important;
+}
+
+.download-slot {
+  display: inline-flex;
+  align-items: center;
+}
+
+.download-btn {
+  box-sizing: border-box;
+  margin: 2px 0 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: #363636;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  transition: color .12s ease,background .12s ease;
+}
+
+.download-btn__icon {
+  display: flex;
+  width: 24px;
+  height: 24px;
+}
+
+.download-btn__icon svg {
+  display: block;
+  width: 24px;
+  height: 24px;
+}
+
+.download-btn:not(:disabled):hover {
+  background: rgba(0,0,0,0.06);
+}
+
+.theme-type-dark .download-btn {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.theme-type-dark .download-btn:not(:disabled):hover {
+  background: rgba(255,255,255,0.1);
+}
+
+.download-btn:disabled {
+  opacity: var(--component-disabled-opacity, 0.4);
+}
+
+.theme-type-dark .download-btn:disabled {
+  color: rgba(255, 255, 255, 0.31);
+  opacity: unset;
+}
+
+.btn-header:not(.dropdown-toggle):hover:not(:disabled) {
+  background: rgba(0,0,0,0.06) !important;
+}
+
+.btn-header:not(.dropdown-toggle) {
+  width: 28px !important;
+  height: 28px !important;
+  margin: 2px 4px 0 4px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: #363636 !important;
+}
+
+.theme-type-dark .btn-header:not(.dropdown-toggle) {
+  color: rgba(255, 255, 255, 0.8) !important;
+}
+
+.theme-type-dark .btn-header:not(.dropdown-toggle):disabled {
+  color: rgba(255, 255, 255, 0.31) !important;
+  opacity: unset !important;
+}
+
+.theme-type-dark .btn-header:not(.dropdown-toggle):disabled .slideshow-play-icon {
+  fill: rgba(15, 140, 201, 0.5);
+}
+
+.theme-type-dark .btn-header:not(.dropdown-toggle):hover:not(:disabled) {
+  background: rgba(255,255,255,0.1) !important;
+}
+
+/* The iPad scroll reset must not animate: smooth scrolling makes the
+ * snap-back visible, which is worse than the drift it undoes.
+ */
+:root.sk-viewport-scroll-pinned #viewport {
+  scroll-behavior: auto !important;
+}
