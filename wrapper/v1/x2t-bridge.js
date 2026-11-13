@@ -1065,7 +1065,10 @@
 	function replaceXmlAttribute(tag, name, value) {
 		return tag.replace(new RegExp('(\\s' + name + '=)("|\')(.*?)\\2'),
 			function (match, prefix, quote) {
-				return prefix + quote + value + quote;
+				// URI encoding leaves apostrophes intact; escape them for XML quotes
+				const attributeValue = quote === "'" ? value.replace(/'/g, '&apos;') : value;
+
+				return prefix + quote + attributeValue + quote;
 			});
 	}
 

@@ -1,5 +1,22 @@
 const UTIF = require('utif');
 
+const TIFF_ORIENTATION = {
+  NORMAL: 1,
+  MIRROR_HORIZONTAL: 2,
+  ROTATE_180: 3,
+  MIRROR_VERTICAL: 4,
+  MIRROR_MAIN_DIAGONAL: 5,
+  ROTATE_90_CLOCKWISE: 6,
+  MIRROR_ANTI_DIAGONAL: 7,
+  ROTATE_90_COUNTERCLOCKWISE: 8
+};
+
+// UTIF returns one byte per channel, in red, green, blue, alpha order
+const RGBA_CHANNEL_COUNT = 4;
+const RGB_CHANNEL_COUNT = 3;
+const ALPHA_CHANNEL_OFFSET = 3;
+const MAX_CHANNEL_VALUE = 255;
+
 function decode(bytes) {
   const directories = UTIF.decode(bytes);
   const image = directories.find(function (directory) {
@@ -14,7 +31,7 @@ function decode(bytes) {
   const height = image.t257[0];
   const hasValidDimensions = Number.isSafeInteger(width) && width > 0 &&
     Number.isSafeInteger(height) && height > 0 &&
-    Number.isSafeInteger(width * height * 4);
+    Number.isSafeInteger(width * height * RGBA_CHANNEL_COUNT);
 
   if (!hasValidDimensions) {
     throw new Error('TIFF image dimensions are invalid');
@@ -34,20 +51,19 @@ function decode(bytes) {
 
   const data = UTIF.toRGBA8(image);
 
-  if (data.length !== width * height * 4) {
+  if (data.length !== width * height * RGBA_CHANNEL_COUNT) {
     throw new Error('TIFF pixel data is incomplete');
   }
 
   const hasAssociatedAlpha = photometric === 2 && image.t338 && image.t338[0] === 1;
 
   if (hasAssociatedAlpha) {
-    for (let offset = 0; offset < data.length; offset += 4) {
-      const alpha = data[offset + 3];
+    for (let offset = 0; offset < data.length; offset += RGBA_CHANNEL_COUNT) {
+      const alpha = data[offset + ALPHA_CHANNEL_OFFSET];
 
-      if (alpha > 0 && alpha < 255) {
-        for (let channel = 0; channel < 3; channel++) {
-          data[offset + channel] = Math.min(255,
-            Math.round(data[offset + channel] * 255 / alpha));
+      if (alpha > 0 && alpha < MAX_CHANNEL_VALUE) {
+        for (let channel = 0; channel < RGB_CHANNEL_COUNT; channel++) {
+          data[offset + channel] = Math.min(MAX_CHANNEL_VALUE, Math.round(data[offset + channel] * MAX_CHANNEL_VALUE / alpha));
         }
       }
     }
@@ -57,7 +73,7 @@ function decode(bytes) {
     width,
     height,
     data,
-    orientation: image.t274 ? image.t274[0] : 1
+    orientation: image.t274 ? image.t274[0] : TIFF_ORIENTATION.NORMAL
   };
 }
 
@@ -72,23 +88,31 @@ function toPngDataUrl(bytes) {
   pixels.data.set(image.data);
   context.putImageData(pixels, 0, 0);
 
-  if (image.orientation < 2 || image.orientation > 8) {
+  const canSkipOrientationTransform = image.orientation < TIFF_ORIENTATION.MIRROR_HORIZONTAL ||
+      image.orientation > TIFF_ORIENTATION.ROTATE_90_COUNTERCLOCKWISE;
+
+  if (canSkipOrientationTransform) {
     return canvas.toDataURL('image/png');
   }
 
   const orientedCanvas = document.createElement('canvas');
-  const swapsDimensions = image.orientation >= 5;
+  const swapsDimensions = [
+    TIFF_ORIENTATION.MIRROR_MAIN_DIAGONAL,
+    TIFF_ORIENTATION.ROTATE_90_CLOCKWISE,
+    TIFF_ORIENTATION.MIRROR_ANTI_DIAGONAL,
+    TIFF_ORIENTATION.ROTATE_90_COUNTERCLOCKWISE
+  ].includes(image.orientation);
   orientedCanvas.width = swapsDimensions ? image.height : image.width;
   orientedCanvas.height = swapsDimensions ? image.width : image.height;
 
   const transforms = {
-    2: [-1, 0, 0, 1, image.width, 0],
-    3: [-1, 0, 0, -1, image.width, image.height],
-    4: [1, 0, 0, -1, 0, image.height],
-    5: [0, 1, 1, 0, 0, 0],
-    6: [0, 1, -1, 0, image.height, 0],
-    7: [0, -1, -1, 0, image.height, image.width],
-    8: [0, -1, 1, 0, 0, image.width]
+    [TIFF_ORIENTATION.MIRROR_HORIZONTAL]: [-1, 0, 0, 1, image.width, 0],
+    [TIFF_ORIENTATION.ROTATE_180]: [-1, 0, 0, -1, image.width, image.height],
+    [TIFF_ORIENTATION.MIRROR_VERTICAL]: [1, 0, 0, -1, 0, image.height],
+    [TIFF_ORIENTATION.MIRROR_MAIN_DIAGONAL]: [0, 1, 1, 0, 0, 0],
+    [TIFF_ORIENTATION.ROTATE_90_CLOCKWISE]: [0, 1, -1, 0, image.height, 0],
+    [TIFF_ORIENTATION.MIRROR_ANTI_DIAGONAL]: [0, -1, -1, 0, image.height, image.width],
+    [TIFF_ORIENTATION.ROTATE_90_COUNTERCLOCKWISE]: [0, -1, 1, 0, 0, image.width]
   };
   const orientedContext = orientedCanvas.getContext('2d');
   orientedContext.setTransform(...transforms[image.orientation]);

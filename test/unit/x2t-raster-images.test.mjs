@@ -68,6 +68,30 @@ describe('raster media normalization boundaries', () => {
     expect(types).toContain("ContentType='image/png'");
   });
 
+  it('preserves images with apostrophes in single- and double-quoted XML attributes', async () => {
+    const input = read('docx/bmp-apostrophe.docx');
+    const normalized = await bridge.normalizeRasterMedia(input);
+    const parts = unzip(normalized);
+    const rels = parts.get('word/_rels/document.xml.rels').toString();
+    const types = parts.get('[Content_Types].xml').toString();
+
+    expect(parts.has("word/media/editor's.png")).toBe(true);
+    expect(rels).toContain("Target='media/editor&apos;s.png'");
+    expect(rels).toContain(`Target="/word/media/editor's.png"`);
+    expect(types).toContain("PartName='/word/media/editor&apos;s.png'");
+
+    const bin = await convert(normalized, { from: 'docx', to: 'bin' });
+    const saved = await convert(bin, { from: 'bin', to: 'docx' });
+    const reopened = await convert(saved, { from: 'docx', to: 'bin' });
+    const savedAgain = await convert(reopened, { from: 'bin', to: 'docx' });
+    const images = [...unzip(savedAgain)]
+      .filter(([name]) => /\/media\/.*\.png$/i.test(name))
+      .map(([, bytes]) => bytes);
+    const expectedImage = Buffer.from(read('images/palette.png'));
+
+    expect(images.some(image => image.equals(expectedImage))).toBe(true);
+  });
+
   it('leaves an SVG package byte-for-byte unchanged', async () => {
     const input = read('docx/svg-image.docx');
 
