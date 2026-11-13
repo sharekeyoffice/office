@@ -31,7 +31,9 @@
 
     worksheetPrototype.getCursorTypeFromXY = function (x, y) {
       const cursor = getCursor.apply(this, arguments);
-      const isCell = cursor && cursor.target === excel.c_oTargetType.Cells;
+      const isHyperlink = cursor && cursor.target === excel.c_oTargetType.Hyperlink;
+      const cellCursor = isHyperlink ? cursor.cellCursor : cursor;
+      const isCell = cellCursor && cellCursor.target === excel.c_oTargetType.Cells && cellCursor.col >= 0 && cellCursor.row >= 0;
 
       if (!isViewer() || !isCell) {
         return cursor;
@@ -41,8 +43,8 @@
       const sheetX = this.getRightToLeft() ? this.getCtxWidth() - x : x;
 
       this._drawElements(function (range, offsetX, offsetY) {
-        if (range.contains(cursor.col, cursor.row)) {
-          filterCursor = this.af_checkCursor(sheetX + offsetX, y + offsetY, cursor.row, cursor.col);
+        if (range.contains(cellCursor.col, cellCursor.row)) {
+          filterCursor = this.af_checkCursor(sheetX + offsetX, y + offsetY, cellCursor.row, cellCursor.col);
         }
 
         return filterCursor === null;
@@ -151,7 +153,9 @@
       });
     }
 
-    function withoutHistory(callback) {
+    // apply or reset viewer-only filters without adding document undo entries
+    // these temporary view changes are discarded before editing is enabled
+    function runWithoutUndoHistory(callback) {
       const removeLastPoint = history.Remove_LastPoint;
       const wasApplying = applyingFilter;
       applyingFilter = true;
@@ -201,7 +205,7 @@
         return;
       }
 
-      withoutHistory(function () {
+      runWithoutUndoHistory(function () {
         localSession.worksheets.forEach(function (state, model) {
           model.AutoFilter = cloneFilter(state.autoFilter);
           state.tables.forEach(function (entry) {
@@ -259,7 +263,7 @@
       worksheet._isLockedDefNames = function () {};
 
       try {
-        return withoutHistory(callback);
+        return runWithoutUndoHistory(callback);
       } finally {
         api.canEdit = canEdit;
         excel.filteringMode = filteringMode;
