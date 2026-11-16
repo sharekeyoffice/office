@@ -1460,5 +1460,70 @@
     }, 100);
   }
 
+  // Keep the right edge draggable while the settings panel is collapsed
+  // Its minimum width must match the icon strip, not the expanded panel
+  function patchRightMenuResizeBounds() {
+    const editorNamespace = window.DE || window.SSE || window.PE;
+    const controllers = editorNamespace && editorNamespace.controllers;
+    const viewportController = controllers && controllers.Viewport;
+    const rightMenuController = controllers && controllers.RightMenu;
+    const viewport = viewportController && viewportController.viewport;
+    const rightMenu = rightMenuController && rightMenuController.rightmenu;
+    const layout = viewport && viewport.hlayout;
+    const notifications = window.Common && window.Common.NotificationCenter;
+    const isReady = layout && rightMenu && notifications;
+
+    if (!isReady) {
+      return false;
+    }
+
+    if (rightMenu.__skResizeBoundsPatched) {
+      return true;
+    }
+
+    const iconStrip = rightMenu.$el.find('.tool-menu-btns');
+
+    if (!iconStrip.outerWidth()) {
+      return false;
+    }
+
+    function updateResizeBounds() {
+      const rightPanel = layout.getItem('right');
+      const rightSplitter = layout.splitters.find(function (splitter) {
+        return splitter.resizer.el === rightPanel.resize.el;
+      });
+      const resizer = rightSplitter.resizer;
+      const collapsedWidth = rightMenu.$el.find('.tool-menu-btns').outerWidth();
+      const isRightToLeft = window.Common.UI.isRTL();
+      const useCollapsedMinimum = rightMenu.minimizedMode && isRightToLeft;
+      const useCollapsedMaximum = rightMenu.minimizedMode && !isRightToLeft;
+
+      resizer.minpos = useCollapsedMinimum ? collapsedWidth : rightPanel.resize.min;
+      resizer.maxpos = useCollapsedMaximum ? -collapsedWidth : rightPanel.resize.max;
+
+      if (rightMenu.minimizedMode) {
+        layout.hideItemResizer('right', false);
+      }
+    }
+
+    updateResizeBounds();
+    rightMenu.on('render:after', updateResizeBounds);
+    notifications.on('layout:changed', updateResizeBounds);
+    rightMenu.__skResizeBoundsPatched = true;
+
+    return true;
+  }
+
+  if (!patchRightMenuResizeBounds()) {
+    let rightMenuAttempts = 0;
+    const rightMenuTimer = setInterval(function () {
+      const shouldStop = patchRightMenuResizeBounds() || ++rightMenuAttempts >= 600;
+
+      if (shouldStop) {
+        clearInterval(rightMenuTimer);
+      }
+    }, 100);
+  }
+
   log('loaded');
 })();
