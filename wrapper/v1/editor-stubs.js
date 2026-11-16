@@ -126,6 +126,40 @@
     return true;
   }
 
+  // Word measures line-break markers with ASCW3, which our manifest replaces
+  // with the default fallback. Load that face before layout; an unloaded face
+  // leaves the previous shaping font active and produces oversized selections
+  function patchWordFallbackFontPreload() {
+    const common = window.AscCommon;
+    const loader = common && common.g_font_loader;
+
+    if (!loader || loader.__wordFallbackFontPreload) {
+      return;
+    }
+
+    ['LoadDocumentFonts', 'LoadDocumentFonts2'].forEach(function (methodName) {
+      const original = loader[methodName];
+      loader[methodName] = function (fonts) {
+        const isWord = this.Api && this.Api.editorId === common.c_oEditorId.Word;
+        const needsFallback = isWord && Array.isArray(fonts);
+        const args = Array.from(arguments);
+
+        if (needsFallback) {
+          const documentFonts = fonts.filter(function (font) {
+            return font.name !== FONT_FALLBACK_DEFAULT;
+          });
+
+          // Aliases can share one font info and overwrite its requested styles
+          args[0] = documentFonts.concat([{ name: FONT_FALLBACK_DEFAULT, NeedStyles: 0x0F }]);
+        }
+
+        return original.apply(this, args);
+      };
+    });
+
+    loader.__wordFallbackFontPreload = true;
+  }
+
   function primeFontPickerOnce() {
     if (!window.AscFonts || !window.AscFonts.g_fontApplication) return false;
     var app = window.AscFonts.g_fontApplication;
@@ -988,6 +1022,7 @@
           // file slots to them BEFORE the document opens (so glyphs load real
           // Arial/Times/Courier). No-op unless SK_REAL_MSCOREFONTS is on.
           ensureRealMsFontsOnce();
+          patchWordFallbackFontPreload();
           this.api.OpenDocumentFromBin(null, bin);
         } else if (origLoadBinary) {
           origLoadBinary(data);
