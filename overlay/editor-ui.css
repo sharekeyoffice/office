@@ -548,6 +548,57 @@
   cursor: default;
 }
 
+/* Print button, next to Save in the quick-access toolbar. */
+.sk-print-slot {
+  display: inline-flex;
+  align-items: center;
+}
+.sk-print-btn {
+  box-sizing: border-box;
+  margin: 2px 4px 0 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: rgba(0, 0, 0, .8);
+  cursor: pointer;
+  transition:
+    color .12s ease,
+    background .12s ease,
+    opacity .12s ease;
+}
+.sk-print-btn svg {
+  display: block;
+  width: 24px;
+  height: 24px;
+}
+.sk-print-btn:not(:disabled):hover {
+  background: rgba(0, 0, 0, .06);
+}
+.sk-print-btn:focus-visible {
+  outline: 2px solid #2FA0AF;
+  outline-offset: 1px;
+}
+.sk-print-btn:disabled {
+  opacity: var(--component-disabled-opacity,.4);
+  cursor: default;
+}
+.theme-type-dark .sk-print-btn {
+  color: rgba(255, 255, 255, .8);
+}
+.theme-type-dark .sk-print-btn:not(:disabled):hover {
+  background: rgba(255, 255, 255, .1);
+}
+.theme-type-dark .sk-print-btn:disabled {
+  color: rgba(255, 255, 255, .31);
+  opacity: 1;
+}
+
 /* Dark theme (editor sets body.theme-type-dark): the "dark" dirty glyph
  * would vanish on the dark toolbar, so flip the prominent states to a
  * light glyph. Idle stays mid-grey (visible on both). The saved/error
