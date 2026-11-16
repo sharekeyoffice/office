@@ -158,6 +158,17 @@
     return spreadsheetApi.asc_closeCellEditor() !== false;
   };
 
+  WrapperPostMessage.prototype.capturePreview = function (iframeWindow, format) {
+    var api = iframeWindow.Asc && iframeWindow.Asc.editor;
+    var viewFilters = api && api.__skViewFilters;
+
+    if (format === 'xlsx' && viewFilters) {
+      return viewFilters.capturePreview();
+    }
+
+    return global.OfficePreview.capture(iframeWindow, format);
+  };
+
   WrapperPostMessage.prototype.downloadCurrentFile = function (onPermissionGranted) {
     var self = this;
     var formatByEditor = {
@@ -207,7 +218,7 @@
         binBytes = capture();
 
         if (['docx', 'pptx', 'xlsx'].includes(ext) && global.OfficePreview) {
-          objectPreview = global.OfficePreview.capture(iframe.contentWindow, ext);
+          objectPreview = self.capturePreview(iframe.contentWindow, ext);
         }
       } catch (e) {
         throw new Error('failed to capture current editor state: ' + (e && e.message ? e.message : e));
@@ -972,7 +983,7 @@
     try {
       binBytes = capture();
       if (['docx', 'pptx', 'xlsx'].includes(ext) && global.OfficePreview) {
-        objectPreview = global.OfficePreview.capture(iframe.contentWindow, ext);
+        objectPreview = self.capturePreview(iframe.contentWindow, ext);
       }
     } catch (e) {
       self.setSaveState('error');

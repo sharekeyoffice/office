@@ -33,6 +33,7 @@ const GLUE = [
   'wrapper-mount.js', 'wrapper-postmessage.js', 'wrapper-heartbeat.js',
   'wrapper-modal-manager.js', 'x2t-bridge.js', 'edit-host-demo.html',
   'wrapper-repeat-last-action.js', 'ooxml-preview.js',
+  'sheet-view-filters.js',
 ];
 
 function cpFile(src, dst) {
@@ -45,7 +46,7 @@ function sync() {
     const s = path.join(V1, f);
     if (fs.existsSync(s)) cpFile(s, path.join(PUBLIC, f));
   }
-  for (const f of ['confirmation-modal.css', 'fonts.css', 'edit.css', 'welcome-screen.css']) {
+  for (const f of ['confirmation-modal.css', 'fonts.css', 'edit.css', 'editor-ui.css', 'welcome-screen.css']) {
     const s = path.join(OVERLAY, f);
     if (fs.existsSync(s)) cpFile(s, path.join(PUBLIC, f));
   }
