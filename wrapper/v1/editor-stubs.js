@@ -126,6 +126,40 @@
     return true;
   }
 
+  // Word measures line-break markers with ASCW3, which our manifest replaces
+  // with the default fallback. Load that face before layout; an unloaded face
+  // leaves the previous shaping font active and produces oversized selections
+  function patchWordFallbackFontPreload() {
+    const common = window.AscCommon;
+    const loader = common && common.g_font_loader;
+
+    if (!loader || loader.__wordFallbackFontPreload) {
+      return;
+    }
+
+    ['LoadDocumentFonts', 'LoadDocumentFonts2'].forEach(function (methodName) {
+      const original = loader[methodName];
+      loader[methodName] = function (fonts) {
+        const isWord = this.Api && this.Api.editorId === common.c_oEditorId.Word;
+        const needsFallback = isWord && Array.isArray(fonts);
+        const args = Array.from(arguments);
+
+        if (needsFallback) {
+          const documentFonts = fonts.filter(function (font) {
+            return font.name !== FONT_FALLBACK_DEFAULT;
+          });
+
+          // Aliases can share one font info and overwrite its requested styles
+          args[0] = documentFonts.concat([{ name: FONT_FALLBACK_DEFAULT, NeedStyles: 0x0F }]);
+        }
+
+        return original.apply(this, args);
+      };
+    });
+
+    loader.__wordFallbackFontPreload = true;
+  }
+
   function primeFontPickerOnce() {
     if (!window.AscFonts || !window.AscFonts.g_fontApplication) return false;
     var app = window.AscFonts.g_fontApplication;
@@ -988,6 +1022,7 @@
           // file slots to them BEFORE the document opens (so glyphs load real
           // Arial/Times/Courier). No-op unless SK_REAL_MSCOREFONTS is on.
           ensureRealMsFontsOnce();
+          patchWordFallbackFontPreload();
           this.api.OpenDocumentFromBin(null, bin);
         } else if (origLoadBinary) {
           origLoadBinary(data);
@@ -1070,7 +1105,60 @@
     }
   }
 
+  const WEBP_DECODE_TIMEOUT_MS = 15_000;
+
+  function readWebpAsPngDataUrl(file) {
+    const imageUrl = URL.createObjectURL(file);
+    const image = new Image();
+    let timeout;
+
+    return new Promise(function (resolve, reject) {
+      timeout = setTimeout(function () {
+        reject(new Error('WEBP image decoding timed out'));
+      }, WEBP_DECODE_TIMEOUT_MS);
+
+      image.onload = function () {
+        const canvas = document.createElement('canvas');
+
+        try {
+          canvas.width = image.naturalWidth;
+          canvas.height = image.naturalHeight;
+          canvas.getContext('2d').drawImage(image, 0, 0);
+          canvas.toBlob(function (blob) {
+            if (!blob) {
+              reject(new Error('WEBP image could not be converted to PNG'));
+              return;
+            }
+
+            readFileAsDataURL(blob).then(resolve, reject);
+          }, 'image/png');
+        } catch (error) {
+          reject(error);
+        } finally {
+          canvas.width = 0;
+          canvas.height = 0;
+        }
+      };
+      image.onerror = function () {
+        reject(new Error('WEBP image could not be decoded'));
+      };
+      image.src = imageUrl;
+    }).finally(function () {
+      clearTimeout(timeout);
+      image.onload = null;
+      image.onerror = null;
+      URL.revokeObjectURL(imageUrl);
+    });
+  }
+
   function readFileAsMediaUrl(file) {
+    const isWebpFile = /\.webp$/i.test(file.name || '') ||
+      /^image\/webp$/i.test(file.type || '');
+
+    if (isWebpFile) {
+      return readWebpAsPngDataUrl(file);
+    }
+
     var bridge = wrapperBridge();
     var urls = window.AscCommon && window.AscCommon.g_oDocumentUrls;
     if (!isSvgFile(file) || !bridge || !urls || typeof urls.addImageUrl !== 'function') {
@@ -1091,8 +1179,21 @@
 
   function patchUploadImageFiles() {
     var AscCommon = window.AscCommon;
-    if (!AscCommon || typeof AscCommon.UploadImageFiles !== 'function') return false;
-    if (AscCommon.__localUploadPatched) return true;
+    const uploadOptions = AscCommon && AscCommon.c_oAscImageUploadProp;
+    const isUploadReady = AscCommon && typeof AscCommon.UploadImageFiles === 'function' &&
+      uploadOptions;
+
+    if (!isUploadReady) {
+      return false;
+    }
+
+    if (AscCommon.__localUploadPatched) {
+      return true;
+    }
+
+    if (uploadOptions.SupportedFormats.indexOf('webp') === -1) {
+      uploadOptions.SupportedFormats.push('webp');
+    }
 
     AscCommon.UploadImageFiles = function (files, documentId, documentUserId, jwt, shardKey, wopiSrc, userSessionId, callback) {
       var ID = window.Asc && window.Asc.c_oAscError && window.Asc.c_oAscError.ID;
@@ -1263,6 +1364,12 @@
     var dh = ns.controllers.DocumentHolder;
     var api = ns.controllers.Main.api;
     if (!api || !dh.permissions || typeof api.asc_checkNeedCallback !== 'function') return false;
+    var viewFilters = window.parent.OfficeSheetFilters;
+
+    if (viewFilters) {
+      viewFilters.install(window);
+    }
+
     if (dh.permissions.isEdit !== true) return false;                     // edit capability off → nothing to do
     if (!api.asc_checkNeedCallback('asc_onHyperlinkClick')) return false; // setEvents hasn't run → don't pre-empt it
 
@@ -1457,6 +1564,71 @@
     var triesFC = 0;
     var ivFC = setInterval(function () {
       if (patchFontComboThumbnails() || ++triesFC > 600) clearInterval(ivFC);
+    }, 100);
+  }
+
+  // Keep the right edge draggable while the settings panel is collapsed
+  // Its minimum width must match the icon strip, not the expanded panel
+  function patchRightMenuResizeBounds() {
+    const editorNamespace = window.DE || window.SSE || window.PE;
+    const controllers = editorNamespace && editorNamespace.controllers;
+    const viewportController = controllers && controllers.Viewport;
+    const rightMenuController = controllers && controllers.RightMenu;
+    const viewport = viewportController && viewportController.viewport;
+    const rightMenu = rightMenuController && rightMenuController.rightmenu;
+    const layout = viewport && viewport.hlayout;
+    const notifications = window.Common && window.Common.NotificationCenter;
+    const isReady = layout && rightMenu && notifications;
+
+    if (!isReady) {
+      return false;
+    }
+
+    if (rightMenu.__skResizeBoundsPatched) {
+      return true;
+    }
+
+    const iconStrip = rightMenu.$el.find('.tool-menu-btns');
+
+    if (!iconStrip.outerWidth()) {
+      return false;
+    }
+
+    function updateResizeBounds() {
+      const rightPanel = layout.getItem('right');
+      const rightSplitter = layout.splitters.find(function (splitter) {
+        return splitter.resizer.el === rightPanel.resize.el;
+      });
+      const resizer = rightSplitter.resizer;
+      const collapsedWidth = rightMenu.$el.find('.tool-menu-btns').outerWidth();
+      const isRightToLeft = window.Common.UI.isRTL();
+      const useCollapsedMinimum = rightMenu.minimizedMode && isRightToLeft;
+      const useCollapsedMaximum = rightMenu.minimizedMode && !isRightToLeft;
+
+      resizer.minpos = useCollapsedMinimum ? collapsedWidth : rightPanel.resize.min;
+      resizer.maxpos = useCollapsedMaximum ? -collapsedWidth : rightPanel.resize.max;
+
+      if (rightMenu.minimizedMode) {
+        layout.hideItemResizer('right', false);
+      }
+    }
+
+    updateResizeBounds();
+    rightMenu.on('render:after', updateResizeBounds);
+    notifications.on('layout:changed', updateResizeBounds);
+    rightMenu.__skResizeBoundsPatched = true;
+
+    return true;
+  }
+
+  if (!patchRightMenuResizeBounds()) {
+    let rightMenuAttempts = 0;
+    const rightMenuTimer = setInterval(function () {
+      const shouldStop = patchRightMenuResizeBounds() || ++rightMenuAttempts >= 600;
+
+      if (shouldStop) {
+        clearInterval(rightMenuTimer);
+      }
     }, 100);
   }
 
