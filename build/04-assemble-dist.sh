@@ -26,6 +26,7 @@ rm -rf "$DIST"; mkdir -p "$DIST"
 
 echo "→ wrapper sources at root"
 cp "$V1"/{edit.html,edit-host-demo.html,editor-stubs.js,wrapper-boot.js,wrapper-customization.js,wrapper-mount.js,wrapper-postmessage.js,wrapper-heartbeat.js,wrapper-modal-manager.js,wrapper-repeat-last-action.js,x2t-bridge.js,ooxml-preview.js} "$DIST/"
+node "$SCRIPT_DIR/build-image-rasterizer.js" "$DIST"
 cp "$V1/printing.js" "$DIST/"
 cp "$V1/sheet-view-filters.js" "$DIST/"
 echo "→ service-worker stub"
