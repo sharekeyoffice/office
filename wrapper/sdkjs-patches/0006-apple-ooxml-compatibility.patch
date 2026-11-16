@@ -1,0 +1,42 @@
+diff --git a/common/Shapes/SerializeWriter.js b/common/Shapes/SerializeWriter.js
+--- a/common/Shapes/SerializeWriter.js
++++ b/common/Shapes/SerializeWriter.js
+@@ -4782,6 +4782,10 @@
+             this.StartRecord(1);
+ 
+             var _gd = gdLst[i];
++            // Apple Quick Look rejects the built-in short-side guide in
++            // custom geometry. Use its equivalent formula without freezing size.
++            if (_gd.formula === AscFormat.FORMULA_TYPE_VALUE && _gd.x === "ss")
++                _gd = {name: _gd.name, formula: AscFormat.FORMULA_TYPE_MIN, x: "w", y: "h"};
+ 
+             this.WriteUChar(g_nodeAttributeStart);
+             this._WriteString1(0, _gd.name);
+diff --git a/word/Editor/Serialize2.js b/word/Editor/Serialize2.js
+--- a/word/Editor/Serialize2.js
++++ b/word/Editor/Serialize2.js
+@@ -4513,7 +4513,23 @@
+ 			this.memory.WriteString2(styleId);
+ 		}
+ 		
+-		this.WriteTblPr(table.Pr, table);
++		// Quick Look ignores Table Grid's inherited borders. Include them in
++        // the serialized copy, including for tables loaded from older files.
++        var tablePr = table.Pr;
++        var styles = table.Get_Styles();
++        if (!table.bPresentation && styles && styleId === styles.Get_Default_TableGrid())
++        {
++            tablePr = table.Pr.Copy();
++            var borders = table.Get_CompiledPr(false).TablePr.TableBorders;
++            var sides = ["Top", "Bottom", "Left", "Right", "InsideH", "InsideV"];
++            for (var i = 0; i < sides.length; ++i)
++            {
++                var side = sides[i];
++                if (undefined === tablePr.TableBorders[side] && undefined !== borders[side])
++                    tablePr.TableBorders[side] = borders[side].Copy();
++            }
++        }
++        this.WriteTblPr(tablePr, table);
+ 		//Look
+ 		var oLook = table.Get_TableLook();
+ 		if(null != oLook)

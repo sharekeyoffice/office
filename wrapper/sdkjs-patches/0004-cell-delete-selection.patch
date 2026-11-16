@@ -1,0 +1,19 @@
+diff --git a/cell/view/EventsController.js b/cell/view/EventsController.js
+--- a/cell/view/EventsController.js
++++ b/cell/view/EventsController.js
+@@ -1122,6 +1122,15 @@
+ 						}
+ 						nRetValue = keydownresult_PreventAll;
+ 
++						// Clear multi-cell selections for Backspace (Delete on Mac)
++						// through the normal range path instead of editing the active cell.
++						const aSelectedRanges = oWs && oWs.getSelectedRanges();
++						if (aSelectedRanges && (aSelectedRanges.length > 1 ||
++							(aSelectedRanges.length === 1 && !aSelectedRanges[0].isOneCell()))) {
++							oThis.handlers.trigger("empty");
++							break;
++						}
++
+ 						// When backspace is pressed, the focus is not in the editor (we erase the contents)
+ 						const oEnterOptions = new AscCommonExcel.CEditorEnterOptions();
+ 						oEnterOptions.newText = '';

@@ -32,7 +32,8 @@ const GLUE = [
   'editor-stubs.js', 'wrapper-boot.js', 'wrapper-customization.js',
   'wrapper-mount.js', 'wrapper-postmessage.js', 'wrapper-heartbeat.js',
   'wrapper-modal-manager.js', 'x2t-bridge.js', 'edit-host-demo.html',
-  'wrapper-repeat-last-action.js',
+  'wrapper-repeat-last-action.js', 'ooxml-preview.js', 'printing.js',
+  'sheet-view-filters.js',
 ];
 
 function cpFile(src, dst) {
@@ -41,11 +42,13 @@ function cpFile(src, dst) {
 }
 
 function sync() {
+  require('./build-image-rasterizer')(PUBLIC);
+
   for (const f of GLUE) {
     const s = path.join(V1, f);
     if (fs.existsSync(s)) cpFile(s, path.join(PUBLIC, f));
   }
-  for (const f of ['confirmation-modal.css', 'fonts.css', 'edit.css', 'welcome-screen.css']) {
+  for (const f of ['confirmation-modal.css', 'fonts.css', 'edit.css', 'editor-ui.css', 'welcome-screen.css']) {
     const s = path.join(OVERLAY, f);
     if (fs.existsSync(s)) cpFile(s, path.join(PUBLIC, f));
   }
@@ -57,6 +60,11 @@ function sync() {
   if (fs.existsSync(imagesSrc))
     for (const f of fs.readdirSync(imagesSrc))
       cpFile(path.join(imagesSrc, f), path.join(PUBLIC, 'images', f));
+  // Stage the pinned ZIP engine on first sync; normal syncs leave it cached.
+  for (const f of ['zlib.js', 'zlib.wasm', 'zlib_ie.js']) {
+    const dst = path.join(PUBLIC, 'sdkjs/common/zlib/engine', f);
+    if (!fs.existsSync(dst)) cpFile(path.join(REPO, 'vendor/sdkjs/common/zlib/engine', f), dst);
+  }
   // edit.html with the dev origin baked in
   const html = fs.readFileSync(path.join(OVERLAY, 'edit.html'), 'utf8')
     .replace(/__ALLOWED_HOST_ORIGIN__/g, ORIGIN);
