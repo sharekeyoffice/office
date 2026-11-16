@@ -37,7 +37,8 @@
 		// Verbose logging (calls console.debug/warn/error)
 		verbose: false,
 		// SVG → PNG for the save shim; null = the browser's renderer
-		rasterizeSvg: null
+		rasterizeSvg: null,
+		rasterizeImage: null
 	};
 
 	function log(level, msg) {
@@ -480,8 +481,8 @@
 	}
 
 	function xmlAttr(tag, name) {
-		var m = tag.match(new RegExp('\\s' + name + '="([^"]*)"'));
-		return m ? m[1] : null;
+		var m = tag.match(new RegExp('\\s' + name + '=("|\')(.*?)\\1'));
+		return m ? m[2] : null;
 	}
 
 	/** Resolve a relationship Target against the part that owns the rels. */
@@ -1010,6 +1011,185 @@
 		return _lastMedia;
 	}
 
+	let imageRasterizerPromise = null;
+
+	function loadImageRasterizer() {
+		if (global.OfficeImageRasterizer) {
+			return Promise.resolve(global.OfficeImageRasterizer);
+		}
+
+		if (!imageRasterizerPromise) {
+			imageRasterizerPromise = new Promise(function (resolve, reject) {
+				const script = document.createElement('script');
+				const timeout = setTimeout(function () {
+					script.remove();
+					reject(new Error('Image converter loading timed out'));
+				}, 15e3);
+
+				script.src = '/image-rasterizer.js';
+				script.onload = function () {
+					clearTimeout(timeout);
+
+					if (global.OfficeImageRasterizer) {
+						resolve(global.OfficeImageRasterizer);
+					} else {
+						reject(new Error('Image converter is unavailable'));
+					}
+				};
+				script.onerror = function () {
+					clearTimeout(timeout);
+					script.remove();
+					reject(new Error('Image converter could not be loaded'));
+				};
+				document.head.appendChild(script);
+			}).catch(function (error) {
+				imageRasterizerPromise = null;
+
+				throw error;
+			});
+		}
+
+		return imageRasterizerPromise;
+	}
+
+	function convertImageToPng(file) {
+		if (config.rasterizeImage) {
+			return Promise.resolve().then(function () { return config.rasterizeImage(file); });
+		}
+
+		return loadImageRasterizer().then(function (rasterizer) {
+			return rasterizer.toPngDataUrl(file);
+		});
+	}
+
+	function replaceXmlAttribute(tag, name, value) {
+		return tag.replace(new RegExp('(\\s' + name + '=)("|\')(.*?)\\2'),
+			function (match, prefix, quote) {
+				// URI encoding leaves apostrophes intact; escape them for XML quotes
+				const attributeValue = quote === "'" ? value.replace(/'/g, '&apos;') : value;
+
+				return prefix + quote + attributeValue + quote;
+			});
+	}
+
+	function rasterRelationshipPart(owner, target) {
+		const decodedTarget = target.replace(/&(amp|quot|apos|lt|gt);/g, function (entity, name) {
+			return { amp: '&', quot: '"', apos: "'", lt: '<', gt: '>' }[name];
+		});
+		const part = resolvePartPath(owner, decodedTarget);
+
+		try {
+			return decodeURIComponent(part);
+		} catch (error) {
+			return part;
+		}
+	}
+
+	async function normalizeRasterMedia(bytes) {
+		const entries = readZip(bytes);
+
+		if (!entries) {
+			return bytes;
+		}
+
+		const rasterImages = entries.filter(function (entry) {
+			return /^(word|xl|ppt)\/media\/[^/]+\.(bmp|tiff?)$/i.test(entry.name);
+		});
+
+		if (!rasterImages.length) {
+			return bytes;
+		}
+
+		const names = new Set(entries.map(function (entry) { return entry.name; }));
+		const renamed = new Map();
+
+		for (const image of rasterImages) {
+			const source = await entryBytes(image);
+			const mime = /\.bmp$/i.test(image.name) ? 'image/bmp' : 'image/tiff';
+			const file = new Blob([source], { type: mime });
+			const dataUrl = await convertImageToPng(file);
+
+			if (!/^data:image\/png;base64,/.test(dataUrl)) {
+				throw new Error('Image converter did not return PNG for ' + image.name);
+			}
+
+			let target = image.name.replace(/\.[^.]+$/, '.png');
+			let suffix = 0;
+
+			while (names.has(target)) {
+				target = image.name.replace(/\.[^.]+$/, '.sk-raster-' + (++suffix) + '.png');
+			}
+
+			names.add(target);
+			renamed.set(image.name, target);
+			image.name = target;
+			image.nameBytes = new TextEncoder().encode(target);
+			const png = base64ToBytes(dataUrl.slice(dataUrl.indexOf(',') + 1));
+
+			if (!isPng(png)) {
+				throw new Error('Image converter returned invalid PNG for ' + image.name);
+			}
+
+			setEntryBytes(image, png);
+		}
+
+		for (const entry of entries) {
+			const isContentTypes = entry.name === '[Content_Types].xml';
+			const isRelationships = /(^|\/)_rels\/[^/]+\.rels$/.test(entry.name);
+
+			if (!isContentTypes && !isRelationships) {
+				continue;
+			}
+
+			const originalXml = await entryText(entry);
+			const owner = entry.name.replace(/_rels\/([^/]+)\.rels$/, '$1');
+			let xml = originalXml.replace(/<(?:\w+:)?(Relationship|Override)\b[^>]*>/g,
+				function (tag, kind) {
+					const attribute = kind === 'Relationship' ? 'Target' : 'PartName';
+					const target = xmlAttr(tag, attribute);
+
+					if (!target || xmlAttr(tag, 'TargetMode') === 'External') {
+						return tag;
+					}
+
+					const part = rasterRelationshipPart(kind === 'Override' ? '' : owner, target);
+					const replacement = renamed.get(part);
+
+					if (!replacement) {
+						return tag;
+					}
+
+					const newName = encodeURIComponent(replacement.split('/').pop());
+					const newTarget = target.replace(/[^/]+$/, newName);
+					let updated = replaceXmlAttribute(tag, attribute, newTarget);
+
+					if (kind === 'Override') {
+						updated = replaceXmlAttribute(updated, 'ContentType', 'image/png');
+					}
+
+					return updated;
+				});
+
+			const defaultTypes = xml.match(/<(?:\w+:)?Default\b[^>]*>/g) || [];
+			const hasPngContentType = defaultTypes.some(function (tag) {
+				return (xmlAttr(tag, 'Extension') || '').toLowerCase() === 'png';
+			});
+			const needsPngContentType = isContentTypes && !hasPngContentType;
+
+			if (needsPngContentType) {
+				xml = xml.replace(/<((?:\w+:)?)Types\b[^>]*>/, function (root, prefix) {
+					return root + '<' + prefix + 'Default Extension="png" ContentType="image/png"/>';
+				});
+			}
+
+			if (xml !== originalXml) {
+				setEntryBytes(entry, new TextEncoder().encode(xml));
+			}
+		}
+
+		return writeZip(entries);
+	}
+
 	function convertToBin(input, fileName) {
 		var bytes = (input instanceof Uint8Array) ? input : new Uint8Array(input);
 		var ext = getExt(fileName) || 'docx';
@@ -1020,7 +1200,12 @@
 			: Promise.resolve(bytes);
 		// Run conversion, then extract media from /working/media/ before the FS
 		// gets reused on the next conversion. Media survive as Blob URLs.
+		const isOoxml =
+			/^(docx|docm|dotx|dotm|xlsx|xlsm|xltx|xltm|pptx|pptm|ppsx|ppsm|potx|potm)$/.test(ext);
+
 		return prepared.then(function (input) {
+			return isOoxml ? normalizeRasterMedia(input) : input;
+		}).then(function (input) {
 			return runConversion(input, ext, 'bin');
 		}).then(function (out) {
 			return loadModule().then(function (Module) {
@@ -1167,6 +1352,7 @@
 	 *   - verbose: enable console.debug logging
 	 *   - rasterizeSvg: (svgBytes) => Promise<pngBytes>, draws the PNG fallback
 	 *                   of an SVG on save (default: the browser's renderer)
+	 *   - rasterizeImage: (file) => Promise<pngDataUrl>, local BMP/TIFF conversion
 	 */
 	function configure(opts) {
 		opts = opts || {};
@@ -1176,6 +1362,7 @@
 		if (typeof opts.jsUrl === 'string') config.jsUrl = opts.jsUrl;
 		if (typeof opts.verbose === 'boolean') config.verbose = opts.verbose;
 		if (typeof opts.rasterizeSvg === 'function') config.rasterizeSvg = opts.rasterizeSvg;
+		if (typeof opts.rasterizeImage === 'function') config.rasterizeImage = opts.rasterizeImage;
 	}
 
 	/**
@@ -1221,6 +1408,8 @@
 		getLastMedia:    getLastMedia,
 		sanitizeOlePreviews: sanitizeOlePreviews,
 		addMedia:        addMedia,
+		convertImageToPng: convertImageToPng,
+		normalizeRasterMedia: normalizeRasterMedia,
 		// The SVG save shim's steps, for tests against a headless x2t.
 		_svgSave: {
 			prepare: prepareSvgMediaForSave,

@@ -1152,6 +1152,21 @@
   }
 
   function readFileAsMediaUrl(file) {
+    const isTiffFile = /\.(tif|tiff)$/i.test(file.name || '') ||
+      /^image\/tiff?$/i.test(file.type || '');
+    const isBitmapFile = /\.bmp$/i.test(file.name || '') ||
+      /^image\/(bmp|x-bmp|x-ms-bmp)$/i.test(file.type || '');
+
+    if (isTiffFile || isBitmapFile) {
+      const imageBridge = wrapperBridge();
+
+      if (!imageBridge || typeof imageBridge.convertImageToPng !== 'function') {
+        return Promise.reject(new Error('Local image converter is unavailable'));
+      }
+
+      return imageBridge.convertImageToPng(file);
+    }
+
     const isWebpFile = /\.webp$/i.test(file.name || '') ||
       /^image\/webp$/i.test(file.type || '');
 
