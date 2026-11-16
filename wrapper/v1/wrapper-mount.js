@@ -2668,6 +2668,56 @@
       updateOverlayUI();
     }
 
+    function bindPresentationSlideVisibilityMenu() {
+      if (type !== 'slide') {
+        return;
+      }
+
+      var MAX_BIND_ATTEMPTS = 60;
+      var BIND_RETRY_DELAY_MS = 50;
+
+      var attempts = 0;
+      (function tryBind() {
+        var iframe = document.querySelector('iframe[name="frameEditor"]');
+        var controller = getPresentationController('DocumentHolder', iframe && iframe.contentWindow);
+        var view = controller && controller.documentHolder;
+
+        if (view) {
+          if (!view.__skSlideVisibilityMenuBound) {
+            function bindHideMenuItem() {
+              var menuItem = view.mnuSlideHide;
+
+              if (!menuItem || menuItem.__slideVisibilityGuard) {
+                return;
+              }
+
+              var setDisabled = menuItem.setDisabled;
+
+              menuItem.setDisabled = function (disabled) {
+                var presentation = editorApi && editorApi.WordControl && editorApi.WordControl.m_oLogicDocument;
+                var blocksHide = !this.checked && presentation && typeof presentation.canHideSlides === 'function' && !presentation.canHideSlides();
+
+                return setDisabled.call(this, !!disabled || !!blocksHide);
+              };
+
+              menuItem.__slideVisibilityGuard = true;
+            }
+
+            // editing menus may be created after the document is ready
+            view.on('createdelayedelements', bindHideMenuItem);
+            view.__skSlideVisibilityMenuBound = true;
+            bindHideMenuItem();
+          }
+
+          return;
+        }
+
+        if (++attempts < MAX_BIND_ATTEMPTS) {
+          setTimeout(tryBind, BIND_RETRY_DELAY_MS);
+        }
+      })();
+    }
+
     // ── Cache the iframe-internal api ref so we can hot-toggle restrictions
     // without destroying the editor. Returns true on success. Safe to call
     // repeatedly — internal state shapes up asynchronously after onAppReady.
@@ -3349,6 +3399,7 @@
       onDocumentReady: function () {
         log('onDocumentReady');
         window.skSetPrintReady(true);
+        bindPresentationSlideVisibilityMenu();
         // Phase 2 of the initial-mode setup — uniform across word/cell/slide.
         // By the time the SDK fires onDocumentReady, the editor's Main
         // controller has finished onDocumentContentReady — toolbar.setApi

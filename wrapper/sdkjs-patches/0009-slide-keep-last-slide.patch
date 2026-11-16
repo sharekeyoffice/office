@@ -1,0 +1,92 @@
+diff --git a/slide/api.js b/slide/api.js
+--- a/slide/api.js
++++ b/slide/api.js
+@@ -279,7 +279,7 @@
+ 
+         this.IsSpellCheckCurrentWord = false;
+ 
+-		this.IsSupportEmptyPresentation = true;
++		this.IsSupportEmptyPresentation = false;
+ 
+ 		this.ShowParaMarks        = false;
+ 		this.ShowSmartGuides      = true;
+@@ -6330,7 +6330,8 @@
+ 	};
+ 	asc_docs_api.prototype.DeleteSlide    = function()
+ 	{
+-		var _delete_array = this.WordControl.m_oLogicDocument.GetSelectedSlideObjects();
++		var oPresentation = this.WordControl.m_oLogicDocument;
++		var _delete_array = oPresentation.getSlidesToDelete(oPresentation.GetSelectedSlideObjects());
+ 
+ 		if (!this.IsSupportEmptyPresentation)
+ 		{
+@@ -6959,6 +6960,8 @@
+ 		{
+ 			aSlides.push(slide);
+ 		}
++
++		obj.lockRemove = oPresentation.getSlidesToDelete(aSlides).length === 0;
+ 
+ 		for(let nIdx = 0; nIdx < aSlides.length; ++nIdx)
+ 		{
+diff --git a/slide/Editor/Format/Presentation.js b/slide/Editor/Format/Presentation.js
+--- a/slide/Editor/Format/Presentation.js
++++ b/slide/Editor/Format/Presentation.js
+@@ -4986,6 +4986,13 @@
+ };
+ 
+ 
++CPresentation.prototype.canHideSlides = function (aSlides) {
++	const selectedSlides = new Set(Array.isArray(aSlides) ? aSlides : this.GetSelectedSlides());
++	return this.Slides.some(function (slide, index) {
++		return slide.isVisible() && !selectedSlides.has(index);
++	});
++};
++
+ CPresentation.prototype.hideSlides = function (isHide, aSlides) {
+ 
+ 	var aSelectedArray;
+@@ -4993,6 +5000,9 @@
+ 		aSelectedArray = aSlides;
+ 	} else {
+ 		aSelectedArray = this.GetSelectedSlides();
++	}
++	if (isHide && !this.canHideSlides(aSelectedArray)) {
++		return;
+ 	}
+ 	const arrSlides = [];
+ 	for (let i = 0; i < aSelectedArray.length; i++) {
+@@ -9426,7 +9436,21 @@
+ 	}
+ 	this.FinalizeAction();
+ };
++CPresentation.prototype.getSlidesToDelete = function (arrSlides) {
++	if (this.Api.IsSupportEmptyPresentation || this.IsMasterMode()) {
++		return arrSlides;
++	}
++	const selectedSlides = new Set(arrSlides);
++	if (this.Slides.some(function (slide) { return slide.isVisible() && !selectedSlides.has(slide); })) {
++		return arrSlides;
++	}
++	const slideToKeep = this.Slides.find(function (slide) { return slide.isVisible(); }) ||
++		(selectedSlides.size === this.Slides.length ? this.Slides[0] : null);
++	return slideToKeep ? arrSlides.filter(function (slide) { return slide !== slideToKeep; }) : arrSlides;
++};
++
+ CPresentation.prototype.deleteSlides = function (arrSlides) {
++	arrSlides = this.getSlidesToDelete(arrSlides);
+ 	const unpreserveInfo = this.getUnpreserveLayoutsAndMasters(arrSlides);
+ 	const checkArray = [].concat(unpreserveInfo.layouts, unpreserveInfo.masters, arrSlides);
+ 	if (arrSlides.length > 0 && (this.Document_Is_SelectionLocked(AscCommon.changestype_RemoveSlide, checkArray) === false)) {
+diff --git a/slide/Drawing/DrawingDocument.js b/slide/Drawing/DrawingDocument.js
+--- a/slide/Drawing/DrawingDocument.js
++++ b/slide/Drawing/DrawingDocument.js
+@@ -4905,7 +4905,7 @@
+ 				{
+ 					if (oPresentation.CanEdit())
+ 					{
+-						const arrSlides = oPresentation.GetSelectedSlideObjects();
++						const arrSlides = oPresentation.getSlidesToDelete(oPresentation.GetSelectedSlideObjects());
+ 						if (!oApi.IsSupportEmptyPresentation)
+ 						{
+ 							if (arrSlides.length === oDrawingDocument.GetSlidesCount())
