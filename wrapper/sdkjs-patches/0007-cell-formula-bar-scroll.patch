@@ -43,13 +43,578 @@ diff --git a/common/apiBase.js b/common/apiBase.js
 diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
 --- a/cell/view/CellEditorView.js
 +++ b/cell/view/CellEditorView.js
-@@ -1826,7 +1826,8 @@
+@@ -124,6 +124,7 @@
+ 		this.beginCompositePos = -1;
+ 		this.compositeLength = 0;
+ 		this.topLineIndex = 0;
++		this._resetScroll();
+ 		this.m_oFont = oFont;
+ 		this.fmgrGraphics = fmgrGraphics;
+ 		this.drawingCtx = undefined;
+@@ -296,13 +297,27 @@
+ 		this.fKeyMouseMove = function () {
+ 			return t._onWindowMouseMove.apply(t, arguments);
+ 		};
++
++		if (!window['IS_NATIVE_EDITOR'] && this.input && !this.menuEditor) {
++			[this.input, this.canvasOuter].forEach(function (element) {
++				t.eventListeners.push(new AscCommon.CEventListenerInfo(element, "wheel", function (event) {
++					t._onTextWheel(event);
++				}, {passive: false}));
++			});
++			t.eventListeners.push(new AscCommon.CEventListenerInfo(this.input, "scroll", function () {
++				t._onFormulaScroll();
++			}, false));
++		}
++
+ 		t.addEventListeners();
+ 	};
+ 
+ 	CellEditor.prototype.destroy = function () {
++		this._resetScroll();
+ 	};
+ 
+ 	CellEditor.prototype.removeEventListeners = function () {
++		this._resetScroll();
+ 		this.eventListeners.forEach(function (eventInfo) {
+ 			eventInfo.listeningElement.removeEventListener(eventInfo.eventName, eventInfo.listener);
+ 		});
+@@ -404,6 +419,7 @@
+ 			}
+ 
+ 			t.isOpened = false;
++			t._resetScroll();
+ 
+ 			t._formula = null;
+ 			t._parseResult = null;
+@@ -766,6 +782,7 @@
+ 			this._calculateCanvasSize();
+ 			this._renderText();
+ 			this.topLineIndex = 0;
++			this._resetScroll();
+ 			this._updateCursorPosition();
+ 			this._updateCursor();
+ 			this._drawSelection();
+@@ -952,6 +969,7 @@
+ 
+ 		this.cursorPos = 0;
+ 		this.topLineIndex = 0;
++		this._resetScroll();
+ 		this.selectionBegin = -1;
+ 		this.selectionEnd = -1;
+ 		this.isSelectMode = c_oAscCellEditorSelectState.no;
+@@ -1470,6 +1488,7 @@
+ 				if (bottom > this.bottom) {
+ 					// Clear index when reduce size
+ 					this.topLineIndex = 0;
++					this._resetScroll();
+ 				}
+ 				doAdjust = true;
+ 				// ToDo move this to _adjustCanvas
+@@ -1669,7 +1688,7 @@
+ 		}
+ 
+ 		if (begPos !== endPos && !this.isTopLineActive) {
+-			top = this.textRender.calcLineOffset(this.topLineIndex);
++			top = this._scrollOffset;
+ 			begInfo = this.textRender.calcCharOffset(Math.min(begPos, endPos));
+ 			line = this.textRender.getLineInfo(begInfo.lineIndex);
+ 			topLine = this.textRender.calcLineOffset(begInfo.lineIndex);
+@@ -1706,7 +1725,7 @@
+ 		var left = 0;
+ 		var top = 0;
+ 		if (pos != null && this.textRender) {
+-			var _top = this.textRender.calcLineOffset(this.topLineIndex);
++			var _top = this._scrollOffset;
+ 			var _begInfo = this.textRender.calcCharOffset(pos);
+ 			var _topLine = _begInfo ? this.textRender.calcLineOffset(_begInfo.lineIndex) : null;
+ 
+@@ -1742,6 +1761,343 @@
+ 	CellEditor.prototype.showCursor = function () {
+ 		this.options.enterOptions.hideCursor = false;
+ 		this._updateCursor();
++	};
++
++	CellEditor.prototype._stopScrollAnimation = function () {
++		if (this._scrollAnimation != null) {
++			window.cancelAnimationFrame(this._scrollAnimation);
++		}
++		this._scrollAnimation = null;
++		this._scrollTarget = null;
++	};
++
++	CellEditor.prototype._resetScroll = function () {
++		this._stopScrollAnimation();
++		this._scrollOffset = 0;
++		this._formulaScrollTop = null;
++
++		if (this._formulaMirror) {
++			this._formulaMirror.element.remove();
++			this._formulaMirror = null;
++		}
++	};
++
++	CellEditor.prototype._getCellScrollMaximum = function () {
++		// Match the formula bar's range so both fields can show the same final lines.
++		const maximum = Math.max(0, this.input.scrollHeight - this.input.clientHeight);
++		const textHeight = this.textRender.calcLineOffset(this.textRender.getLinesCount());
++		const cellMaximum = Math.max(0, textHeight - this.canvas.height / this.ky);
++		return Math.max(cellMaximum, this._getCellOffsetFromFormula(maximum));
++	};
++
++	CellEditor.prototype._setCellScrollOffset = function (offset) {
++		this._scrollOffset = Math.max(0, Math.min(offset, this._getCellScrollMaximum()));
++
++		let lineIndex = 0;
++		let lineTop = 0;
++		const lastLineIndex = this.textRender.getLinesCount() - 1;
++
++		while (lineIndex < lastLineIndex) {
++			const lineHeight = asc_round(this.textRender.getLineInfo(lineIndex).th * this.getZoom());
++
++			if (lineTop + lineHeight > this._scrollOffset) {
++				break;
++			}
++
++			lineTop += lineHeight;
++			++lineIndex;
++		}
++
++		this.topLineIndex = lineIndex;
++	};
++
++	// Measure the textarea's own wrapping without moving its caret or changing its value.
++	CellEditor.prototype._getFormulaScrollLayout = function () {
++		const input = this.input;
++		const styles = window.getComputedStyle(input);
++		const properties = ["fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight",
++			"letterSpacing", "wordSpacing", "textIndent", "textTransform", "direction", "tabSize",
++			"paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "wordBreak", "overflowWrap"];
++		const signature = input.clientWidth + ":" + properties.map(function (name) {
++			return styles[name];
++		}).join(":");
++		const previous = this._formulaMirror;
++
++		if (previous && previous.value === input.value && previous.signature === signature) {
++			return previous;
++		}
++
++		if (previous) {
++			previous.element.remove();
++		}
++
++		const mirror = document.createElement("div");
++		mirror.setAttribute("aria-hidden", "true");
++		mirror.style.cssText = "position:fixed;left:-100000px;top:0;visibility:hidden;" +
++			"pointer-events:none;box-sizing:border-box;white-space:pre-wrap;border:0;";
++		mirror.style.width = input.clientWidth + "px";
++
++		properties.forEach(function (name) {
++			mirror.style[name] = styles[name];
++		});
++
++		if (input.wrap === "off") {
++			mirror.style.whiteSpace = "pre";
++		}
++
++		// The sentinel gives an empty final line a measurable rectangle.
++		const node = document.createTextNode(input.value + "\u200b");
++		mirror.appendChild(node);
++		document.body.appendChild(mirror);
++
++		const positions = [0];
++		let utf16Offset = 0;
++
++		for (const character of input.value) {
++			utf16Offset += character.length;
++			positions.push(utf16Offset);
++		}
++
++		const range = document.createRange();
++		const paddingTop = parseFloat(styles.paddingTop) || 0;
++		const tops = new Map();
++		const getTop = function (position) {
++			const index = Math.max(0, Math.min(position, positions.length - 1));
++
++			if (!tops.has(index)) {
++				range.setStart(node, positions[index]);
++				range.setEnd(node, positions[index + 1] || node.length);
++				tops.set(index, range.getBoundingClientRect().top);
++			}
++
++			return tops.get(index) - tops.get(0) + paddingTop;
++		};
++
++		getTop(0);
++		this._formulaMirror = {
++			element: mirror, value: input.value, signature: signature,
++			positions: positions, getTop: getTop,
++			lineHeight: parseFloat(styles.lineHeight) || parseFloat(styles.fontSize) * 1.2
++		};
++		return this._formulaMirror;
++	};
++
++	CellEditor.prototype._getFormulaScrollLine = function (position) {
++		const layout = this._getFormulaScrollLayout();
++		const character = Math.max(0, Math.min(Math.floor(position), layout.positions.length - 1));
++		const top = layout.getTop(character);
++		let begin = 0;
++		let end = character;
++
++		while (begin < end) {
++			const middle = Math.floor((begin + end) / 2);
++
++			if (layout.getTop(middle) < top) {
++				begin = middle + 1;
++			} else {
++				end = middle;
++			}
++		}
++
++		const lineBegin = begin;
++		end = layout.positions.length;
++
++		while (begin < end) {
++			const middle = Math.floor((begin + end) / 2);
++
++			if (layout.getTop(middle) <= top) {
++				begin = middle + 1;
++			} else {
++				end = middle;
++			}
++		}
++
++		return {begin: lineBegin, end: begin, top: top, height: layout.lineHeight};
++	};
++
++	CellEditor.prototype._getCellOffsetFromFormula = function (scrollTop) {
++		const layout = this._getFormulaScrollLayout();
++		let begin = 0;
++		let end = layout.positions.length - 1;
++
++		while (begin < end) {
++			const middle = Math.ceil((begin + end) / 2);
++
++			if (layout.getTop(middle) <= scrollTop) {
++				begin = middle;
++			} else {
++				end = middle - 1;
++			}
++		}
++
++		const formulaLine = this._getFormulaScrollLine(begin);
++		const fraction = Math.max(0, (scrollTop - formulaLine.top) / formulaLine.height);
++		const position = formulaLine.begin + fraction * (formulaLine.end - formulaLine.begin);
++		begin = 0;
++		end = this.textRender.getLinesCount() - 1;
++
++		if (end < 0) {
++			return 0;
++		}
++
++		while (begin < end) {
++			const middle = Math.ceil((begin + end) / 2);
++
++			if (this.textRender.getLineInfo(middle).beg <= position) {
++				begin = middle;
++			} else {
++				end = middle - 1;
++			}
++		}
++
++		const cellLine = this.textRender.getLineInfo(begin);
++		const nextCellLine = this.textRender.getLineInfo(begin + 1);
++		const lineEnd = nextCellLine ? nextCellLine.beg : this.textRender.getCharsCount() + 1;
++		const lineLength = Math.max(1, lineEnd - cellLine.beg);
++		const cellFraction = Math.max(0, Math.min(1, (position - cellLine.beg) / lineLength));
++		const lineHeight = asc_round(cellLine.th * this.getZoom());
++		return this.textRender.calcLineOffset(begin) + cellFraction * lineHeight;
++	};
++
++	CellEditor.prototype._syncCellScroll = function () {
++		this._setCellScrollOffset(this._getCellOffsetFromFormula(this.input.scrollTop));
++	};
++
++	CellEditor.prototype._syncFormulaScroll = function () {
++		const cellLine = this.textRender.getLineInfo(this.topLineIndex);
++
++		if (!cellLine) {
++			return;
++		}
++
++		const nextCellLine = this.textRender.getLineInfo(this.topLineIndex + 1);
++		const lineEnd = nextCellLine ? nextCellLine.beg : this.textRender.getCharsCount() + 1;
++		const lineTop = this.textRender.calcLineOffset(this.topLineIndex);
++		const lineHeight = asc_round(cellLine.th * this.getZoom()) || 1;
++		const fraction = (this._scrollOffset - lineTop) / lineHeight;
++		const position = cellLine.beg + fraction * Math.max(1, lineEnd - cellLine.beg);
++		const formulaLine = this._getFormulaScrollLine(position);
++		const formulaFraction = (position - formulaLine.begin) / (formulaLine.end - formulaLine.begin);
++		this.input.scrollTop = Math.max(0, formulaLine.top + formulaFraction * formulaLine.height);
++		this._formulaScrollTop = this.input.scrollTop;
++	};
++
++	CellEditor.prototype._ensureFormulaCaretVisible = function () {
++		const previousOffset = this.input.scrollTop;
++		const layout = this._getFormulaScrollLayout();
++		const caretTop = layout.getTop(this.cursorPos);
++		const caretBottom = caretTop + layout.lineHeight;
++		const viewportBottom = this.input.scrollTop + this.input.clientHeight;
++
++		if (caretBottom > viewportBottom) {
++			this.input.scrollTop = caretBottom - this.input.clientHeight;
++		}
++
++		if (caretTop < this.input.scrollTop) {
++			this.input.scrollTop = caretTop;
++		}
++
++		this._formulaScrollTop = this.input.scrollTop;
++		return previousOffset !== this.input.scrollTop;
++	};
++
++	CellEditor.prototype._ensureCellCaretVisible = function (caret) {
++		const viewportHeight = this.canvas.height / this.ky;
++		const caretTop = this.textRender.calcLineOffset(caret.lineIndex);
++		const caretBottom = caretTop + caret.height;
++		let offset = this._scrollOffset;
++
++		if (caretBottom > offset + viewportHeight) {
++			offset = caretBottom - viewportHeight;
++		}
++
++		if (caretTop < offset) {
++			offset = caretTop;
++		}
++
++		this._setCellScrollOffset(offset);
++	};
++
++	CellEditor.prototype._redrawScroll = function () {
++		this._updateCursorPosition(true, false, undefined, true, true);
++		this._cleanSelection();
++
++		if (this.selectionBegin !== this.selectionEnd) {
++			this._drawSelection();
++		}
++	};
++
++	CellEditor.prototype._onFormulaScroll = function () {
++		const isOwnScroll = this._formulaScrollTop !== null &&
++			Math.abs(this.input.scrollTop - this._formulaScrollTop) < 1;
++
++		if (!this.isOpened || isOwnScroll) {
++			return;
++		}
++
++		this._stopScrollAnimation();
++		this._syncCellScroll();
++		this._redrawScroll();
++	};
++
++	CellEditor.prototype._onTextWheel = function (event) {
++		const hasModifier = event.ctrlKey || event.metaKey || event.altKey || event.shiftKey;
++		const isVertical = Math.abs(event.deltaY) > Math.abs(event.deltaX);
++
++		if (!this.isOpened || hasModifier || !isVertical || this.menuEditor) {
++			return;
++		}
++
++		event.preventDefault();
++		event.stopPropagation();
++
++		const formulaBar = event.currentTarget === this.input;
++		const source = formulaBar ? "formula" : "cell";
++		const scale = AscCommon.AscBrowser.retinaPixelRatio / this.ky;
++		const layout = this._getFormulaScrollLayout();
++		const lineHeight = formulaBar ? layout.lineHeight :
++			asc_round(this.textRender.getLineInfo(this.topLineIndex).th * this.getZoom()) / scale;
++		const viewportHeight = formulaBar ? this.input.clientHeight : this.canvas.height / this.ky / scale;
++		const deltaUnit = event.deltaMode === 1 ? lineHeight : event.deltaMode === 2 ? viewportHeight : 1;
++		const maximum = formulaBar ? this.input.scrollHeight - this.input.clientHeight :
++			this._getCellScrollMaximum() / scale;
++		const current = formulaBar ? this.input.scrollTop : this._scrollOffset / scale;
++		const previousTarget = this._scrollSource === source && this._scrollTarget !== null ?
++			this._scrollTarget : current;
++		const target = Math.max(0, Math.min(maximum, previousTarget + event.deltaY * deltaUnit));
++		this._stopScrollAnimation();
++		this._scrollSource = source;
++		this._scrollTarget = target;
++
++		let previousTime;
++		const editor = this;
++		const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
++		const animate = function (time) {
++			const elapsed = previousTime === undefined ? 16 : time - previousTime;
++			previousTime = time;
++			const position = formulaBar ? editor.input.scrollTop : editor._scrollOffset / scale;
++			const distance = target - position;
++			const finished = reducedMotion || Math.abs(distance) <= 1;
++			const next = finished ? target : position + distance * (1 - Math.exp(-elapsed / 45));
++
++			if (formulaBar) {
++				editor.input.scrollTop = next;
++				editor._formulaScrollTop = editor.input.scrollTop;
++				editor._syncCellScroll();
++			} else {
++				editor._setCellScrollOffset(next * scale);
++				editor._syncFormulaScroll();
++			}
++
++			editor._redrawScroll();
++			editor._scrollAnimation = finished ? null : window.requestAnimationFrame(animate);
++
++			if (finished) {
++				editor._scrollTarget = null;
++			}
++		};
++
++		this._scrollAnimation = window.requestAnimationFrame(animate);
+ 	};
+ 
+ 	CellEditor.prototype._showCursor = function () {
+@@ -1758,10 +2114,10 @@
+ 		this.cursorStyle.display = "none";
+ 	};
+ 
+-	CellEditor.prototype._updateCursorPosition = function (redrawText, isExpand, lineIndex, opt_not_formulas_update) {
++	CellEditor.prototype._updateCursorPosition = function (redrawText, isExpand, lineIndex, opt_not_formulas_update, preserveScroll) {
+ 		// ToDo should forward this function
+ 		let h = this.canvas.height;
+-		let y = -this.textRender.calcLineOffset(this.topLineIndex);
++		let y = -this._scrollOffset;
+ 		let cur = this.textRender.calcCharOffset(this.cursorPos, lineIndex);
+ 		let charsCount = this.textRender.getCharsCount();
+ 		let textAlign = this.textFlags && this.textFlags.textAlign;
+@@ -1770,36 +2126,67 @@
+ 			cur.left !== null ? cur.left : this._getContentPosition()) * this.kx);
+ 		let curTop = asc_round(((cur !== null ? cur.top : 0) + y) * this.ky);
+ 		let curHeight = asc_round((cur !== null ? cur.height : this._getContentHeight()) * this.ky);
+-		let i, dy, nCount = this.textRender.getLinesCount();
+-		let zoom = this.getZoom();
+-
+-		while (1 < nCount) {
+-			if (curTop + curHeight - 1 > h) {
+-				i = i === undefined ? 0 : i + 1;
+-				if (i === nCount) {
+-					break;
+-				}
+-				dy = asc_round(this.textRender.getLineInfo(i).th * zoom);
+-				y -= dy;
+-				curTop -= asc_round(dy * this.ky);
+-				++this.topLineIndex;
+-				continue;
+-			}
+-			if (curTop < 0) {
+-				--this.topLineIndex;
+-				if (this.textRender.lines && this.textRender.lines.length && this.topLineIndex >= this.textRender.lines.length) {
+-					this.topLineIndex = this.textRender.lines.length - 1;
+-				}
+-				dy = asc_round(this.textRender.getLineInfo(this.topLineIndex).th * zoom);
+-				y += dy;
+-				curTop += asc_round(dy * this.ky);
+-				continue;
+-			}
+-			break;
+-		}
+-
+-		if (dy !== undefined || redrawText) {
+-			this._renderText(y, isExpand);
++		if (window["IS_NATIVE_EDITOR"] || this.menuEditor) {
++			let i, dy, nCount = this.textRender.getLinesCount();
++			let zoom = this.getZoom();
++
++			while (1 < nCount) {
++				if (curTop + curHeight - 1 > h) {
++					i = i === undefined ? 0 : i + 1;
++					if (i === nCount) {
++						break;
++					}
++					dy = asc_round(this.textRender.getLineInfo(i).th * zoom);
++					y -= dy;
++					curTop -= asc_round(dy * this.ky);
++					++this.topLineIndex;
++					continue;
++				}
++				if (curTop < 0) {
++					--this.topLineIndex;
++					if (this.textRender.lines && this.textRender.lines.length && this.topLineIndex >= this.textRender.lines.length) {
++						this.topLineIndex = this.textRender.lines.length - 1;
++					}
++					dy = asc_round(this.textRender.getLineInfo(this.topLineIndex).th * zoom);
++					y += dy;
++					curTop += asc_round(dy * this.ky);
++					continue;
++				}
++				break;
++			}
++			this._scrollOffset = -y;
++			if (dy !== undefined || redrawText) {
++				this._renderText(y, isExpand);
++			}
++		} else {
++			const previousOffset = this._scrollOffset;
++
++			if (!preserveScroll) {
++				this._stopScrollAnimation();
++
++				if (this.isTopLineActive) {
++					this._syncCellScroll();
++
++					const formulaBarFits = this.input.scrollHeight <= this.input.clientHeight;
++
++					if (cur && formulaBarFits) {
++						this._ensureCellCaretVisible(cur);
++					}
++				} else if (cur) {
++					this._ensureCellCaretVisible(cur);
++					this._syncFormulaScroll();
++					if (this._ensureFormulaCaretVisible()) {
++						this._syncCellScroll();
++					}
++				}
++			}
++
++			y = -this._scrollOffset;
++			curTop = asc_round(((cur !== null ? this.textRender.calcLineOffset(cur.lineIndex) : 0) + y) * this.ky);
++
++			if (previousOffset !== this._scrollOffset || redrawText) {
++				this._renderText(y, isExpand);
++			}
+ 		}
+ 
+ 		curLeft = AscCommon.AscBrowser.convertToRetinaValue(curLeft);
+@@ -1826,10 +2213,14 @@
  			AscCommon.g_inputContext.moveAccurate(this.left * this.kx + curLeft, this.top * this.ky + curTop);
  		}
  
 -		if (cur) {
-+		// The formula bar uses native textarea layout and caret scrolling.
-+		if (cur && !this.isTopLineActive) {
++		if (preserveScroll) {
++			return;
++		}
++
++		if (cur && (window["IS_NATIVE_EDITOR"] || this.menuEditor)) {
  			this.input.scrollTop = this.input.clientHeight * cur.lineIndex;
  		}
- 		if (this.isTopLineActive && !this.skipTLUpdate) {
+-		if (this.isTopLineActive && !this.skipTLUpdate) {
++		if (!preserveScroll && this.isTopLineActive && !this.skipTLUpdate) {
+ 			this._updateTopLineCurPos();
+ 		}
+ 
+@@ -1937,11 +2328,14 @@
+ 	};
+ 
+ 	CellEditor.prototype._findCursorPosition = function (coord) {
+-		return this.textRender.getCharPosByXY(coord.x, coord.y, this.topLineIndex, this.getZoom());
++		const lineOffset = this.textRender.calcLineOffset(this.topLineIndex);
++		const textY = coord.y + this._scrollOffset - lineOffset;
++		return this.textRender.getCharPosByXY(coord.x, textY, this.topLineIndex, this.getZoom());
+ 	};
+ 
+ 	CellEditor.prototype._findLineIndex = function (coord) {
+-		return this.textRender.getLineByY(coord.y, this.topLineIndex, this.getZoom());
++		const lineOffset = this.textRender.calcLineOffset(this.topLineIndex);
++		return this.textRender.getLineByY(coord.y + this._scrollOffset - lineOffset, this.topLineIndex, this.getZoom());
+ 	};
+ 
+ 	CellEditor.prototype._updateTopLineCurPos = function () {
