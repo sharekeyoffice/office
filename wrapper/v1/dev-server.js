@@ -104,6 +104,11 @@ http.createServer((req, res) => {
 
   if (p === '/') p = '/edit-host-demo.html';
 
+  // shared styles live alongside the overlay shell, including iframe styles
+  if (p === '/editor-ui.css' || p === '/edit.css') {
+    return serveFile(res, path.join(SELF_DIR, '../../overlay', p), p);
+  }
+
   // 1) Wrapper source files.
   if (SELF_FILES.has(p)) {
     return serveFile(res, path.join(SELF_DIR, p), p);
