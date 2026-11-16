@@ -54,12 +54,12 @@
     var type = getQueryParam('type') || 'word';
 
     if (typeof window.DocsAPI === 'undefined' || typeof window.DocsAPI.DocEditor !== 'function') {
-      document.body.innerHTML = '<p style="font-family:sans-serif;padding:1em;color:#a00">' +
+      document.body.innerHTML = '<p class="wrapper-startup-message">' +
         'DocsAPI not loaded.</p>';
       return;
     }
     if (typeof window.WrapperPostMessage !== 'function') {
-      document.body.innerHTML = '<p style="font-family:sans-serif;padding:1em;color:#a00">' +
+      document.body.innerHTML = '<p class="wrapper-startup-message">' +
         'wrapper-postmessage.js not loaded.</p>';
       return;
     }
@@ -98,6 +98,7 @@
     var headerSaveBtn  = null;     // our Save (diskette) button, same approach
     var headerDownloadBtn = null;
     var headerMainAppBtn = null;   // "Main App" button in the header-right area
+    var editorLayoutState = null;
     var headerEditingLabel = null; // our "<who> is editing the document…" label,
                                    // injected into the tab row right of the Edit button
     var currentSaveState = 'idle'; // 'idle'|'dirty'|'saving'|'saved'|'error' — drives
@@ -165,6 +166,7 @@
       renderEditButton();
       renderEditingLabel();
       renderDownloadButton();
+      applyEditorLayout();
     }
 
       // Determines the relevant DOM element for an edit attempt event.
@@ -916,7 +918,7 @@
 
           if (descriptions[2] && isLargeFile) {
               descriptions[2].innerHTML = 'Large documents will be supported soon.';
-              descriptions[2].style.color = '#2FA0AF';
+              descriptions[2].classList.add('cm-description--accent');
           } else if (descriptions[2] && pm.isExternal) {
               descriptions[2].innerHTML = 'To get <strong>Editing Access</strong>, contact the person who shared this link.';
           }
@@ -1358,34 +1360,6 @@
       }
     }
 
-    // Hide the native OnlyOffice "Editing/Viewing" dropdown inside the
-    // editor iframe — permanently. Same-origin, so contentDocument is
-    // accessible. Idempotent — reuses a single <style id="hide-native-
-    // dropdown"> element.
-    function hideNativeDropdown() {
-      var iframe = document.querySelector('iframe[name="frameEditor"]');
-
-      if (!iframe || !iframe.contentDocument) {
-          return;
-      }
-      var doc = iframe.contentDocument;
-      var style = doc.getElementById('hide-native-dropdown');
-
-      if (!style) {
-        style = doc.createElement('style');
-        style.id = 'hide-native-dropdown';
-
-        if (doc.head) {
-            doc.head.appendChild(style);
-        }
-      }
-      // Hide both the dropdown AND the canRequestEditRights button (if any
-      // legacy config flips it back on by accident).
-      style.textContent =
-        '.btn-header-pdf-mode { display: none !important; }' +
-        '.btn-header-pdf-mode + * { display: none !important; }';
-    }
-
     // Pencil icon — Figma "Icons 20px / Stroke set" (node 15802:85791),
     // exported as a 20×20 path and recoloured via currentColor so one markup
     // serves all three button states. Don't hand-edit the path; re-export
@@ -1458,249 +1432,6 @@
         <path d="M11.5967 2.15039C12.8387 2.15039 13.8457 3.15742 13.8457 4.39941V11.6006C13.8457 12.8426 12.8387 13.8496 11.5967 13.8496H4.39551C3.15361 13.8495 2.14648 12.8425 2.14648 11.6006V10.3389C2.14648 9.98081 2.43689 9.69054 2.79492 9.69043C3.15304 9.69043 3.44336 9.98074 3.44336 10.3389V11.6006C3.44336 12.1261 3.87 12.5526 4.39551 12.5527H11.5967C12.1223 12.5527 12.5488 12.1262 12.5488 11.6006V4.39941C12.5488 3.87382 12.1223 3.44727 11.5967 3.44727H4.39551C3.87003 3.44742 3.44341 3.87391 3.44336 4.39941V5.66504C3.44336 6.02316 3.15304 6.31348 2.79492 6.31348C2.43689 6.31337 2.14648 6.0231 2.14648 5.66504V4.39941C2.14653 3.15752 3.15364 2.15054 4.39551 2.15039H11.5967ZM6.52539 5.54297C6.77775 5.28919 7.18838 5.28795 7.44238 5.54004L9.45703 7.54199C9.57946 7.66372 9.64845 7.83028 9.64844 8.00293C9.64824 8.17539 9.57939 8.34133 9.45703 8.46289L7.44238 10.4639C7.18835 10.716 6.77774 10.7148 6.52539 10.4609C6.27316 10.2069 6.27454 9.79634 6.52832 9.54395L7.42773 8.65039H0.698242C0.340375 8.65016 0.0499313 8.35984 0.0498047 8.00195C0.0498204 7.64397 0.340307 7.35374 0.698242 7.35352H7.42773L6.52832 6.45996C6.2746 6.20756 6.27324 5.79694 6.52539 5.54297Z" fill="currentColor"/>
       </svg>`;
 
-    // Figma-derived styles for our header controls. Injected into the iframe
-    // <head> (same mechanism as hideNativeDropdown). Unique sk-* class names
-    // so the editor's own stylesheets never match our elements; injected late
-    // so ours wins on equal specificity (no !important needed).
-    var SK_HEADER_CONTROLS_CSS = [
-      /* our <li> sits at the end of the toolbar tablist, right after "View".
-         The toolbar-mask (view mode) starts at top:32px, so the tab row — and
-         thus this button — stays visible AND clickable while read-only.
-         inline-flex (not flex) keeps it flowing inline among the inline-block
-         tabs; height matches the ~28px tab row so the button can't protrude. */
-      '.box-tabs{height:30px !important;}',                         /* tab row height (was 28px) — per design; !important beats .toolbar .box-tabs / .top-title>.toolbar .box-tabs */
-      /* Sharekey header logo (customization.logo): Header.setBranding writes an
-         inline `max-height:20px` on the <img>, so !important is required to bump
-         it to the logo's native 24px. */
-      '#header-logo{cursor: pointer; padding: 4px 12px 0 14px !important;}',
-      '#header-logo img{max-height:24px !important;}',
-      /* Remove the "From Text/CSV" group from the xlsx Data tab. The button slot
-         (#slot-btn-data-from-text) has no data-layout-name, so the layout config
-         can't reach it — hide its whole .group plus the trailing separator so no
-         empty gap is left. :has() is fine (editor runs in modern Chrome). Scoped
-         to the spreadsheet's Data panel; the selector simply doesn't match in
-         word/slide. */
-      '.panel[data-tab="data"] .group:has(#slot-btn-data-from-text),',
-      '.panel[data-tab="data"] .group:has(#slot-btn-data-from-text)+.separator{display:none !important;}',
-      '.sk-edit-tab{display:inline-flex;align-items:center;height:28px;vertical-align:top;margin-left:8px;list-style:none;}',
-      /* kill the native tab-hover chrome on OUR li: the inset bottom box-shadow
-         + grey hover background (toolbar.less:160-163), and the ::after bottom
-         underline the tabs draw (revealed on hover). Our li isn't a real tab,
-         so it needs none of it. !important beats the non-important native rules. */
-      '.sk-edit-tab:hover{box-shadow:none !important;background-color:transparent !important;}',
-      '.sk-edit-tab::after,.sk-edit-tab::before{display:none !important;}',
-        '.tooltip, .sk-tooltip{',
-        '  box-sizing:border-box;',
-        '  width:max-content;',
-        '  max-width:none;',
-        '  min-height:18px;',
-        '  padding:2px 8px !important;',
-        '  white-space:nowrap;',
-        '  border-radius:3px;',
-        '  background:#728596;',
-        '  color:#FFFFFF;',
-        "  font-family:'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
-        '  font-size:10px;',
-        '  line-height:14px;',
-        '  font-weight:400;',
-        '  text-align:center;',
-        '  box-shadow:none;',
-        '}',
-
-        '.tooltip .tooltip-inner{',
-        '  padding:0;',
-        '  background:transparent;',
-        '  color:inherit;',
-        '  font:inherit;',
-        '  max-width:none;',
-        '}',
-
-        '.sk-tooltip{',
-        '  position:fixed;',
-        '  display:none;',
-        '  height:18px;',
-        '  z-index:100000;',
-        '  pointer-events:none;',
-        '}',
-
-        '.tooltip *{',
-        '  border:none !important;',
-        '  outline:none !important;',
-        '  box-shadow:none !important;',
-        "  font-family:'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif !important;",
-        '  font-size:10px !important;',
-        '  line-height:14px !important;',
-        '  font-weight:400 !important;',
-        '  text-align:center !important;',
-        '}',
-      '.sk-edit-btn{',
-      '  box-sizing:border-box;',
-      '  display:inline-flex;align-items:center;justify-content:center;',
-      '  height:24px;padding:0 8px 0 4px;',                        /* fits inside the 28px tab row (was 32px → protruded) */
-      '  border:1px solid transparent;border-radius:5px;',          /* keeps box size stable across bordered/unbordered states */
-      '  background:#3fc0c4;color:#FFFFFF;',                         /* free state; color drives icon (currentColor) + label */
-      "  font-family:'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
-      '  font-size:12px;line-height:16px;font-weight:500;',
-      '  white-space:nowrap;cursor:pointer;',
-      '  -webkit-appearance:none;appearance:none;margin-bottom:5px;',  /* margin-bottom lifts the button within the row */
-      '  transition:background .12s ease,border-color .12s ease,color .12s ease;',
-      '}',
-      '.theme-type-dark .sk-edit-btn {background:#2FA0AF;}',
-      '.sk-edit-btn__icon{display:flex;flex:0 0 auto;width:16px;height:16px;margin-right:4px}',
-      '.sk-edit-btn__icon svg{display:block;width:16px;height:16px;}',
-      '.sk-edit-btn__label{display:block;}',
-      /* free (default) hover — not while pending/disabled */
-      '.sk-edit-btn:not(.is-editing):not(.is-locked):not(.is-refresh):not(:disabled):hover{background:#41D1C9;}',
-      '.theme-type-dark .sk-edit-btn:not(.is-editing):not(.is-locked):not(.is-refresh):not(:disabled):hover{background:#3FC0C4;}',
-      /* editing — you hold the lock */
-      '.sk-edit-btn.is-editing{background:#E2F5F6;color:#2FA0AF;border-color:#2FA0AF;}',
-      '.sk-edit-btn.is-editing:hover{background:#CFEDEF;}',
-      '.theme-type-dark .sk-edit-btn.is-editing{background:#2B434D;color:#3FC0C4;border-color:#3FC0C4;}',
-      '.theme-type-dark .sk-edit-btn.is-editing:hover{background:#2C4F59;}',
-      /* locked — someone else is editing (disabled) */
-      '.sk-edit-btn.is-locked{background:rgba(53,80,105,0.15);color:#FFFFFF;border-color:transparent;cursor:default;}',
-      '.theme-type-dark .sk-edit-btn.is-locked{background:rgba(255, 255, 255, 0.15);color:rgba(255, 255, 255, 0.5);border-color:transparent;cursor:default;}',
-      '.sk-edit-btn:disabled{cursor:default;pointer-events:none;}',
-
-      /* refresh — conflict state. Same button shape/spacing as Edit, but with
-      Refresh icon/text and the blue background from design. */
-      '.sk-edit-btn.is-refresh{background:#0F8CC9;color:#FFFFFF;border-color:transparent;}',
-      '.sk-edit-btn.is-refresh:not(.is-refreshing):not(:disabled):hover{background:#3FA3D4;}',
-      '.sk-edit-btn.is-refresh:not(.is-refreshing):not(:disabled):active{background:#3FA3D4;}',
-      '.sk-edit-btn.is-refresh .sk-edit-btn__icon{margin-right:4px;}',
-
-      /* refreshing — disabled in-flight state after the user clicks Refresh.
-      Uses a separate spinner icon and muted disabled colours from design. */
-      '@keyframes sk-refreshing-spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}',
-      '.sk-edit-btn.is-refreshing, .sk-edit-btn.is-refreshing:disabled{background:rgba(53,80,105,0.1);color:rgba(53,80,105,0.55);border-color:transparent;cursor:default;opacity:1;}',
-      '.sk-edit-btn.is-refreshing:hover, .sk-edit-btn.is-refreshing:active, .sk-edit-btn.is-refreshing:disabled:hover, .sk-edit-btn.is-refreshing:disabled:active{background:rgba(53,80,105,0.1);color:rgba(53,80,105,0.55);}',
-      '.sk-edit-btn.is-refreshing .sk-edit-btn__icon{width:12px;height:12px;margin-right:4px;}',
-      '.sk-edit-btn.is-refreshing .sk-edit-btn__icon svg{width:12px;height:12px;}',
-      '.sk-refreshing-icon{display:block;animation:sk-refreshing-spin 2s linear infinite;}',
-
-      /* ── "<who> is editing the document…" label ───────────────────────────
-         Sits in the tab row just right of the Edit button. renderEditingLabel
-         toggles the <li> display + the --self/--other modifier classes.
-         TODO(figma): placeholder styling — exact colours / font / spacing
-         pending the Figma specs (nodes 15802:85984 self, 15802:86051 other;
-         MCP rate-limited). Tweak the values below once available. */
-      '.sk-editing-tab{display:inline-flex;align-items:center;height:28px;vertical-align:top;margin-left:8px;list-style:none;}',
-      /* Win the cascade: OnlyOffice's `.toolbar .tabs li{align-items:end}` (0,2,1)
-         beats a bare `.sk-editing-tab` (0,1,0), so the center above never applied.
-         This selector (0,3,1) overrides it. NOTE: with centering now active, the
-         label's `margin-bottom:8px` (below) nudges the centered label upward — keep
-         or drop that margin depending on the look you want. */
-      '.toolbar .tabs li.sk-editing-tab{align-items:center;}',
-      '.sk-editing-tab:hover{box-shadow:none !important;background-color:transparent !important;}',
-      '.sk-editing-tab::after,.sk-editing-tab::before{display:none !important;}',
-      '.sk-editing-label{',
-      '  display:inline-flex;',                                     /* centring is on .sk-editing-tab (the <li>) */
-      "  font-family:'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
-      '  font-size:12px;line-height:1;font-weight:400;white-space:nowrap;',
-      '  color:#355069B2;',                                         /* #3: rgba(53,80,105,.7) */
-      // The <li>.sk-editing-tab inherits `align-items:end` from OnlyOffice's
-      // more-specific `.toolbar .tabs li` (our `.sk-editing-tab{align-items:center}`
-      // loses on specificity), so the row is bottom-aligned. This bottom margin
-      // lifts the label to baseline-align with the Edit button. Don't remove it.
-      '  margin-bottom:5px;',
-      '}',
-      '.sk-editing-label__who{font-weight:600;}',                   /* #4: the editing user (or "You") — semibold */
-      '.theme-type-dark .sk-editing-label{color:rgba(255,255,255,0.7);}', /* dark theme: #355069 would vanish */
-
-      /* Conflict label: "Updated by <user>" reuses the same label slot as the
-      normal editing-status text. Kept as a modifier class so the base spacing,
-      font and dark-theme fallback stay shared. */
-
-      '.sk-editing-label--conflict{color:#355069B2;}',
-      '.theme-type-dark .sk-editing-label--conflict{color:rgba(255,255,255,0.7);}',
-
-      '@keyframes sk-dot-loader-blink{0%{opacity:.2;}20%{opacity:1;}100%{opacity:.2;}}',
-      '.sk-dot-loader{display:inline;}',
-      '.sk-dot-loader__dot{color:inherit;animation-name:sk-dot-loader-blink;animation-duration:1.4s;animation-iteration-count:infinite;animation-fill-mode:both;}',
-      '.sk-dot-loader__dot:nth-of-type(2){animation-delay:.2s;}',
-      '.sk-dot-loader__dot:nth-of-type(3){animation-delay:.4s;}',
-
-      /* ── Save (diskette) button — replaces the native quick-access Save ── */
-      '#slot-btn-dt-save{display:none !important;}',                /* hide native; ours takes its place */
-      '.sk-save-slot{display:inline-flex;align-items:center;}',
-      '.sk-save-btn{',
-      '  box-sizing:border-box; margin: 2px 4px 0 0;',
-      '  display:inline-flex;align-items:center;justify-content:center;',
-      '  width:28px;height:28px;padding:0;',
-      '  border:none;border-radius:5px;background:transparent;',
-      '  color:#A8A8A8;',                                          /* idle (Figma) — drives the diskette via currentColor */
-      '  cursor:pointer;-webkit-appearance:none;appearance:none;',
-      '  transition:color .12s ease,background .12s ease,opacity .12s ease;',
-      '}',
-      '.sk-save-btn__icon{display:flex;width:24px;height:24px;}',
-      '.sk-save-btn__icon svg{display:block;width:24px;height:24px;}',
-      '.sk-save-btn:not(:disabled):hover{background:rgba(0,0,0,0.06);}',
-      /* The diskette has only two colours per design: grey at rest, black when
-         there are unsaved changes. saved/error swap to a DISTINCT badge icon
-         (renderSaveButton) — the diskette under the badge keeps its base colour:
-         grey for saved (back to rest), black for error (changes still pending). */
-      '.sk-save-btn--idle{color rgba(168, 168, 168, 1);}',
-      '.sk-save-btn--dirty{color:#363636;}',
-      '.sk-save-btn--saving{color:#363636;opacity:.5;cursor:default;}',
-      '.sk-save-btn--saved{color:rgba(168, 168, 168, 1);}',
-      '.sk-save-btn--error{color:#363636;}',
-      '.sk-save-btn:disabled{cursor:default;}',
-      /* Dark theme (editor sets body.theme-type-dark): the "dark" dirty glyph
-         would vanish on the dark toolbar, so flip the prominent states to a
-         light glyph. Idle stays mid-grey (visible on both). The saved/error
-         badges carry their own fills, so only the diskette base needs flipping.
-         More specific than the base rules → wins; injected late so no !important. */
-      '.theme-type-dark .sk-save-btn{color:rgba(255, 255, 255, 0.31);}',
-      '.theme-type-dark .sk-save-btn--dirty{color:rgba(255, 255, 255, 0.8);}',
-      '.theme-type-dark .sk-save-btn:not(:disabled):hover{background:rgba(255,255,255,0.1);}',
-		/* This is the slot for the buttons in the header. We need to add a margin to the bottom of the slot to make the buttons align correctly. */
-	  '#slot-btn-search{margin-bottom:5px}',
-      /* ── Main App button — header-right, before the search slot. */
-      '.sk-main-app-slot{display:inline-flex;align-items:center;margin-right:8px;vertical-align:middle;}',
-      '.sk-main-app-btn{',
-      '  box-sizing:border-box;',
-      '  display:inline-flex;align-items:center;gap:4px;',
-      '  height:24px;padding:0 8px 0 4px;',
-      '  border:1px solid #2FA0AF;border-radius:5px;',
-      '  background:white;color:#2FA0AF;',
-      "  font-family:'New Hero',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
-      '  font-size:12px;line-height:16px;font-weight:500;white-space:nowrap;',
-      '  cursor:pointer;-webkit-appearance:none;appearance:none;margin-bottom: 5px;',
-      '  transition:background .12s ease;',
-      '}',
-      '.sk-main-app-btn__icon{display:flex;flex:0 0 auto;flex-shrink:0;width:16px;height:16px;}',
-      '.sk-main-app-btn__icon svg{display:block;flex-shrink:0;width:16px;height:16px;}',
-      '.sk-main-app-btn:not(:disabled):hover{background:#F0F8F9;}',
-      '.theme-type-dark .sk-main-app-btn{background:#242B2E;color:#3FC0C4;border-radius:#3FC0C4;}',
-      '.theme-type-dark .sk-main-app-btn:not(:disabled):hover{background:#253A3F;}',
-      '#slot-btn-dt-quick-access{display:none !important;}',
-        '.download-slot{display:inline-flex;align-items:center;}',
-        '.download-btn{',
-        '  box-sizing:border-box;margin: 2px 0 0 4px;',
-        '  display:inline-flex;align-items:center;justify-content:center;',
-        '  width:28px;height:28px;padding:0;',
-        '  border:none;border-radius:5px;background:transparent;',
-        '  color:#363636;',
-        '  cursor:pointer;-webkit-appearance:none;appearance:none;',
-        '  transition:color .12s ease,background .12s ease;',
-        '}',
-        '.download-btn__icon{display:flex;width:24px;height:24px;}',
-        '.download-btn__icon svg{display:block;width:24px;height:24px;}',
-        '.download-btn:not(:disabled):hover{background:rgba(0,0,0,0.06);}',
-        '.theme-type-dark .download-btn{color:rgba(255, 255, 255, 0.8);}',
-        '.theme-type-dark .download-btn:not(:disabled):hover{background:rgba(255,255,255,0.1);}',
-        '.download-btn:disabled{opacity: var(--component-disabled-opacity, 0.4);}',
-        '.theme-type-dark .download-btn:disabled {color: rgba(255, 255, 255, 0.31); opacity: unset;}',
-        '.btn-header:not(.dropdown-toggle):hover:not(:disabled){background:rgba(0,0,0,0.06) !important;}',
-        '.btn-header:not(.dropdown-toggle) {',
-        '  width:28px !important; height:28px !important; margin: 2px 4px 0 4px !important; display: flex !important; align-items: center !important; justify-content: center !important; color: #363636 !important;',
-        '}',
-        '.theme-type-dark .btn-header:not(.dropdown-toggle) {color: rgba(255, 255, 255, 0.8) !important;}',
-        '.theme-type-dark .btn-header:not(.dropdown-toggle):disabled {color: rgba(255, 255, 255, 0.31) !important; opacity: unset !important;}',
-        '.theme-type-dark .btn-header:not(.dropdown-toggle):disabled .slideshow-play-icon {fill: rgba(15, 140, 201, 0.5);}',
-        '.theme-type-dark .btn-header:not(.dropdown-toggle):hover:not(:disabled){background:rgba(255,255,255,0.1) !important;}',
-    ].join('\n');
-
     function pinInnerViewportScroll(doc) {
       if (!document.documentElement.hasAttribute('data-sk-ipad')) {
         return true;   // not an iPad — nothing to guard, never retry
@@ -1718,20 +1449,7 @@
 
       doc.__skViewportScrollPinned = true;
 
-      // The reset must not animate: `scroll-behavior: smooth` would make the
-      // snap-back visible, which is worse than the drift it undoes.
-      var style = doc.getElementById('sk-viewport-scroll-pin');
-
-      if (!style) {
-        style = doc.createElement('style');
-        style.id = 'sk-viewport-scroll-pin';
-
-        if (doc.head) {
-            doc.head.appendChild(style);
-        }
-      }
-
-      style.textContent = '#viewport{scroll-behavior:auto !important;}';
+      doc.documentElement.classList.add('sk-viewport-scroll-pinned');
 
       viewport.addEventListener('scroll', function () {
         if (viewport.scrollTop !== 0) {
@@ -1748,20 +1466,30 @@
       return true;
     }
 
-    function injectHeaderControlStyles(doc) {
-      var style = doc.getElementById('sk-header-controls');
-
-      if (!style) {
-        style = doc.createElement('style');
-        style.id = 'sk-header-controls';
-
-        if (doc.head) {
-            doc.head.appendChild(style);
-        }
+    function ensureEditorStyles(doc) {
+      if (!doc.head) {
+        return false;
       }
 
-      style.textContent = SK_HEADER_CONTROLS_CSS;
-      bindHeaderLogoClick(doc);
+      let stylesheet = doc.getElementById('sk-editor-ui-styles');
+
+      if (!stylesheet) {
+        stylesheet = doc.createElement('link');
+        stylesheet.id = 'sk-editor-ui-styles';
+        stylesheet.rel = 'stylesheet';
+        stylesheet.href = '/editor-ui.css';
+
+        // A slow CSS request may outlive the initial header polling window.
+        stylesheet.onload = function () {
+          mountHeaderControls();
+        };
+        stylesheet.onerror = function () {
+          log('Failed to load editor-ui.css');
+        };
+        doc.head.appendChild(stylesheet);
+      }
+
+      return !!stylesheet.sheet;
     }
 
       function bindHeaderLogoClick(doc) {
@@ -2516,12 +2244,8 @@
       return true;
     }
 
-      // Approach B: inject OUR OWN Edit control into the editor's toolbar tab
-      // strip (inside the iframe), right after the "View" tab, styled from Figma
-      // — instead of the brittle outer-page overlay. Same iframe-DOM reach +
-      // <style> injection idiom as hideNativeDropdown. Idempotent. Returns true
-      // once the button is in place. The toolbar renders late (after onAppReady),
-      // so callers poll on a false return — mirrors the tryCacheApi poller.
+      // Mount controls inside the editor iframe after CSS and toolbar anchors
+      // are ready. Callers retry until all controls are in place.
       function mountHeaderControls() {
           var iframe = document.querySelector('iframe[name="frameEditor"]');
 
@@ -2530,8 +2254,12 @@
           }
           var doc = iframe.contentDocument;
 
-          // Inject (or refresh) our styles whenever the iframe doc is reachable.
-          injectHeaderControlStyles(doc);
+          // Wait for CSS before measuring or positioning header controls.
+          if (!ensureEditorStyles(doc)) {
+              return false;
+          }
+
+          bindHeaderLogoClick(doc);
           pinInnerViewportScroll(doc);
           bindBlockedEditAttemptListeners();
 
@@ -2560,6 +2288,8 @@
               var externalDownloadDone = mountDownloadButton(doc);
               var externalMainAppDone = !shouldMountMainAppButton || mountMainAppButton(doc);
 
+              applyEditorLayout();
+
               return externalEditDone && externalDownloadDone && externalMainAppDone;
           }
 
@@ -2581,8 +2311,108 @@
           var downloadDone = mountDownloadButton(doc);
           var mainAppDone = !shouldMountMainAppButton || mountMainAppButton(doc);
 
+          applyEditorLayout();
+
           return editDone && saveDone && mainAppDone && downloadDone;
       }
+
+    function applyEditorLayout() {
+      const iframe = document.querySelector('iframe[name="frameEditor"]');
+      const editorWindow = iframe && iframe.contentWindow;
+      const doc = iframe && iframe.contentDocument;
+      const namespace = editorWindow && (editorWindow.DE || editorWindow.SSE || editorWindow.PE);
+      const controllers = namespace && namespace.controllers;
+      const viewportController = controllers && controllers.Viewport;
+      const viewport = viewportController && viewportController.viewport;
+      const notifications = editorWindow && editorWindow.Common && editorWindow.Common.NotificationCenter;
+      const title = doc && doc.getElementById('box-document-title');
+      const downloadSlot = headerDownloadBtn && headerDownloadBtn.parentNode;
+      const isReady = viewport && notifications && title && downloadSlot && headerEditBtn && headerEditingLabel;
+
+      if (!isReady) {
+        return;
+      }
+
+      if (!editorLayoutState || editorLayoutState.document !== doc) {
+        editorLayoutState = {
+          document: doc,
+          updating: false,
+          isViewer: null
+        };
+        notifications.on('layout:changed tab:active', applyEditorLayout);
+      }
+
+      const state = editorLayoutState;
+
+      if (state.updating) {
+        return;
+      }
+
+      state.updating = true;
+
+      try {
+        const isViewer = !canEdit;
+        let layoutChanged = state.isViewer !== isViewer;
+        let actions = doc.getElementById('sk-header-actions');
+
+        if (!actions) {
+          actions = doc.createElement('div');
+          actions.id = 'sk-header-actions';
+          downloadSlot.parentNode.insertBefore(actions, downloadSlot.nextSibling);
+        }
+
+        function moveControl(element, parent) {
+          if (element && element.parentNode !== parent) {
+            parent.appendChild(element);
+            layoutChanged = true;
+          }
+        }
+
+        moveControl(headerEditBtn.parentNode, actions);
+        moveControl(headerEditingLabel.parentNode, actions);
+        moveControl(doc.getElementById('box-right-btn-group'), title);
+
+        doc.body.classList.add('sk-header-top');
+        doc.body.classList.toggle('sk-role-viewer', isViewer);
+        doc.body.classList.toggle('sk-viewer-compact', isViewer && type !== 'cell');
+        doc.body.classList.toggle('sk-viewer-sheet', isViewer && type === 'cell');
+
+        const rightPanel = viewport.hlayout.getItem('right');
+        const rightResizer = rightPanel && rightPanel.resize && rightPanel.resize.el;
+
+        if (rightResizer) {
+          rightResizer.addClass('sk-viewer-right-resizer');
+        }
+
+        const titlePanel = viewport.vlayout.getItem('title');
+        const headerHeight = Math.max(titlePanel.height, title.getBoundingClientRect().height);
+
+        if (headerHeight !== titlePanel.height) {
+          titlePanel.height = headerHeight;
+          layoutChanged = true;
+        }
+
+        state.isViewer = isViewer;
+
+        const toolbarController = controllers.Toolbar;
+        const toolbar = toolbarController && toolbarController.toolbar;
+        const needsHomeTab = isViewer && type === 'cell' && toolbar && toolbar.$tabs && !toolbar.isTabActive('home') && !toolbar.isTabActive('data');
+
+        if (needsHomeTab) {
+          toolbar.setTab('home');
+        }
+
+        if (layoutChanged) {
+          viewportController.onLayoutChanged('window');
+
+          if (viewportController.searchBar) {
+            viewportController.searchBar.onLayoutChanged();
+          }
+        }
+      } finally {
+        state.updating = false;
+      }
+    }
 
     function autoLoadFixture() {
       log('standalone mode — auto-loading ' + fixtureUrl);
@@ -3050,7 +2880,7 @@
     // We can treat all unmatched callbacks as SDK-internal intrusions
     // because the native Editing/Viewing dropdown — the only user-facing
     // affordance that would call asc_setRestriction directly — is hidden
-    // permanently via CSS injection (hideNativeDropdown). The user's only
+    // permanently by editor-ui.css. The user's only
     // mode-toggle path is our injected header Edit button, which routes through
     // the host postMessage protocol (request-edit-mode / mode-changed) and
     // bypasses asc_setRestriction entirely. So: silently re-assert our
@@ -3289,10 +3119,6 @@
             // path so the per-type UI gets fully painted (toolbar mask, etc.).
             bareSetRestriction(pendingRestrict);
             log('onAppReady: phase-1 bare restriction applied (' + pendingRestrict + '); full applyRestriction deferred to onDocumentReady');
-            // Permanently hide the native dropdown now that the iframe DOM
-            // is confirmed ready. Our injected header Edit button is the
-            // affordance (mountHeaderControls).
-            hideNativeDropdown();
             return;
           }
           if (++attempts < 20) {
