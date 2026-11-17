@@ -11,6 +11,13 @@
   display: none !important;
 }
 
+.editor-role-pending #right-menu,
+.editor-role-pending #file-menu-panel,
+.editor-role-pending #toolbar,
+.editor-role-pending:not(.editor-sheet-skeleton) #loading-mask > .sktoolbar,
+.editor-role-pending:not(.editor-sheet-skeleton) #loading-mask > .brendpanel > :nth-child(2),
+.sk-viewer-compact #loading-mask > .sktoolbar,
+.sk-viewer-compact #loading-mask > .brendpanel > :nth-child(2),
 .sk-viewer-compact #right-menu,
 .sk-role-viewer .sk-viewer-right-resizer,
 .sk-role-viewer #file-menu-panel,
@@ -26,10 +33,30 @@
   display: none !important;
 }
 
+.editor-sheet-skeleton .loadmask > .brendpanel > :first-child {
+  height: var(--sk-header-height);
+}
+
+.editor-sheet-skeleton .loadmask,
+.editor-sheet-skeleton .loadmask * {
+  box-sizing: border-box;
+}
+
+.editor-sheet-skeleton .loadmask > .skformula {
+  height: 34px;
+  padding-top: 6px;
+}
+
+#editor-loading-screen {
+  z-index: 1040;
+}
+
+.editor-fixed-header,
 .sk-header-top {
   --sk-header-height: 34px;
 }
 
+.editor-fixed-header #box-document-title,
 .sk-header-top #box-document-title {
   height: var(--sk-header-height);
 }
@@ -94,7 +121,8 @@
 /* tab row height (was 28px) — per design; !important beats .toolbar .box-tabs /
  * .top-title>.toolbar .box-tabs
  */
-.box-tabs {
+.box-tabs,
+.editor-sheet-skeleton .loadmask > .brendpanel > :nth-child(2) {
   height: 30px !important;
 }
 
