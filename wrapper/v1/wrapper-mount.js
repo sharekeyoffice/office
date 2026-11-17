@@ -662,6 +662,11 @@
         }
 
         var key = e.key;
+        var cellEditor = type === 'cell' && editorApi && editorApi.wb && editorApi.wb.cellEditor;
+
+        if (key === 'Enter' && cellEditor && cellEditor.isOpened && typeof cellEditor.isReadOnly === 'function' && cellEditor.isReadOnly()) {
+            return false;
+        }
 
         if (!key) {
             return false;

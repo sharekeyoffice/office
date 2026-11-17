@@ -1,0 +1,221 @@
+diff --git a/cell/view/WorkbookView.js b/cell/view/WorkbookView.js
+--- a/cell/view/WorkbookView.js
++++ b/cell/view/WorkbookView.js
+@@ -2131,6 +2131,23 @@
+     const ws = this.getWorksheet();
+     const ct = ws.getCursorTypeFromXY(x, y, true);
+ 
++    // Reuse the cell editor's text rendering and scrolling without acquiring an edit lock.
++    if (!this.canEdit() && ct.target === c_oTargetType.Cells) {
++      if (this.Api.isRestrictionView() &&
++          !ws.objectRender.checkCursorDrawingObject(x, y) &&
++          !this.collaborativeEditing.getGlobalLock() && !this.controller.isResizeMode) {
++        const enterOptions = new AscCommonExcel.CEditorEnterOptions();
++        enterOptions.readOnly = true;
++        enterOptions.focus = true;
++        enterOptions.eventPos = event;
++        this.setCellEditMode(true);
++        ws.openCellEditor(this.cellEditor, enterOptions);
++        this.input.disabled = false;
++      }
++      asc_applyFunction(callback);
++      return;
++    }
++
+ 	if (ct.target === c_oTargetType.TraceDependents && ct.coordLineInfo) {
+ 		let fromCell = ct.coordLineInfo.from;
+ 		let toCell = ct.coordLineInfo.to;
+diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
+--- a/cell/view/CellEditorView.js
++++ b/cell/view/CellEditorView.js
+@@ -348,6 +348,7 @@
+ 			window.addEventListener(AscCommon.getPtrEvtName("move"), this.fKeyMouseMove, false);
+ 		}
+ 		this._setOptions(options);
++		this.input.readOnly = this.isReadOnly();
+ 		this._cleanLastRangeInfo();
+ 		this._updateTopLineActive(true === this.input.isFocused, true);
+ 
+@@ -388,9 +389,18 @@
+ 		externalSelectionController && externalSelectionController.sendExternalChangeSelection();
+ 	};
+ 
++	CellEditor.prototype.isReadOnly = function () {
++		return !!(this.options.enterOptions && this.options.enterOptions.readOnly);
++	};
++
+ 	CellEditor.prototype.close = function (saveValue, callback) {
+ 		var opt = this.options;
+ 		var t = this;
++
++		// A preview must never commit, even if permissions changed while it was open.
++		if (this.isReadOnly()) {
++			saveValue = false;
++		}
+ 
+ 		let externalSelectionController = this.handlers.trigger("getExternalSelectionController");
+ 		if (externalSelectionController && externalSelectionController.getExternalFormulaEditMode()) {
+@@ -419,6 +429,7 @@
+ 			}
+ 
+ 			t.isOpened = false;
++			t.input.readOnly = false;
+ 			t._resetScroll();
+ 
+ 			t._formula = null;
+@@ -480,6 +491,8 @@
+ 		}
+ 
+ 		this.isOpened = false;
++		this.input.readOnly = false;
++		this._resetScroll();
+ 
+ 		this._formula = null;
+ 		this._parseResult = null;
+@@ -517,6 +530,10 @@
+ 	};
+ 
+ 	CellEditor.prototype.setTextStyle = function (prop, val, isToggle) {
++		if (this.isReadOnly()) {
++			return;
++		}
++
+ 		if (this.isFormula()) {
+ 			return;
+ 		}
+@@ -599,6 +616,10 @@
+ 	};
+ 
+ 	CellEditor.prototype._changeFragments = function (fragmentsMap) {
++		if (this.isReadOnly()) {
++			return;
++		}
++
+ 		let opt = this.options;
+ 		if (!opt.fragments) {
+ 			return;
+@@ -638,7 +659,7 @@
+ 
+ 	CellEditor.prototype.undo = function () {
+ 		var api = window["Asc"]["editor"];
+-		if (api && !api.canUndoRedoByRestrictions()) {
++		if (this.isReadOnly() || (api && !api.canUndoRedoByRestrictions())) {
+ 			return;
+ 		}
+ 		api.sendEvent("asc_onBeforeUndoRedo");
+@@ -648,7 +669,7 @@
+ 
+ 	CellEditor.prototype.redo = function () {
+ 		var api = window["Asc"]["editor"];
+-		if (api && !api.canUndoRedoByRestrictions()) {
++		if (this.isReadOnly() || (api && !api.canUndoRedoByRestrictions())) {
+ 			return;
+ 		}
+ 		api.sendEvent("asc_onBeforeUndoRedo");
+@@ -849,6 +870,10 @@
+ 	};
+ 
+ 	CellEditor.prototype.paste = function (fragments, cursorPos) {
++		if (this.isReadOnly()) {
++			return;
++		}
++
+ 		if (!(fragments.length > 0)) {
+ 			return;
+ 		}
+@@ -1198,7 +1223,7 @@
+ 		if (this.getMenuEditorMode()) {
+ 			return;
+ 		}
+-		var isFormula = this._isFormula();
++		var isFormula = !this.isReadOnly() && this._isFormula();
+ 
+ 		var editorState = isFormula ? c_oAscCellEditorState.editFormula : "" === AscCommonExcel.getFragmentsText(this.options.fragments) ? c_oAscCellEditorState.editEmptyCell : c_oAscCellEditorState.editText;
+ 		this._setEditorState(editorState);
+@@ -2457,6 +2482,10 @@
+ 		return this._addChars(arrCharCodes);
+ 	};
+ 	CellEditor.prototype._addChars = function (str, pos, isRange) {
++		if (this.isReadOnly()) {
++			return;
++		}
++
+ 		if (!isRange) {
+ 			this.cleanSelectRange();
+ 		}
+@@ -2547,6 +2576,10 @@
+ 	};
+ 
+ 	CellEditor.prototype._removeChars = function (pos, length, isRange) {
++		if (this.isReadOnly()) {
++			return;
++		}
++
+ 		var t = this, opt = t.options, b, e, l, first, last;
+ 
+ 		if (!isRange) {
+@@ -3153,6 +3186,19 @@
+ 			return nRetValue;
+ 		}
+ 
++		if (this.isReadOnly()) {
++			const key = oEvent.GetKeyCode();
++			if (key === 27 || key === 13 || key === 9) {
++				this.close(false);
++				return keydownresult_PreventAll;
++			}
++			const isNavigation = key >= 33 && key <= 40;
++			const isSelectOrCopy = (oEvent.CtrlKey || oEvent.MacCmdKey) && (key === 65 || key === 67);
++			if (!isNavigation && !isSelectOrCopy) {
++				return keydownresult_PreventAll;
++			}
++		}
++
+ 		oThis._setSkipKeyPress(false);
+ 		oThis.skipTLUpdate = false;
+ 
+@@ -3395,6 +3441,10 @@
+ 	};
+ 
+ 	CellEditor.prototype.EnterText = function (codePoints) {
++		if (this.isReadOnly()) {
++			return;
++		}
++
+ 		var t = this;
+ 
+ 		if (!window['IS_NATIVE_EDITOR']) {
+@@ -3582,7 +3632,7 @@
+ 		var t = this;
+ 		const editingOptions = this.options;
+ 		const canProcessInput = this.isOpened && editingOptions && editingOptions.fragments &&
+-			this.handlers.trigger("canEdit") && !this.loadFonts;
++			!this.isReadOnly() && this.handlers.trigger("canEdit") && !this.loadFonts;
+ 
+ 		if (!canProcessInput) {
+ 			return true;
+@@ -3684,6 +3734,10 @@
+ 		return newText;
+ 	};
+ 	CellEditor.prototype.Begin_CompositeInput = function () {
++		if (this.isReadOnly()) {
++			return;
++		}
++
+ 		if (this.selectionBegin === this.selectionEnd) {
+ 			this.beginCompositePos = this.cursorPos;
+ 			this.compositeLength = 0;
+diff --git a/cell/api.js b/cell/api.js
+--- a/cell/api.js
++++ b/cell/api.js
+@@ -8614,6 +8614,10 @@
+       return bResult;
+   };
+   spreadsheet_api.prototype.onUpdateRestrictions = function () {
++    if (!this.isRestrictionView() && this.wb && this.wb.cellEditor &&
++        this.wb.cellEditor.isOpened && this.wb.cellEditor.isReadOnly()) {
++      this.wb.closeCellEditor(true);
++    }
+     this._onUpdateDocumentCanUndoRedo();
+     this.turnOffSpecialModes();
+   };
