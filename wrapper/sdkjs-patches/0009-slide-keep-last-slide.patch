@@ -10,7 +10,18 @@ diff --git a/slide/api.js b/slide/api.js
  
  		this.ShowParaMarks        = false;
  		this.ShowSmartGuides      = true;
-@@ -6330,7 +6330,8 @@
+@@ -1803,6 +1803,10 @@
+ 		window["AscDesktopEditor"]["Print"](JSON.stringify(opt));
+ 		return true;
+ 	};
++	asc_docs_api.prototype.asc_getCanUndo = function()
++	{
++		return this.canUndoRedoByRestrictions() && this.WordControl.m_oLogicDocument.CanUndo();
++	};
+ 	asc_docs_api.prototype.Undo           = function()
+ 	{
+ 		if (!this.canUndoRedoByRestrictions())
+@@ -6330,7 +6334,8 @@
  	};
  	asc_docs_api.prototype.DeleteSlide    = function()
  	{
@@ -20,7 +31,7 @@ diff --git a/slide/api.js b/slide/api.js
  
  		if (!this.IsSupportEmptyPresentation)
  		{
-@@ -6959,6 +6960,8 @@
+@@ -6959,6 +6964,8 @@
  		{
  			aSlides.push(slide);
  		}
@@ -56,7 +67,57 @@ diff --git a/slide/Editor/Format/Presentation.js b/slide/Editor/Format/Presentat
  	}
  	const arrSlides = [];
  	for (let i = 0; i < aSelectedArray.length; i++) {
-@@ -9426,7 +9436,21 @@
+@@ -7220,8 +7230,8 @@
+-	var bCanUndo = this.History.Can_Undo();
+-	if (true !== bCanUndo && this.Api && this.CollaborativeEditing && true === this.CollaborativeEditing.Is_Fast() && true !== this.CollaborativeEditing.Is_SingleUser())
++	var bCanUndo = this.CanUndo();
++	if (!this.History.Can_Undo() && this.Api && this.CollaborativeEditing && true === this.CollaborativeEditing.Is_Fast() && true !== this.CollaborativeEditing.Is_SingleUser())
+ 		bCanUndo = this.CollaborativeEditing.CanUndo();
+ 
+ 	this.Api.sync_CanUndoCallback(bCanUndo);
+@@ -7375,6 +7385,32 @@
+ CPresentation.prototype.IsEditingInFastMultipleUsers = function () {
+ 	return this.IsFastMultipleUsers() && this.CanAddChangesToHistory();
+ };
++CPresentation.prototype.CanUndo = function (Options) {
++	if (!this.History.Can_Undo()) {
++		return false;
++	}
++	if (this.Api.IsSupportEmptyPresentation) {
++		return true;
++	}
++
++	// Check the result of the whole history point, including slide moves.
++	const slides = new Map(this.Slides.map(function (slide) { return [slide, slide.isVisible()]; }));
++	const lastPoint = Options && Options.All === true ? 0 : this.History.Index;
++	for (let pointIndex = this.History.Index; pointIndex >= lastPoint; --pointIndex) {
++		const items = this.History.Points[pointIndex].Items;
++		for (let itemIndex = items.length - 1; itemIndex >= 0; --itemIndex) {
++			const change = items[itemIndex].Data;
++			if (change.Class === this && change.Type === AscDFH.historyitem_Presentation_AddSlide) {
++				change.Items.forEach(function (slide) { slides.delete(slide); });
++			} else if (change.Class === this && change.Type === AscDFH.historyitem_Presentation_RemoveSlide) {
++				change.Items.forEach(function (slide) { slides.set(slide, slide.isVisible()); });
++			} else if (change.Type === AscDFH.historyitem_SlideSetShow && slides.has(change.Class)) {
++				slides.set(change.Class, change.Old !== false);
++			}
++		}
++	}
++	return Array.from(slides.values()).some(function (isVisible) { return isVisible; });
++};
+ CPresentation.prototype.Document_Undo = function (Options) {
+ 
+ 	if (true === AscCommon.CollaborativeEditing.Get_GlobalLock())
+@@ -7386,7 +7422,7 @@
+ 			this.Api.forceSaveUndoRequest = true;
+ 		}
+ 	} else {
+-		if (this.History.Can_Undo()) {
++		if (this.CanUndo(Options)) {
+ 			this.Api.sendEvent("asc_onBeforeUndoRedo");
+ 			this.clearThemeTimeouts();
+ 			var arrChanges = this.History.Undo(Options);
+@@ -9426,7 +9462,21 @@
  	}
  	this.FinalizeAction();
  };
