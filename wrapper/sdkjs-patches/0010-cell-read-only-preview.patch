@@ -28,7 +28,22 @@ diff --git a/cell/view/WorkbookView.js b/cell/view/WorkbookView.js
 diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
 --- a/cell/view/CellEditorView.js
 +++ b/cell/view/CellEditorView.js
-@@ -348,6 +348,7 @@
+@@ -93,3 +93,14 @@
++
++	const KEY_CODES = {
++		TAB: 9,
++		ENTER: 13,
++		ESCAPE: 27,
++		PAGE_UP: 33,
++		ARROW_DOWN: 40,
++		A: 65,
++		C: 67
++	};
++
+ 
+ 
+ 	/**
+@@ -348,6 +359,7 @@
  			window.addEventListener(AscCommon.getPtrEvtName("move"), this.fKeyMouseMove, false);
  		}
  		this._setOptions(options);
@@ -36,7 +51,7 @@ diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
  		this._cleanLastRangeInfo();
  		this._updateTopLineActive(true === this.input.isFocused, true);
  
-@@ -388,9 +389,18 @@
+@@ -388,9 +400,18 @@
  		externalSelectionController && externalSelectionController.sendExternalChangeSelection();
  	};
  
@@ -55,7 +70,7 @@ diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
  
  		let externalSelectionController = this.handlers.trigger("getExternalSelectionController");
  		if (externalSelectionController && externalSelectionController.getExternalFormulaEditMode()) {
-@@ -419,6 +429,7 @@
+@@ -419,6 +440,7 @@
  			}
  
  			t.isOpened = false;
@@ -63,7 +78,7 @@ diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
  			t._resetScroll();
  
  			t._formula = null;
-@@ -480,6 +491,8 @@
+@@ -480,6 +502,8 @@
  		}
  
  		this.isOpened = false;
@@ -72,7 +87,7 @@ diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
  
  		this._formula = null;
  		this._parseResult = null;
-@@ -517,6 +530,10 @@
+@@ -517,6 +541,10 @@
  	};
  
  	CellEditor.prototype.setTextStyle = function (prop, val, isToggle) {
@@ -83,7 +98,7 @@ diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
  		if (this.isFormula()) {
  			return;
  		}
-@@ -599,6 +616,10 @@
+@@ -599,6 +627,10 @@
  	};
  
  	CellEditor.prototype._changeFragments = function (fragmentsMap) {
@@ -94,7 +109,7 @@ diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
  		let opt = this.options;
  		if (!opt.fragments) {
  			return;
-@@ -638,7 +659,7 @@
+@@ -638,7 +670,7 @@
  
  	CellEditor.prototype.undo = function () {
  		var api = window["Asc"]["editor"];
@@ -103,7 +118,7 @@ diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
  			return;
  		}
  		api.sendEvent("asc_onBeforeUndoRedo");
-@@ -648,7 +669,7 @@
+@@ -648,7 +680,7 @@
  
  	CellEditor.prototype.redo = function () {
  		var api = window["Asc"]["editor"];
@@ -112,7 +127,7 @@ diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
  			return;
  		}
  		api.sendEvent("asc_onBeforeUndoRedo");
-@@ -849,6 +870,10 @@
+@@ -849,6 +881,10 @@
  	};
  
  	CellEditor.prototype.paste = function (fragments, cursorPos) {
@@ -123,7 +138,7 @@ diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
  		if (!(fragments.length > 0)) {
  			return;
  		}
-@@ -1198,7 +1223,7 @@
+@@ -1198,7 +1234,7 @@
  		if (this.getMenuEditorMode()) {
  			return;
  		}
@@ -132,7 +147,7 @@ diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
  
  		var editorState = isFormula ? c_oAscCellEditorState.editFormula : "" === AscCommonExcel.getFragmentsText(this.options.fragments) ? c_oAscCellEditorState.editEmptyCell : c_oAscCellEditorState.editText;
  		this._setEditorState(editorState);
-@@ -2457,6 +2482,10 @@
+@@ -2457,6 +2493,10 @@
  		return this._addChars(arrCharCodes);
  	};
  	CellEditor.prototype._addChars = function (str, pos, isRange) {
@@ -143,7 +158,7 @@ diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
  		if (!isRange) {
  			this.cleanSelectRange();
  		}
-@@ -2547,6 +2576,10 @@
+@@ -2547,6 +2587,10 @@
  	};
  
  	CellEditor.prototype._removeChars = function (pos, length, isRange) {
@@ -154,18 +169,18 @@ diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
  		var t = this, opt = t.options, b, e, l, first, last;
  
  		if (!isRange) {
-@@ -3153,6 +3186,19 @@
+@@ -3153,6 +3197,19 @@
  			return nRetValue;
  		}
  
 +		if (this.isReadOnly()) {
 +			const key = oEvent.GetKeyCode();
-+			if (key === 27 || key === 13 || key === 9) {
++			if (key === KEY_CODES.ESCAPE || key === KEY_CODES.ENTER || key === KEY_CODES.TAB) {
 +				this.close(false);
 +				return keydownresult_PreventAll;
 +			}
-+			const isNavigation = key >= 33 && key <= 40;
-+			const isSelectOrCopy = (oEvent.CtrlKey || oEvent.MacCmdKey) && (key === 65 || key === 67);
++			const isNavigation = key >= KEY_CODES.PAGE_UP && key <= KEY_CODES.ARROW_DOWN;
++			const isSelectOrCopy = (oEvent.CtrlKey || oEvent.MacCmdKey) && (key === KEY_CODES.A || key === KEY_CODES.C);
 +			if (!isNavigation && !isSelectOrCopy) {
 +				return keydownresult_PreventAll;
 +			}
@@ -174,7 +189,7 @@ diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
  		oThis._setSkipKeyPress(false);
  		oThis.skipTLUpdate = false;
  
-@@ -3395,6 +3441,10 @@
+@@ -3395,6 +3452,10 @@
  	};
  
  	CellEditor.prototype.EnterText = function (codePoints) {
@@ -185,7 +200,7 @@ diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
  		var t = this;
  
  		if (!window['IS_NATIVE_EDITOR']) {
-@@ -3582,7 +3632,7 @@
+@@ -3582,7 +3643,7 @@
  		var t = this;
  		const editingOptions = this.options;
  		const canProcessInput = this.isOpened && editingOptions && editingOptions.fragments &&
@@ -194,7 +209,7 @@ diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
  
  		if (!canProcessInput) {
  			return true;
-@@ -3684,6 +3734,10 @@
+@@ -3684,6 +3745,10 @@
  		return newText;
  	};
  	CellEditor.prototype.Begin_CompositeInput = function () {
