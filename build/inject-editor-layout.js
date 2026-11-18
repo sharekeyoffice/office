@@ -11,11 +11,10 @@ function initializeEditorLayout() {
 
   let loadingScreen = null;
   let isDocumentReady = false;
-  let currentRole = null;
-  const editorTypes = ['word', 'cell', 'slide'];
+  const editorTypes = new Set(['word', 'cell', 'slide']);
 
-  function updateLoadingScreen() {
-    const shouldPreserveLoadingScreen = currentRole && editorTypes.includes(currentRole.type);
+  function updateLoadingScreen(role) {
+    const shouldPreserveLoadingScreen = role && editorTypes.has(role.type);
 
     if (!shouldPreserveLoadingScreen) {
       removeLoadingScreen();
@@ -38,7 +37,7 @@ function initializeEditorLayout() {
     loadingScreen.setAttribute('aria-hidden', 'true');
 
     // Sheets keep their ribbon in both roles; Word and Slides use a compact loader
-    if (currentRole.type !== 'cell') {
+    if (role.type !== 'cell') {
       loadingScreen.querySelectorAll('.sktoolbar, .brendpanel > :nth-child(2)').forEach(element => element.remove());
     }
 
@@ -63,30 +62,32 @@ function initializeEditorLayout() {
   };
 
   function setEditorLayoutRole(role) {
-    currentRole = role;
     const classes = document.documentElement.classList;
     const isKnown = role && typeof role.canEdit === 'boolean';
     const isViewer = isKnown && !role.canEdit;
 
-    classes.toggle('editor-fixed-header', editorTypes.includes(role.type));
+    classes.toggle('editor-fixed-header', editorTypes.has(role.type));
     classes.toggle('editor-sheet-skeleton', role.type === 'cell');
     classes.toggle('editor-role-pending', !isKnown);
     classes.toggle('sk-role-viewer', !!isViewer);
     classes.toggle('sk-viewer-compact', !!isViewer && role.type !== 'cell');
     classes.toggle('sk-viewer-sheet', !!isViewer && role.type === 'cell');
-    updateLoadingScreen();
+    updateLoadingScreen(role);
+  }
+
+  function applyHostEditorLayoutRole() {
+    let role;
+
+    try {
+      role = window.parent.editorLayoutRole;
+    } catch (error) {}
+
+    setEditorLayoutRole(role || { canEdit: true });
   }
 
   window.setEditorLayoutRole = setEditorLayoutRole;
-  document.addEventListener('DOMContentLoaded', updateLoadingScreen, { once: true });
-
-  let role;
-
-  try {
-    role = window.parent.editorLayoutRole;
-  } catch (error) {}
-
-  setEditorLayoutRole(role || { canEdit: true });
+  document.addEventListener('DOMContentLoaded', applyHostEditorLayoutRole, { once: true });
+  applyHostEditorLayoutRole();
 }
 
 function injectEditorLayout(siteRoot) {
