@@ -4,6 +4,8 @@
     var priorities = {
         'main-app-logged-out-modal': 100,
         'main-app-closed-modal': 90,
+        'deleted-file-modal': 85,
+        'access-lost-modal': 85,
         'cannot-reconnect-modal': 80,
         'reconnecting-modal': 70,
         'cannot-start-edit-mode': 60,
@@ -18,7 +20,9 @@
         'viewer-mode': 'vm-close-btn',
         'view-only-mode': 'vom-close-btn',
         'turn-on-edit-mode': 'toem-close-btn',
-        'welcome-screen': 'ws-close-btn'
+        'welcome-screen': 'ws-close-btn',
+        'deleted-file-modal': 'dfm-close-btn',
+        'access-lost-modal': 'alm-close-btn',
     };
 
     var activeModals = {};
