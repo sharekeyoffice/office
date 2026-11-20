@@ -1604,16 +1604,18 @@
         stylesheet.id = 'sk-editor-ui-styles';
         stylesheet.rel = 'stylesheet';
         stylesheet.href = '/editor-ui.css';
-
-        // A slow CSS request may outlive the initial header polling window.
-        stylesheet.onload = function () {
-          mountHeaderControls();
-        };
-        stylesheet.onerror = function () {
-          log('Failed to load editor-ui.css');
-        };
         doc.head.appendChild(stylesheet);
       }
+
+      // the bootstrap may have added this link before the header polling started
+      // retry mounting even if css finishes after the polling window expires
+      stylesheet.onload = function () {
+        mountHeaderControls();
+      };
+
+      stylesheet.onerror = function () {
+        log('Failed to load editor-ui.css');
+      };
 
       return !!stylesheet.sheet;
     }
@@ -2588,6 +2590,8 @@
             viewportController.onLayoutChanged('window');
           }
 
+          // keep the loading screen until the header is ready; a later mount or
+          // layout notification retries this function and finishes loading below
           return;
         }
 
