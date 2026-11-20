@@ -66,9 +66,6 @@ fi
 echo "→ applying overlay/* over $DIST"
 cp -R "$REPO/overlay"/. "$DIST/"
 
-# Version the served SDK bundles before publishing the editor HTML
-node "$SCRIPT_DIR/version-editor-sdk.js" "$DIST"
-
 # ── Substitute __ALLOWED_HOST_ORIGIN__ ─────────────────────────
 ALLOWED_HOST_ORIGIN="${ALLOWED_HOST_ORIGIN:-}"
 if [[ -z "$ALLOWED_HOST_ORIGIN" && -f "$REPO/config.json" ]]; then

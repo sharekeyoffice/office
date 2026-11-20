@@ -69,7 +69,7 @@ function sync() {
   const html = fs.readFileSync(path.join(OVERLAY, 'edit.html'), 'utf8')
     .replace(/__ALLOWED_HOST_ORIGIN__/g, ORIGIN);
   fs.writeFileSync(path.join(PUBLIC, 'edit.html'), html);
-  require('./version-editor-sdk')(PUBLIC);
+  require('./version-editor-assets')(PUBLIC);
   console.log(`[assemble] synced glue+overlay → public/ (origin ${ORIGIN})  ${new Date().toLocaleTimeString()}`);
 }
 
