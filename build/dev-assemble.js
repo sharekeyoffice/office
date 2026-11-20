@@ -70,6 +70,7 @@ function sync() {
     .replace(/__ALLOWED_HOST_ORIGIN__/g, ORIGIN);
   fs.writeFileSync(path.join(PUBLIC, 'edit.html'), html);
   require('./inject-editor-layout')(PUBLIC);
+  require('./version-editor-assets')(PUBLIC);
   console.log(`[assemble] synced glue+overlay → public/ (origin ${ORIGIN})  ${new Date().toLocaleTimeString()}`);
 }
 
