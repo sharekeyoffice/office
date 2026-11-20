@@ -39,6 +39,8 @@ bash "$SCRIPT_DIR/mscorefonts-step.sh" "${OUT_DIR:-$REPO/dist}"
 
 bash "$SCRIPT_DIR/05-prune.sh"
 
+node "$SCRIPT_DIR/version-editor-assets.js" "${OUT_DIR:-$REPO/dist}"
+
 # Pre-compress for nginx's gzip_static. After the prune, so we only spend CPU on
 # files that actually ship.
 bash "$SCRIPT_DIR/06-compress.sh"

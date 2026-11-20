@@ -48,6 +48,8 @@ else
   bash "$SCRIPT_DIR/05-prune.sh"
 fi
 
+node "$SCRIPT_DIR/version-editor-assets.js" "$OUT_DIR"
+
 echo
 echo "════════════════════════════════════════════════════════════"
 echo "  ✓ public/ ready — $(du -sh "$OUT_DIR" | cut -f1)"
