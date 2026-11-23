@@ -1,0 +1,153 @@
+diff --git a/slide/api.js b/slide/api.js
+--- a/slide/api.js
++++ b/slide/api.js
+@@ -279,7 +279,7 @@
+ 
+         this.IsSpellCheckCurrentWord = false;
+ 
+-		this.IsSupportEmptyPresentation = true;
++		this.IsSupportEmptyPresentation = false;
+ 
+ 		this.ShowParaMarks        = false;
+ 		this.ShowSmartGuides      = true;
+@@ -1803,6 +1803,10 @@
+ 		window["AscDesktopEditor"]["Print"](JSON.stringify(opt));
+ 		return true;
+ 	};
++	asc_docs_api.prototype.asc_getCanUndo = function()
++	{
++		return this.canUndoRedoByRestrictions() && this.WordControl.m_oLogicDocument.CanUndo();
++	};
+ 	asc_docs_api.prototype.Undo           = function()
+ 	{
+ 		if (!this.canUndoRedoByRestrictions())
+@@ -6330,7 +6334,8 @@
+ 	};
+ 	asc_docs_api.prototype.DeleteSlide    = function()
+ 	{
+-		var _delete_array = this.WordControl.m_oLogicDocument.GetSelectedSlideObjects();
++		var oPresentation = this.WordControl.m_oLogicDocument;
++		var _delete_array = oPresentation.getSlidesToDelete(oPresentation.GetSelectedSlideObjects());
+ 
+ 		if (!this.IsSupportEmptyPresentation)
+ 		{
+@@ -6959,6 +6964,8 @@
+ 		{
+ 			aSlides.push(slide);
+ 		}
++
++		obj.lockRemove = oPresentation.getSlidesToDelete(aSlides).length === 0;
+ 
+ 		for(let nIdx = 0; nIdx < aSlides.length; ++nIdx)
+ 		{
+diff --git a/slide/Editor/Format/Presentation.js b/slide/Editor/Format/Presentation.js
+--- a/slide/Editor/Format/Presentation.js
++++ b/slide/Editor/Format/Presentation.js
+@@ -4986,6 +4986,13 @@
+ };
+ 
+ 
++CPresentation.prototype.canHideSlides = function (aSlides) {
++	const selectedSlides = new Set(Array.isArray(aSlides) ? aSlides : this.GetSelectedSlides());
++	return this.Slides.some(function (slide, index) {
++		return slide.isVisible() && !selectedSlides.has(index);
++	});
++};
++
+ CPresentation.prototype.hideSlides = function (isHide, aSlides) {
+ 
+ 	var aSelectedArray;
+@@ -4993,6 +5000,9 @@
+ 		aSelectedArray = aSlides;
+ 	} else {
+ 		aSelectedArray = this.GetSelectedSlides();
++	}
++	if (isHide && !this.canHideSlides(aSelectedArray)) {
++		return;
+ 	}
+ 	const arrSlides = [];
+ 	for (let i = 0; i < aSelectedArray.length; i++) {
+@@ -7220,8 +7230,8 @@
+-	var bCanUndo = this.History.Can_Undo();
+-	if (true !== bCanUndo && this.Api && this.CollaborativeEditing && true === this.CollaborativeEditing.Is_Fast() && true !== this.CollaborativeEditing.Is_SingleUser())
++	var bCanUndo = this.CanUndo();
++	if (!this.History.Can_Undo() && this.Api && this.CollaborativeEditing && true === this.CollaborativeEditing.Is_Fast() && true !== this.CollaborativeEditing.Is_SingleUser())
+ 		bCanUndo = this.CollaborativeEditing.CanUndo();
+ 
+ 	this.Api.sync_CanUndoCallback(bCanUndo);
+@@ -7375,6 +7385,32 @@
+ CPresentation.prototype.IsEditingInFastMultipleUsers = function () {
+ 	return this.IsFastMultipleUsers() && this.CanAddChangesToHistory();
+ };
++CPresentation.prototype.CanUndo = function (Options) {
++	if (!this.History.Can_Undo()) {
++		return false;
++	}
++	if (this.Api.IsSupportEmptyPresentation) {
++		return true;
++	}
++
++	// Check the result of the whole history point, including slide moves.
++	const slides = new Map(this.Slides.map(function (slide) { return [slide, slide.isVisible()]; }));
++	const lastPoint = Options && Options.All === true ? 0 : this.History.Index;
++	for (let pointIndex = this.History.Index; pointIndex >= lastPoint; --pointIndex) {
++		const items = this.History.Points[pointIndex].Items;
++		for (let itemIndex = items.length - 1; itemIndex >= 0; --itemIndex) {
++			const change = items[itemIndex].Data;
++			if (change.Class === this && change.Type === AscDFH.historyitem_Presentation_AddSlide) {
++				change.Items.forEach(function (slide) { slides.delete(slide); });
++			} else if (change.Class === this && change.Type === AscDFH.historyitem_Presentation_RemoveSlide) {
++				change.Items.forEach(function (slide) { slides.set(slide, slide.isVisible()); });
++			} else if (change.Type === AscDFH.historyitem_SlideSetShow && slides.has(change.Class)) {
++				slides.set(change.Class, change.Old !== false);
++			}
++		}
++	}
++	return Array.from(slides.values()).some(function (isVisible) { return isVisible; });
++};
+ CPresentation.prototype.Document_Undo = function (Options) {
+ 
+ 	if (true === AscCommon.CollaborativeEditing.Get_GlobalLock())
+@@ -7386,7 +7422,7 @@
+ 			this.Api.forceSaveUndoRequest = true;
+ 		}
+ 	} else {
+-		if (this.History.Can_Undo()) {
++		if (this.CanUndo(Options)) {
+ 			this.Api.sendEvent("asc_onBeforeUndoRedo");
+ 			this.clearThemeTimeouts();
+ 			var arrChanges = this.History.Undo(Options);
+@@ -9426,7 +9462,21 @@
+ 	}
+ 	this.FinalizeAction();
+ };
++CPresentation.prototype.getSlidesToDelete = function (arrSlides) {
++	if (this.Api.IsSupportEmptyPresentation || this.IsMasterMode()) {
++		return arrSlides;
++	}
++	const selectedSlides = new Set(arrSlides);
++	if (this.Slides.some(function (slide) { return slide.isVisible() && !selectedSlides.has(slide); })) {
++		return arrSlides;
++	}
++	const slideToKeep = this.Slides.find(function (slide) { return slide.isVisible(); }) ||
++		(selectedSlides.size === this.Slides.length ? this.Slides[0] : null);
++	return slideToKeep ? arrSlides.filter(function (slide) { return slide !== slideToKeep; }) : arrSlides;
++};
++
+ CPresentation.prototype.deleteSlides = function (arrSlides) {
++	arrSlides = this.getSlidesToDelete(arrSlides);
+ 	const unpreserveInfo = this.getUnpreserveLayoutsAndMasters(arrSlides);
+ 	const checkArray = [].concat(unpreserveInfo.layouts, unpreserveInfo.masters, arrSlides);
+ 	if (arrSlides.length > 0 && (this.Document_Is_SelectionLocked(AscCommon.changestype_RemoveSlide, checkArray) === false)) {
+diff --git a/slide/Drawing/DrawingDocument.js b/slide/Drawing/DrawingDocument.js
+--- a/slide/Drawing/DrawingDocument.js
++++ b/slide/Drawing/DrawingDocument.js
+@@ -4905,7 +4905,7 @@
+ 				{
+ 					if (oPresentation.CanEdit())
+ 					{
+-						const arrSlides = oPresentation.GetSelectedSlideObjects();
++						const arrSlides = oPresentation.getSlidesToDelete(oPresentation.GetSelectedSlideObjects());
+ 						if (!oApi.IsSupportEmptyPresentation)
+ 						{
+ 							if (arrSlides.length === oDrawingDocument.GetSlidesCount())
