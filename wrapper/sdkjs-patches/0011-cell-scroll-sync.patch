@@ -1,0 +1,135 @@
+diff --git a/cell/view/CellEditorView.js b/cell/view/CellEditorView.js
+index 170ee02..274779b 100644
+--- a/cell/view/CellEditorView.js
++++ b/cell/view/CellEditorView.js
+@@ -1536,6 +1536,10 @@ function (window, undefined) {
+ 		return doAdjust;
+ 	};
+ 	CellEditor.prototype._expandWidth = function () {
++		if (this.options.enterOptions.scrollInCell) {
++			return false;
++		}
++
+ 		var i, l = -1, r = -1;
+ 
+ 		if (AscCommon.align_Left === this.textFlags.textAlign || AscCommon.align_Center === this.textFlags.textAlign) {
+@@ -1578,6 +1582,10 @@ function (window, undefined) {
+ 	};
+ 
+ 	CellEditor.prototype._expandHeight = function () {
++		if (this.options.enterOptions.scrollInCell) {
++			return false;
++		}
++
+ 		var t = this, bottomSide = this.sides.b, i = asc_search(bottomSide, function (v) {
+ 			return v > t.bottom;
+ 		});
+@@ -1811,6 +1819,7 @@ function (window, undefined) {
+ 		this._stopScrollAnimation();
+ 		this._scrollOffset = 0;
+ 		this._formulaScrollTop = null;
++		this._formulaScrollPending = false;
+ 
+ 		if (this._formulaMirror) {
+ 			this._formulaMirror.element.remove();
+@@ -1819,11 +1828,8 @@ function (window, undefined) {
+ 	};
+ 
+ 	CellEditor.prototype._getCellScrollMaximum = function () {
+-		// Match the formula bar's range so both fields can show the same final lines.
+-		const maximum = Math.max(0, this.input.scrollHeight - this.input.clientHeight);
+ 		const textHeight = this.textRender.calcLineOffset(this.textRender.getLinesCount());
+-		const cellMaximum = Math.max(0, textHeight - this.canvas.height / this.ky);
+-		return Math.max(cellMaximum, this._getCellOffsetFromFormula(maximum));
++		return Math.max(0, textHeight - this.canvas.height / this.ky);
+ 	};
+ 
+ 	CellEditor.prototype._setCellScrollOffset = function (offset) {
+@@ -2067,7 +2073,15 @@ function (window, undefined) {
+ 		const isOwnScroll = this._formulaScrollTop !== null &&
+ 			Math.abs(this.input.scrollTop - this._formulaScrollTop) < 1;
+ 
+-		if (!this.isOpened || isOwnScroll) {
++		if (!this.isOpened) {
++			if (this._formulaScrollPending && this.input.scrollTop > 0) {
++				this._formulaScrollPending = false;
++				this.handlers.trigger("openCellEditorForScroll", this.input.scrollTop);
++			}
++			return;
++		}
++
++		if (isOwnScroll) {
+ 			return;
+ 		}
+ 
+@@ -2080,7 +2094,13 @@ function (window, undefined) {
+ 		const hasModifier = event.ctrlKey || event.metaKey || event.altKey || event.shiftKey;
+ 		const isVertical = Math.abs(event.deltaY) > Math.abs(event.deltaX);
+ 
+-		if (!this.isOpened || hasModifier || !isVertical || this.menuEditor) {
++		if (hasModifier || !isVertical || this.menuEditor) {
++			return;
++		}
++
++		if (!this.isOpened) {
++			this._formulaScrollPending = event.currentTarget === this.input &&
++				this.input.scrollHeight > this.input.clientHeight;
+ 			return;
+ 		}
+ 
+@@ -2211,9 +2231,8 @@ function (window, undefined) {
+ 				} else if (cur) {
+ 					this._ensureCellCaretVisible(cur);
+ 					this._syncFormulaScroll();
+-					if (this._ensureFormulaCaretVisible()) {
+-						this._syncCellScroll();
+-					}
++					// Keep the cell position when the formula bar scrolls to show the caret.
++					this._ensureFormulaCaretVisible();
+ 				}
+ 			}
+ 
+@@ -3559,6 +3578,11 @@ function (window, undefined) {
+ 			this.clickCounter.mouseDownEvent(coord.x, coord.y, button);
+ 		}
+ 
++		if (this.options.enterOptions.scrollInCell) {
++			this.options.enterOptions.scrollInCell = false;
++			this.options.enterOptions.hideCursor = false;
++		}
++
+ 		this.setFocus(true);
+ 
+ 		this._updateTopLineActive(false);
+diff --git a/cell/view/WorkbookView.js b/cell/view/WorkbookView.js
+index 492e57c..011ffb6 100644
+--- a/cell/view/WorkbookView.js
++++ b/cell/view/WorkbookView.js
+@@ -864,6 +864,27 @@
+ 				  self.handlers.trigger("asc_onCanRedoChanged", bCanRedo);
+ 			  }, "applyCloseEvent": function () {
+ 				  return self.controller._onWindowKeyDown.apply(self.controller, arguments);
++			  }, "openCellEditorForScroll": function (scrollTop) {
++				  if (self.isCellEditMode || self.collaborativeEditing.getGlobalLock() ||
++					  self.controller.isResizeMode || self.getWorksheet().isSelectOnShape) {
++					  return;
++				  }
++				  const enterOptions = new AscCommonExcel.CEditorEnterOptions();
++				  enterOptions.hideCursor = true;
++				  enterOptions.scrollInCell = true;
++				  const restoreScroll = function () {
++					  self.input.scrollTop = scrollTop;
++					  self.cellEditor._onFormulaScroll();
++				  };
++				  if (self.canEdit()) {
++					  self._onEditCell(enterOptions, restoreScroll);
++				  } else if (self.Api.isRestrictionView()) {
++					  enterOptions.readOnly = true;
++					  self.setCellEditMode(true);
++					  self.getWorksheet().openCellEditor(self.cellEditor, enterOptions);
++					  self.input.disabled = false;
++					  restoreScroll();
++				  }
+ 			  }, "canEdit": function () {
+ 				  return self.canEdit();
+ 			  }, "isProtectActiveCell": function () {
