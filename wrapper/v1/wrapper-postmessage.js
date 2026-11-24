@@ -64,6 +64,7 @@
     this.autosaveTimer      = null;        // setTimeout handle (null when not pending)
     this.dirty              = false;       // editor's last-reported dirty state
     this.pendingSaveId      = null;        // saveId we sent on `saved`, awaiting save-ack
+    this.pendingPreferences = null;
     this.editedSincePending = false;       // user edited after pendingSaveId was sent
     this.saveAckTimer       = null;        // watchdog: if no save-ack lands, the host is gone → error
     this.saveAckTimeoutMs   = 25000;       // no save-ack within this → assume host unreachable, flip to 'error'
@@ -987,6 +988,7 @@
 
     try {
       binBytes = capture();
+      self.pendingPreferences = global.DocumentPreferences.getSnapshot();
       if (['docx', 'pptx', 'xlsx'].includes(ext) && global.OfficePreview) {
         objectPreview = self.capturePreview(iframe.contentWindow, ext);
       }
@@ -1350,6 +1352,7 @@
 
     if (msg.ok) {
       this.everSaved = true;   // a clean state from here on means "all changes saved"
+      global.DocumentPreferences.markSaved(this.pendingPreferences);
       // Advance the editor's history "saved point" to the bytes we just
       // persisted. This is what stops a mere cursor click from re-flagging the
       // doc dirty: the editor recomputes "modified" from History.Index vs
@@ -1357,7 +1360,9 @@
       // never advanced. Returns whether the user edited PAST that point during
       // the upload (→ still dirty). Falls back to the pre-edit flag if the
       // iframe hook isn't available.
-      var stillModified = this.markEditorSaved(wasEdited);
+      var stillModified = this.markEditorSaved(wasEdited) || global.DocumentPreferences.hasUnsavedChanges();
+      window.__editorDirty = stillModified;
+      this.onDirtyChanged(stillModified);
 
       if (stillModified) {
         log('save-ack ok, but edited past the saved point during upload — back to dirty');

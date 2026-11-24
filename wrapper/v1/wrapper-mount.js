@@ -3444,6 +3444,14 @@
             });
         }
 
+        window.DocumentPreferences.install({
+            editorApi: editorApi,
+            editorWindow: document.querySelector('iframe[name="frameEditor"]').contentWindow,
+            type: type,
+            canSave: () => currentMode === 'edit' && !isDesktopClosing && !isDesktopLoggingOut,
+            onChange: () => events.onDocumentStateChange({ data: true })
+        });
+
         if (pm) {
           pm.toHost({ type: 'opened', requestId: pm.requestId });
           if (pm.shouldShowOnlyOfficeWelcomeScreen) {
@@ -3482,7 +3490,7 @@
         // from `onDocumentModifiedChanged`, which the SDK fires via the
         // `asc_onDocumentModifiedChanged` callback whenever the model's
         // modified flag flips (post-edit, post-undo-to-clean, post-save).
-        var dirty = !!(e && e.data);
+        var dirty = !!(e && e.data) || window.DocumentPreferences.hasUnsavedChanges();
         log('onDocumentStateChange dirty=' + dirty);
         // Track so beforeunload can decide whether to warn.
         window.__editorDirty = dirty;
