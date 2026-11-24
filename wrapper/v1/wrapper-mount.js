@@ -120,6 +120,7 @@
     var canDownload = false;
     var isViewer = false;
     var watermarkText = null;
+    let isWatermarkRendered = false;
     var isLargeFile = false;
     var isDownloading = false;
     var editModeTransition = null; // null | 'opening' | 'exiting'
@@ -2709,7 +2710,9 @@
         state.updating = false;
       }
 
-      if (isDocumentReady && typeof editorWindow.finishEditorLoading === 'function') {
+      const canFinishEditorLoading = isDocumentReady && (!watermarkText || isWatermarkRendered);
+
+      if (canFinishEditorLoading && typeof editorWindow.finishEditorLoading === 'function') {
         editorWindow.finishEditorLoading();
       }
     }
@@ -3000,12 +3003,28 @@
           log('presentation thumbnail watermark bound');
       }
 
+      function checkIsWatermarkImageReadyToDraw(watermark) {
+          return !!(watermark.isFontsLoaded &&
+              watermark.image &&
+              watermark.image.width > 0 &&
+              watermark.image.height > 0 &&
+              watermark.imageBackground &&
+              watermark.imageBackground.complete &&
+              watermark.imageBackground.naturalWidth > 0);
+      }
+
       function protectWatermark(pluginApi) {
-          if (!pluginApi || !pluginApi.watermarkDraw) {
+          if (!pluginApi) {
               return;
           }
 
-          var descriptor = Object.getOwnPropertyDescriptor(
+          if (!pluginApi.watermarkDraw) {
+              requestAnimationFrame(() => protectWatermark(pluginApi));
+
+              return;
+          }
+
+          const descriptor = Object.getOwnPropertyDescriptor(
               pluginApi,
               'watermarkDraw'
           );
@@ -3015,6 +3034,24 @@
           }
 
           protectedWatermarkDraw = pluginApi.watermarkDraw;
+          const drawWatermark = protectedWatermarkDraw.Draw;
+
+          protectedWatermarkDraw.Draw = function () {
+              if (type === 'word') {
+                  this.zoom = pluginApi.WordControl.m_nZoomValue / 100;
+                  this.Generate();
+              }
+
+              const shouldFinishLoading = !isWatermarkRendered && checkIsWatermarkImageReadyToDraw(this);
+              const result = drawWatermark.apply(this, arguments);
+
+              if (shouldFinishLoading) {
+                  isWatermarkRendered = true;
+                  applyEditorLayout();
+              }
+
+              return result;
+          };
 
           Object.defineProperty(pluginApi, 'watermarkDraw', {
               configurable: false,
@@ -3026,6 +3063,10 @@
                   log('watermarkDraw modification blocked');
               }
           });
+
+          if (checkIsWatermarkImageReadyToDraw(protectedWatermarkDraw)) {
+              protectedWatermarkDraw.onReady();
+          }
 
           log('watermark protected');
       }
