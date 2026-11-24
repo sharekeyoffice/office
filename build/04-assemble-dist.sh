@@ -65,6 +65,7 @@ fi
 
 echo "→ applying overlay/* over $DIST"
 cp -R "$REPO/overlay"/. "$DIST/"
+node "$SCRIPT_DIR/inject-editor-layout.js" "$DIST"
 
 # ── Substitute __ALLOWED_HOST_ORIGIN__ ─────────────────────────
 ALLOWED_HOST_ORIGIN="${ALLOWED_HOST_ORIGIN:-}"

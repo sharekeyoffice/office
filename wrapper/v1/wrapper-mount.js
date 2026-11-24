@@ -135,6 +135,8 @@
                                    // dev + backward-compat). UX/defense-in-depth only — the
                                    // server (acquireEditLock + appendDiffChunk EDIT_CONTENT
                                    // checks) is the real gate against a tampering client.
+    var isEditorRoleKnown = isStandalone;
+    var isDocumentReady = false;
     var lastPresentationPointerDownAt = 0;
     var lastPresentationEditModalAt = 0;
     var lastBlockedEditAttemptFocus = null;
@@ -712,6 +714,11 @@
         }
 
         var key = e.key;
+        var cellEditor = type === 'cell' && editorApi && editorApi.wb && editorApi.wb.cellEditor;
+
+        if (key === 'Enter' && cellEditor && cellEditor.isOpened && typeof cellEditor.isReadOnly === 'function' && cellEditor.isReadOnly()) {
+            return false;
+        }
 
         if (!key) {
             return false;
@@ -1658,16 +1665,18 @@
         stylesheet.id = 'sk-editor-ui-styles';
         stylesheet.rel = 'stylesheet';
         stylesheet.href = '/editor-ui.css';
-
-        // A slow CSS request may outlive the initial header polling window.
-        stylesheet.onload = function () {
-          mountHeaderControls();
-        };
-        stylesheet.onerror = function () {
-          log('Failed to load editor-ui.css');
-        };
         doc.head.appendChild(stylesheet);
       }
+
+      // the bootstrap may have added this link before the header polling started
+      // retry mounting even if css finishes after the polling window expires
+      stylesheet.onload = function () {
+        mountHeaderControls();
+      };
+
+      stylesheet.onerror = function () {
+        log('Failed to load editor-ui.css');
+      };
 
       return !!stylesheet.sheet;
     }
@@ -2572,7 +2581,21 @@
           return editDone && saveDone && printDone && mainAppDone && downloadDone;
       }
 
+    function updateEditorLayoutRole() {
+      const role = { type: type, canEdit: isEditorRoleKnown ? canEdit : null };
+      window.editorLayoutRole = role;
+
+      const iframe = document.querySelector('iframe[name="frameEditor"]');
+      const editorWindow = iframe && iframe.contentWindow;
+
+      if (editorWindow && typeof editorWindow.setEditorLayoutRole === 'function') {
+        editorWindow.setEditorLayoutRole(role);
+      }
+    }
+
     function applyEditorLayout() {
+      updateEditorLayoutRole();
+
       const iframe = document.querySelector('iframe[name="frameEditor"]');
       const editorWindow = iframe && iframe.contentWindow;
       const doc = iframe && iframe.contentDocument;
@@ -2585,7 +2608,7 @@
       const downloadSlot = headerDownloadBtn && headerDownloadBtn.parentNode;
       const isReady = viewport && notifications && title && downloadSlot && headerEditBtn && headerEditingLabel;
 
-      if (!isReady) {
+      if (!viewport || !notifications || !doc) {
         return;
       }
 
@@ -2595,7 +2618,7 @@
           updating: false,
           isViewer: null
         };
-        notifications.on('layout:changed tab:active', applyEditorLayout);
+        notifications.on('app:face layout:changed tab:active', applyEditorLayout);
       }
 
       const state = editorLayoutState;
@@ -2607,8 +2630,34 @@
       state.updating = true;
 
       try {
+        let layoutChanged = false;
+
+        if (isReady) {
+          doc.body.classList.add('sk-header-top');
+        }
+
+        if (title) {
+          const titlePanel = viewport.vlayout.getItem('title');
+          const headerHeight = title.getBoundingClientRect().height;
+
+          if (headerHeight > 0 && headerHeight !== titlePanel.height) {
+            titlePanel.height = headerHeight;
+            layoutChanged = true;
+          }
+        }
+
+        if (!isReady) {
+          if (layoutChanged) {
+            viewportController.onLayoutChanged('window');
+          }
+
+          // keep the loading screen until the header is ready; a later mount or
+          // layout notification retries this function and finishes loading below
+          return;
+        }
+
         const isViewer = !canEdit;
-        let layoutChanged = state.isViewer !== isViewer;
+        layoutChanged = layoutChanged || state.isViewer !== isViewer;
         let actions = doc.getElementById('sk-header-actions');
 
         if (!actions) {
@@ -2628,7 +2677,6 @@
         moveControl(headerEditingLabel.parentNode, actions);
         moveControl(doc.getElementById('box-right-btn-group'), title);
 
-        doc.body.classList.add('sk-header-top');
         doc.body.classList.toggle('sk-role-viewer', isViewer);
         doc.body.classList.toggle('sk-viewer-compact', isViewer && type !== 'cell');
         doc.body.classList.toggle('sk-viewer-sheet', isViewer && type === 'cell');
@@ -2638,14 +2686,6 @@
 
         if (rightResizer) {
           rightResizer.addClass('sk-viewer-right-resizer');
-        }
-
-        const titlePanel = viewport.vlayout.getItem('title');
-        const headerHeight = Math.max(titlePanel.height, title.getBoundingClientRect().height);
-
-        if (headerHeight !== titlePanel.height) {
-          titlePanel.height = headerHeight;
-          layoutChanged = true;
         }
 
         state.isViewer = isViewer;
@@ -2667,6 +2707,10 @@
         }
       } finally {
         state.updating = false;
+      }
+
+      if (isDocumentReady && typeof editorWindow.finishEditorLoading === 'function') {
+        editorWindow.finishEditorLoading();
       }
     }
 
@@ -3068,6 +3112,8 @@
         editorConfig: built.editorConfig,
         events: events
       };
+
+      updateEditorLayoutRole();
 
       editorInstance = new window.DocsAPI.DocEditor('placeholder', docsApiConfig);
       window.editor  = editorInstance;
@@ -3713,10 +3759,11 @@
             nextIsLargeFile === isLargeFile &&
             watermarkText === (perms.watermarkText || null);
 
-        if (isPermissionsSame) {
+        if (isEditorRoleKnown && isPermissionsSame) {
             return;
         }
 
+        isEditorRoleKnown = true;
         canEdit = nextCanEdit;
         isDesktopClosing = nextDesktopClosing;
         isDesktopLoggingOut = nextDesktopLoggingOut;
@@ -3819,6 +3866,13 @@
       },
       onDocumentReady: function () {
         log('onDocumentReady');
+        isDocumentReady = true;
+
+        if (!isEditorRoleKnown) {
+          isEditorRoleKnown = true;
+          updateEditorLayoutRole();
+        }
+
         window.skSetPrintReady(true);
         bindPresentationSlideVisibilityMenu();
         // Phase 2 of the initial-mode setup — uniform across word/cell/slide.
@@ -3882,6 +3936,13 @@
       },
       onError: function (e) {
         log('onError', e && e.data);
+        const iframe = document.querySelector('iframe[name="frameEditor"]');
+        const editorWindow = iframe && iframe.contentWindow;
+
+        if (editorWindow && typeof editorWindow.finishEditorLoading === 'function') {
+          editorWindow.finishEditorLoading();
+        }
+
         if (pm) {
             pm.error('SDK_ERROR', JSON.stringify(e && e.data || {}), pm.requestId);
         }
