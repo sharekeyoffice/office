@@ -120,7 +120,7 @@
     var canDownload = false;
     var isViewer = false;
     var watermarkText = null;
-    let isWatermarkRendered = false;
+    let isInitialWatermarkReady = false;
     var isLargeFile = false;
     var isDownloading = false;
     var editModeTransition = null; // null | 'opening' | 'exiting'
@@ -2710,7 +2710,7 @@
         state.updating = false;
       }
 
-      const canFinishEditorLoading = isDocumentReady && (!watermarkText || isWatermarkRendered);
+      const canFinishEditorLoading = isDocumentReady && (!watermarkText || isInitialWatermarkReady);
 
       if (canFinishEditorLoading && typeof editorWindow.finishEditorLoading === 'function') {
         editorWindow.finishEditorLoading();
@@ -3034,6 +3034,23 @@
           }
 
           protectedWatermarkDraw = pluginApi.watermarkDraw;
+          const presentation = type === 'slide' && pluginApi.WordControl?.m_oLogicDocument;
+
+          if (presentation?.Slides?.length === 0) {
+              const onReady = protectedWatermarkDraw.onReady;
+
+              // the SDK skips watermark
+              // draw when it paints the empty presentation placeholder
+              protectedWatermarkDraw.onReady = function () {
+                  onReady.call(this);
+
+                  if (!isInitialWatermarkReady && presentation.Slides.length === 0 && checkIsWatermarkImageReadyToDraw(this)) {
+                      isInitialWatermarkReady = true;
+                      applyEditorLayout();
+                  }
+              };
+          }
+
           const drawWatermark = protectedWatermarkDraw.Draw;
 
           protectedWatermarkDraw.Draw = function () {
@@ -3042,11 +3059,11 @@
                   this.Generate();
               }
 
-              const shouldFinishLoading = !isWatermarkRendered && checkIsWatermarkImageReadyToDraw(this);
+              const shouldFinishLoading = !isInitialWatermarkReady && checkIsWatermarkImageReadyToDraw(this);
               const result = drawWatermark.apply(this, arguments);
 
               if (shouldFinishLoading) {
-                  isWatermarkRendered = true;
+                  isInitialWatermarkReady = true;
                   applyEditorLayout();
               }
 
