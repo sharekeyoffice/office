@@ -3035,8 +3035,9 @@
 
           protectedWatermarkDraw = pluginApi.watermarkDraw;
           const presentation = type === 'slide' && pluginApi.WordControl?.m_oLogicDocument;
+          let needsFirstSlideWatermark = presentation?.Slides?.length === 0;
 
-          if (presentation?.Slides?.length === 0) {
+          if (needsFirstSlideWatermark) {
               const onReady = protectedWatermarkDraw.onReady;
 
               // the SDK skips watermark
@@ -3054,7 +3055,15 @@
           const drawWatermark = protectedWatermarkDraw.Draw;
 
           protectedWatermarkDraw.Draw = function () {
-              if (type === 'word') {
+              const shouldRegenerateForFirstSlide = needsFirstSlideWatermark && presentation.GetCurrentSlide();
+
+              if (shouldRegenerateForFirstSlide) {
+                  // generate caches by zoom, but the bitmap built without a slide is empty
+                  this.calculatezoom = -1;
+                  needsFirstSlideWatermark = false;
+              }
+
+              if (type === 'word' || shouldRegenerateForFirstSlide) {
                   this.zoom = pluginApi.WordControl.m_nZoomValue / 100;
                   this.Generate();
               }
