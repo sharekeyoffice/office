@@ -453,6 +453,16 @@
         this.showHostLogoutModal();
 
         return;
+
+      case 'deleted-file':
+        this.showFileDeletedModal();
+
+        return;
+
+      case 'revoked-file':
+        this.showAccessLostModal();
+
+        return;
       case 'set-mode':
         // Mode change is authoritative — only the trusted main app
         // (origin-pinned above) can demand a view↔edit switch. Dispatched
@@ -1259,6 +1269,70 @@
         window.close();
       };
     }
+  };
+
+  WrapperPostMessage.prototype.showFileDeletedModal = function () {
+    var deletedFileModal = document.getElementById('deleted-file-modal');
+    var deletedFileModalCloseButton = document.getElementById('dfm-close-btn');
+
+    if (!deletedFileModal) {
+      return;
+    }
+
+    var deletedFileModalDescription = deletedFileModal.querySelector('div.cm-description');
+
+    if (deletedFileModalDescription && window.SK_DESKTOP_TRANSPORT) {
+      deletedFileModalDescription.innerText = 'This document was deleted from the Sharekey Main App.';
+    }
+
+    if (deletedFileModalCloseButton) {
+      if (window.SK_DESKTOP_TRANSPORT) {
+        deletedFileModalCloseButton.innerText = 'Close Document';
+      }
+
+      deletedFileModalCloseButton.onclick = function () {
+        window.__editorDirty = false;
+        window.close();
+      };
+    }
+
+    window.modalManager.show('deleted-file-modal');
+  };
+
+  WrapperPostMessage.prototype.showAccessLostModal = function () {
+    var accessLostModal = document.getElementById('access-lost-modal');
+    var accessLostModalCloseButton = document.getElementById('alm-close-btn');
+
+    if (!accessLostModal) {
+      return;
+    }
+
+    var accessLostModalDescription = accessLostModal.querySelector('div.cm-description');
+
+    if (accessLostModalDescription && window.SK_DESKTOP_TRANSPORT) {
+      accessLostModalDescription.innerText = 'This document was deleted, unshared, or your access was revoked in the Sharekey Main App.';
+    }
+
+    var isSavingFailed = window.__editorDirty && typeof window.skSetSaveState === 'function';
+    var accessLostModalWarning = accessLostModal.querySelector('div.cm-footnote');
+
+    if (accessLostModalWarning && isSavingFailed) {
+      accessLostModalWarning.innerText = "The latest changes made in this document could NOT be saved before access was lost.";
+      accessLostModalWarning.style.color = "#FF274B";
+    }
+
+    if (accessLostModalCloseButton) {
+      if (window.SK_DESKTOP_TRANSPORT) {
+        accessLostModalCloseButton.innerText = 'Close Document';
+      }
+
+      accessLostModalCloseButton.onclick = function () {
+        window.__editorDirty = false;
+        window.close();
+      };
+    }
+
+    window.modalManager.show('access-lost-modal');
   };
 
   WrapperPostMessage.prototype.handleFailedSaveOnClose = function () {
