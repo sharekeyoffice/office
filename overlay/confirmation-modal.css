@@ -100,6 +100,11 @@
     background: #41D1C9;
 }
 
+.cm-button--marine[disabled] {
+    background: rgba(53, 80, 105, 0.15);
+    cursor: default;
+}
+
 .cm-button--positive {
     background: #E2F5F6;
     color: #2FA0AF;
