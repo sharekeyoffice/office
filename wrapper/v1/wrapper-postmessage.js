@@ -48,6 +48,65 @@
     }
   }
 
+  const documentLoads = new WeakMap();
+
+  async function unlockDocument(bridge, documentLoadState, x2t, encryptedDocumentBytes, fileName) {
+    const fileExtension = x2t.getExt(fileName);
+
+    try {
+      await x2t.decryptDocument(encryptedDocumentBytes, fileExtension, null);
+
+      throw new Error('Unsupported unencrypted compound document');
+    } catch (error) {
+      if (error.exitCode !== 90 && error.exitCode !== 91) {
+        throw error;
+      }
+    }
+
+    const decryptedDocumentBytes = await global.modalManager.requestDocumentPassword(async enteredPassword => {
+      try {
+        const unlockedDocumentBytes = await x2t.decryptDocument(encryptedDocumentBytes, fileExtension, enteredPassword);
+
+        if (!documentLoadState.controller.signal.aborted) {
+          documentLoadState.documentPassword = enteredPassword;
+        }
+
+        return unlockedDocumentBytes;
+      } catch (error) {
+        if (error.exitCode !== 90 && error.exitCode !== 91) {
+          throw error;
+        }
+
+        return null;
+      }
+    }, documentLoadState.controller.signal);
+
+    if (decryptedDocumentBytes && !documentLoadState.controller.signal.aborted) {
+      return x2t.convertToBin(decryptedDocumentBytes, fileName);
+    }
+
+    if (!documentLoadState.controller.signal.aborted) {
+      bridge.toHost({ type: 'close-request' });
+    }
+
+    documentLoadState.controller.abort();
+
+    throw new Error('Document opening cancelled');
+  }
+
+  async function exportOfficeDocument(x2t, binBytes, extension, objectPreview, editorWindow, documentLoadState) {
+    const ooxmlBytes = await x2t.convertFromBin(binBytes, extension);
+    const documentBytes = objectPreview ? await global.OfficePreview.apply(ooxmlBytes, objectPreview, editorWindow) : ooxmlBytes;
+
+    if (documentLoadState?.controller.signal.aborted) {
+      throw new Error('Document is no longer open');
+    }
+
+    return documentLoadState?.encryptedBytes
+      ? x2t.encryptDocument(documentBytes, extension, documentLoadState.documentPassword)
+      : documentBytes;
+  }
+
   function WrapperPostMessage(opts) {
     this.editor       = opts.editor;       // DocsAPI.DocEditor instance
     this.editorType   = opts.editorType;   // 'word' | 'cell' | 'slide'
@@ -171,6 +230,7 @@
 
   WrapperPostMessage.prototype.downloadCurrentFile = function (onPermissionGranted) {
     var self = this;
+    const documentLoadState = documentLoads.get(self);
     var formatByEditor = {
       word: 'docx',
       cell: 'xlsx',
@@ -193,6 +253,14 @@
 
       if (typeof onPermissionGranted === 'function') {
         onPermissionGranted();
+      }
+
+      if (documentLoadState?.controller.signal.aborted) {
+        throw new Error('Document is no longer open');
+      }
+
+      if (documentLoadState?.encryptedBytes && !self.dirty && !self.everSaved) {
+        return documentLoadState.encryptedBytes;
       }
 
       var iframe = self.findIframe();
@@ -242,13 +310,12 @@
 
       log('download current file: format=' + ext);
 
-      return x2t.convertFromBin(binBytes, ext)
-          .then(function (bytes) {
-            return objectPreview ?
-                global.OfficePreview.apply(bytes, objectPreview, iframe.contentWindow) :
-                bytes;
-          });
+      return exportOfficeDocument(x2t, binBytes, ext, objectPreview, iframe.contentWindow, documentLoadState);
     }).then(function (fileBytes) {
+      if (documentLoadState?.controller.signal.aborted) {
+        throw new Error('Document is no longer open');
+      }
+
       if (!fileBytes || typeof fileBytes.length !== 'number' || fileBytes.length === 0) {
         throw new Error('converted file is empty');
       }
@@ -605,6 +672,8 @@
     }
 
     this._destroyed = true;
+    documentLoads.get(this)?.controller.abort();
+    documentLoads.delete(this);
 
     if (this._messageHandler) {
       window.removeEventListener('message', this._messageHandler);
@@ -762,6 +831,13 @@
     var shouldShowOnlyOfficeWelcomeScreen = msg.shouldShowOnlyOfficeWelcomeScreen === true;
     var isExternal = msg.isExternal === true;
 
+    documentLoads.get(self)?.controller.abort();
+    const state = { controller: new AbortController(), encryptedBytes: null, documentPassword: null };
+    state.controller.signal.addEventListener('abort', () => {
+      state.documentPassword = null;
+    }, { once: true });
+    documentLoads.set(self, state);
+    self.lastFullBytes = null;
     self.requestId = requestId;
     self.shouldShowOnlyOfficeWelcomeScreen = shouldShowOnlyOfficeWelcomeScreen;
     self.isExternal = isExternal;
@@ -774,7 +850,9 @@
       return self.error('BAD_REQUEST', 'load.bytes must be ArrayBuffer or Uint8Array', requestId);
     }
 
-    var uint8 = new Uint8Array(ab);
+    var uint8 = ArrayBuffer.isView(msg.bytes) ?
+        new Uint8Array(ab, msg.bytes.byteOffset, msg.bytes.byteLength) :
+        new Uint8Array(ab);
     var fileName = msg.fileName || 'document';
 
     // Who is editing. @adr-0001
@@ -809,6 +887,9 @@
 
     if (fmt === 'bin') {
       binPromise = Promise.resolve(uint8);
+    } else if (fmt === 'compound') {
+      state.encryptedBytes = uint8;
+      binPromise = unlockDocument(self, state, x2t, uint8, fileName);
     } else if (fmt === 'ooxml') {
       self.toHost({ type: 'progress', stage: 'converting', requestId: requestId });
       binPromise = x2t.convertToBin(uint8, fileName);
@@ -841,6 +922,11 @@
 
     binPromise.then(function (binBytes) {
       _convSettled = true; clearTimeout(_convWatch);
+
+      if (state.controller.signal.aborted) {
+        return;
+      }
+
       log('convert resolved in ' + (Date.now() - _convT0) + 'ms → ' + binBytes.length +
           ' bin bytes; opening… (visibility=' + document.visibilityState + ')');
       // Prime the font path before invoking openDocument so the editor's
@@ -874,6 +960,10 @@
       var openTries = 0;
 
       (function dispatchWhenReady() {
+        if (state.controller.signal.aborted) {
+          return;
+        }
+
         var ifw = (function () { var f = self.findIframe(); return f && f.contentWindow; })();
         var ready = !!(ifw && ifw.__wrapperOpenReady === true);
 
@@ -890,11 +980,18 @@
           log('openDocument dispatched (openReady=' + ready + ', waited=' + (openTries * 100) +
               'ms) — awaiting "[editor-stubs] loadBinary intercepted"');
         } catch (err) {
+          state.documentPassword = null;
           self.error('OPEN_FAILED', err.message, requestId);
         }
       })();
     }).catch(function (err) {
       _convSettled = true; clearTimeout(_convWatch);
+
+      if (state.controller.signal.aborted) {
+        return;
+      }
+
+      state.documentPassword = null;
       log('✗ convert/open FAILED: ' + (err && err.message || err));
       self.error('CONVERT_FAILED', err.message || String(err), requestId);
     });
@@ -1020,23 +1117,25 @@
       return;
     }
 
+    const documentState = documentLoads.get(self);
     // Track this save so onSaveAck can correlate
     self.pendingSaveId      = saveId;
     self.editedSincePending = false;
 
-    x2t.convertFromBin(binBytes, ext).then(function (bytes) {
-      return objectPreview ? global.OfficePreview.apply(bytes, objectPreview, iframe.contentWindow) : bytes;
-    }).then(function (ooxmlBytes) {
+    exportOfficeDocument(x2t, binBytes, ext, objectPreview, iframe.contentWindow, documentState).then(function (documentBytes) {
+      if (documentState?.controller.signal.aborted) {
+        return;
+      }
+
       var fileName = (self._lastFileName || 'document').replace(/\.[^.]+$/, '') + '.' + ext;
-      log('saved ' + fileName + ' (' + ooxmlBytes.length + ' bytes) saveId=' + saveId);
+      log('saved ' + fileName + ' (' + documentBytes.length + ' bytes) saveId=' + saveId);
 
       // ── Chunk-diff self-check ─────────────────────────────────────
-      // Measure how the diff/merge round-trip behaves on real OOXML.
+      // Measure how the diff/merge round-trip behaves on exported files.
       // Logs only — doesn't change the bytes we send to the host.
-      // Snapshot the OOXML now so it survives the postMessage transfer
-      // (the transferable below detaches `ooxmlBytes.buffer`).
-      var snapshot = new Uint8Array(ooxmlBytes.length);
-      snapshot.set(ooxmlBytes);
+      // Keep a snapshot to compare against the next export.
+      var snapshot = new Uint8Array(documentBytes.length);
+      snapshot.set(documentBytes);
       if (self.lastFullBytes && global.ChunkDiff) {
         var prevBytes = self.lastFullBytes;
         global.ChunkDiff.roundTrip(prevBytes, snapshot).then(function (r) {
@@ -1062,7 +1161,7 @@
 
       // Transfer the underlying buffer to avoid copying. The host gets a
       // detached Uint8Array on the inbound side.
-      var ab = ooxmlBytes.buffer.slice(ooxmlBytes.byteOffset, ooxmlBytes.byteOffset + ooxmlBytes.byteLength);
+      var ab = documentBytes.buffer.slice(documentBytes.byteOffset, documentBytes.byteOffset + documentBytes.byteLength);
       self.toHost({
         type:      'saved',
         bytes:     ab,
@@ -1098,6 +1197,10 @@
         self.runPendingSaveRequest();
       }, self.saveAckTimeoutMs);
     }).catch(function (err) {
+      if (documentState?.controller.signal.aborted) {
+        return;
+      }
+
       if (self.saveAckTimer) {
         clearTimeout(self.saveAckTimer);
         self.saveAckTimer = null;

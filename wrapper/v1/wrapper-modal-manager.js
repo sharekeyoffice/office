@@ -8,6 +8,7 @@
         'access-lost-modal': 85,
         'cannot-reconnect-modal': 80,
         'reconnecting-modal': 70,
+        'document-password-modal': 65,
         'cannot-start-edit-mode': 60,
         'viewer-mode': 50,
         'view-only-mode': 50,
@@ -16,6 +17,7 @@
     };
 
     var closeButtonIds = {
+        'document-password-modal': 'dmp-close-btn',
         'cannot-start-edit-mode': 'csem-close-btn',
         'viewer-mode': 'vm-close-btn',
         'view-only-mode': 'vom-close-btn',
@@ -111,9 +113,125 @@
         return !!activeModals[modalId];
     }
 
+    function requestDocumentPassword(verifyPassword, abortSignal) {
+        if (abortSignal.aborted || isActive('document-password-modal')) {
+            return Promise.resolve(null);
+        }
+
+        const passwordModal = document.getElementById('document-password-modal');
+        const passwordForm = passwordModal.querySelector('form');
+        const passwordInput = passwordForm.elements.namedItem('password');
+        const passwordErrorMessage = document.getElementById('dpm-error');
+        const passwordVisibilityButton = passwordForm.querySelector('.document-password-toggle');
+        const openDocumentButton = passwordForm.querySelector('button[type="submit"]');
+        const closeButton = document.getElementById('dmp-close-btn');
+
+        function setPasswordVisibility(isPasswordVisible) {
+            passwordInput.type = isPasswordVisible ? 'text' : 'password';
+            passwordVisibilityButton.setAttribute('aria-pressed', String(isPasswordVisible));
+        }
+
+        function updatePasswordErrorState(isPasswordIncorrect) {
+            passwordInput.setAttribute('aria-invalid', String(isPasswordIncorrect));
+            passwordErrorMessage.style.visibility = isPasswordIncorrect ? 'visible' : 'hidden';
+            openDocumentButton.disabled = isPasswordIncorrect || !passwordInput.value;
+        }
+
+        function resetPasswordForm() {
+            passwordForm.reset();
+            setPasswordVisibility(false);
+            updatePasswordErrorState(false);
+            passwordInput.readOnly = false;
+            passwordVisibilityButton.disabled = false;
+        }
+
+        resetPasswordForm();
+        show('document-password-modal');
+        passwordInput.focus();
+
+        return new Promise((resolve, reject) => {
+            let isPasswordPromptClosed = false;
+
+            function closePasswordPrompt() {
+                isPasswordPromptClosed = true;
+                resetPasswordForm();
+                passwordForm.onsubmit = null;
+                passwordInput.oninput = null;
+                passwordVisibilityButton.onmousedown = null;
+                passwordVisibilityButton.onclick = null;
+
+                if (closeButton) {
+                    closeButton.onclick = null;
+                }
+
+                abortSignal.removeEventListener('abort', cancelPasswordPrompt);
+                hide('document-password-modal');
+            }
+
+            function cancelPasswordPrompt() {
+                closePasswordPrompt();
+                resolve(null);
+            }
+
+            passwordInput.oninput = () => updatePasswordErrorState(false);
+            passwordVisibilityButton.onmousedown = event => event.preventDefault();
+            passwordVisibilityButton.onclick = () => {
+                const selectionStart = passwordInput.selectionStart;
+                const selectionEnd = passwordInput.selectionEnd;
+                setPasswordVisibility(passwordInput.type === 'password');
+                passwordInput.setSelectionRange(selectionStart, selectionEnd);
+            };
+
+            if (closeButton) {
+                closeButton.onclick = cancelPasswordPrompt;
+            }
+
+            abortSignal.addEventListener('abort', cancelPasswordPrompt, { once: true });
+            passwordForm.onsubmit = async event => {
+                event.preventDefault();
+
+                if (openDocumentButton.disabled) {
+                    return;
+                }
+
+                openDocumentButton.disabled = true;
+                passwordVisibilityButton.disabled = true;
+                passwordInput.readOnly = true;
+
+                try {
+                    const decryptedDocumentBytes = await verifyPassword(passwordInput.value);
+
+                    if (isPasswordPromptClosed) {
+                        return;
+                    }
+
+                    if (decryptedDocumentBytes) {
+                        closePasswordPrompt();
+                        resolve(decryptedDocumentBytes);
+
+                        return;
+                    }
+
+                    passwordInput.readOnly = false;
+                    passwordVisibilityButton.disabled = false;
+                    updatePasswordErrorState(true);
+                    passwordInput.focus();
+                } catch (verificationError) {
+                    if (isPasswordPromptClosed) {
+                        return;
+                    }
+
+                    closePasswordPrompt();
+                    reject(verificationError);
+                }
+            };
+        });
+    }
+
     bindKeyboardDocument(document);
 
     global.modalManager = {
+        requestDocumentPassword: requestDocumentPassword,
         show: show,
         hide: hide,
         isActive: isActive

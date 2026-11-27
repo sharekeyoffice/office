@@ -171,7 +171,7 @@
 	 * @param {boolean}    [isRetry]   internal: this is the single retry
 	 * @returns {Promise<Uint8Array>}
 	 */
-	function runConversion(inputBytes, inputExt, outputExt, isRetry) {
+	function runConversion(inputBytes, inputExt, outputExt, isRetry, passwordParams) {
 		return loadModule().then(function (Module) {
 			var id = ++_convCounter;
 			var inputPath  = '/working/in_'  + id + '.' + inputExt;
@@ -198,6 +198,7 @@
 					'<m_sFileFrom>' + inputPath + '</m_sFileFrom>' +
 					'<m_sThemeDir>/working/themes</m_sThemeDir>' +
 					'<m_sFileTo>' + outputPath + '</m_sFileTo>' +
+					(passwordParams || '') +
 					'<m_bIsNoBase64>false</m_bIsNoBase64>' +
 				'</TaskQueueDataConvert>';
 
@@ -218,7 +219,7 @@
 				return resetModule(Module).then(function () {
 					if (isRetry) throw crash;
 					log('warn', 'x2t crashed (' + e.message + '); retrying once on a fresh module');
-					return runConversion(inputBytes, inputExt, outputExt, true);
+					return runConversion(inputBytes, inputExt, outputExt, true, passwordParams);
 				});
 			}
 			var t1 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
@@ -873,13 +874,22 @@
 	}
 
 	/**
-	 * Detect editor type from a Uint8Array. Returns one of:
+	 * Detect file format from a Uint8Array. Returns one of:
+	 *   "compound" — Compound File Binary container (used by encrypted OOXML)
 	 *   "ooxml" — ZIP-based (.docx/.xlsx/.pptx and OOXML siblings)
 	 *   "bin"   — already an Editor.bin (DOCY/XLSY/PPTY/VSDY signature)
 	 *   "other" — anything else
 	 */
 	function detectFormat(bytes) {
 		if (!bytes || bytes.length < 4) return 'other';
+
+		const hasCompoundFileSignature = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]
+			.every((byte, index) => bytes[index] === byte);
+
+		if (hasCompoundFileSignature) {
+			return 'compound';
+		}
+
 		// PK ZIP magic
 		if (bytes[0] === 0x50 && bytes[1] === 0x4B && bytes[2] === 0x03 && bytes[3] === 0x04) {
 			return 'ooxml';
@@ -1390,10 +1400,44 @@
 		return p;
 	};
 
+	async function convertDocumentWithPassword(bytes, ext, password, passwordField, expectedFormat) {
+		if (!['docx', 'xlsx', 'pptx'].includes(ext)) {
+			throw new Error('Unsupported Office format');
+		}
+
+		if (password && /[^\u{20}-\u{d7ff}\u{e000}-\u{fffd}\u{10000}-\u{10ffff}\t\n\r]/u.test(password)) {
+			throw new Error('The document password contains an unsupported character');
+		}
+
+		const value = password && password.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\r/g, '&#13;');
+		const params = value ? '<' + passwordField + '>' + value + '</' + passwordField + '>' : '';
+		const result = await runConversion(bytes, ext, ext, false, params);
+
+		if (detectFormat(result) !== expectedFormat) {
+			throw new Error('Unexpected output from Office password conversion');
+		}
+
+		return result;
+	}
+
+	function decryptDocument(bytes, ext, password) {
+		return convertDocumentWithPassword(bytes, ext, password, 'm_sPassword', 'ooxml');
+	}
+
+	async function encryptDocument(bytes, ext, password) {
+		if (!password) {
+			throw new Error('The document password is required to export this file');
+		}
+
+		return convertDocumentWithPassword(bytes, ext, password, 'm_sSavePassword', 'compound');
+	}
+
 	// --------------------------------------------------------------
 	// Export
 	// --------------------------------------------------------------
 	var X2TBridge = {
+		decryptDocument: decryptDocument,
+		encryptDocument: encryptDocument,
 		configure:       configure,
 		preload:         preload,
 		preloadFonts:    preloadFonts,
